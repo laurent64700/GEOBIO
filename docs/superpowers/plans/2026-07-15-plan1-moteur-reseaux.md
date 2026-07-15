@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a PWA where Laurent can create a mission, place an exterior plan (IGN) and/or a calibrated interior plan, generate a theoretical grid from a network template (Hartmann/Curry/Peyré/Or/Argent/Bagua), and adjust it point-by-point to match what he senses on-site — with an orthogonality assist and free-form tracing for water/faults.
+**Goal:** Build a PWA where Laurent can create a mission, place an exterior plan (IGN) and/or a calibrated interior plan, generate a theoretical grid from a network template (Hartmann/Curry/Palm/Peyré/Wissmann — Bagua and the planetary-scale Or/Argent/Cuivre networks are separate, deferred sub-projects, see Chunk 5), and adjust it point-by-point to match what he senses on-site — with an orthogonality assist and free-form tracing for water/faults.
 
 **Architecture:** React + TypeScript + Vite PWA. Leaflet for the map (chosen over MapLibre because the interior-plan calibration relies on the Leaflet-only `Leaflet.DistortableImage` plugin). Supabase (Postgres + PostGIS extension enabled, though Plan 1's editable line/point data is stored as `jsonb` rather than native geometry columns — see Chunk 1 rationale). All grid math (generation, calibration transform, orthogonality deviation) lives in framework-free TypeScript modules under `src/geometry/`, unit-tested with Vitest, so the hardest-to-get-right logic is verified independently of any UI or map library.
 
@@ -2811,7 +2811,7 @@ pending a quick verification spike against `Leaflet.DistortableImage`'s actual A
 claims Bagua is "just one more `GridTemplate`" reusing the generic grid engine with
 "no logic beyond it needed." That's incorrect — `generateTheoreticalLines` (Chunk 2)
 produces a **rectangular** grid (two perpendicular families of parallel, evenly-spaced
-lines), which is the right shape for Hartmann/Curry/Peyré/Or/Argent, but a Bagua is
+lines), which is the right shape for Hartmann/Curry/Palm/Peyré/Wissmann, but a Bagua is
 **8 angular wedges radiating from a center point** — a completely different geometry
 that the rectangular generator cannot produce. This wasn't caught during spec review
 either. **Bagua is therefore excluded from this chunk.** It needs its own small
@@ -2820,15 +2820,30 @@ either. **Bagua is therefore excluded from this chunk.** It needs its own small
 treat that as a follow-up spike, sized similarly to a single extra Chunk-2-style task,
 not a large undertaking, but a real one, not a same-engine reuse.
 
+**⚠️ Second correction, caught mid-chunk: Or/Argent/Cuivre are NOT `GridTemplate`
+candidates at all.** Laurent's manual describes them as **planetary-scale sacred
+networks** — the Or network alone has a mesh of ~270 km (E-O) × ~400 km (N-S) in
+France, with only ~26 crossing points on the entire globe (the "carré magique" of
+the Earth). This is a fundamentally different kind of object than a repeating local
+grid a few meters wide: at property scale, "is this site on/near a rare fixed
+crossing point" is a sparse lookup, not a generated mesh. Same treatment as
+Bagua — **excluded from this chunk**, deferred to its own future sub-project once
+Laurent has real reference coordinates for these crossing points. `Peyré` and `Palm`
+(named after "or"/"cuivre" in the original small-scale table) are kept as-is in
+`GridTemplate` below — that naming may or may not correspond to this planetary
+system; that's an open question for Laurent's domain expertise, not something this
+plan resolves by merging or renaming anything.
+
 **Domain values used below:** only Hartmann's full parameters (2 m × 2.5 m, 0° from
 true north) were explicitly confirmed earlier in this project's conversation.
 Curry's angle (45° from Hartmann's, per spec §6.2) is also known, but not its
 spacing — and the schema requires both `spacing_x_m`/`spacing_y_m` as non-null, so a
-seed row still can't be inserted with a value that was never confirmed. Peyré, Or,
-and Argent have neither confirmed. None of the four are seeded — Laurent enters them
-himself via the template-creation UI (Task 18) once he has the real values, since
-getting a geobiology network's parameters wrong would be worse than leaving them
-blank.
+seed row still can't be inserted with a value that was never confirmed. Peyré has
+neither confirmed. None of the three are seeded here — Laurent enters them himself
+via the template-creation UI (Task 18) once he has the real values, since getting a
+geobiology network's parameters wrong would be worse than leaving them blank. (Task
+21, later in this chunk, supersedes this with real confirmed values for all 5 local
+networks — Or/Argent/Cuivre remain excluded throughout, per the correction above.)
 
 ### Task 17: `gridTemplatesRepo` + Hartmann seed
 
@@ -3568,8 +3583,10 @@ dashed = −) under **one color per network** — not the two-colors-per-axis re
 initially suspected from the photographed reference table. He also provided the
 authoritative spacing ranges, band widths, and vibratory bases for **5 confirmed
 networks** (Hartmann, Curry, Palm, Peyré, Wissmann) from a physical manual — enough
-to seed all 5 properly, superseding Task 17's Hartmann-only seed. A 6th network
-("Argent") was mentioned but its parameters are still unconfirmed — not seeded.
+to seed all 5 properly, superseding Task 17's Hartmann-only seed. "Argent" is **not**
+a 6th `GridTemplate` — see this chunk's opening correction: it's part of a
+planetary-scale sacred-network system (with Or and Cuivre) that needs a different
+data model entirely, deferred as its own future sub-project, not seeded here.
 
 **Files:**
 - Create: `supabase/migrations/0004_polarity_and_color.sql`
@@ -3609,7 +3626,7 @@ global):
 | Réseau | Trame range | Midpoint used as seed | Angle | Color |
 |---|---|---|---|---|
 | Hartmann | E-O 1,50-3,50m / N-S 1,10-2,50m | 2,5 / 1,8 | 0° | `#d32f2f` (rouge — confirmed) |
-| Curry | diagonal 3,00-8,00m (both directions) | 5,5 / 5,5 | 45° | `#f2c230` (jaune — confirmed) |
+| Curry | diagonal 3,00-8,00m, most often ~4m (Laurent's manual, "FER... réseau diagonal") | 4 / 4 | 45° | `#f2c230` (jaune — confirmed) |
 | Palm | E-O 5,50-7,50m / N-S 3,50-5,50m | 6,5 / 4,5 | 0° | `#4a90c4` (placeholder) |
 | Peyré | E-O 6,00-8,50m / N-S 5,00-8,00m | 7,25 / 6,5 | 0° | `#8e5fb3` (placeholder — shifted from an earlier gold/mustard placeholder that visually clashed with Curry's now-confirmed jaune) |
 | Wissmann | diagonal 8,50-11,50m | 10 / 10 | 45°* | `#2d6a4f` (placeholder) |
@@ -3838,7 +3855,7 @@ Expected: PASS (2 tests)
 insert into grid_template (name, spacing_x_m, spacing_y_m, angle_true_north_deg, origin_offset_x, origin_offset_y, color)
 values
   ('Hartmann', 2.5, 1.8, 0, 0, 0, '#d32f2f'),
-  ('Curry', 5.5, 5.5, 45, 0, 0, '#f2c230'),
+  ('Curry', 4, 4, 45, 0, 0, '#f2c230'),
   ('Palm', 6.5, 4.5, 0, 0, 0, '#4a90c4'),
   ('Peyré', 7.25, 6.5, 0, 0, 0, '#8e5fb3'),
   ('Wissmann', 10, 10, 45, 0, 0, '#2d6a4f')
@@ -4183,6 +4200,7 @@ or create a `GridTemplate` (with color and base vibratoire) and generate + persi
 `GridInstance` with its `GridLine`s (each carrying a +/- polarity and a
 reinforced/doubled flag every Nth line) around a chosen origin. All 5 confirmed
 networks (Hartmann, Curry, Palm, Peyré, Wissmann) are seeded with real reference
-values including their vibratory base; Argent (unconfirmed parameters) and Bagua
-(different geometry, see this chunk's opening correction) remain explicitly out of
-scope.
+values including their vibratory base; the planetary-scale Or/Argent/Cuivre system
+and Bagua (both a different kind of object than `GridTemplate`, see this chunk's
+opening corrections) remain explicitly out of scope, deferred to their own future
+sub-projects.
