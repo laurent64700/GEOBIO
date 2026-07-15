@@ -2805,7 +2805,7 @@ pending a quick verification spike against `Leaflet.DistortableImage`'s actual A
 
 ---
 
-## Chunk 5: Grid templates (Hartmann/Curry/Peyré/Or/Argent) + `GridInstance` generation
+## Chunk 5: Grid templates (Hartmann/Curry/Palm/Peyré/Wissmann), polarity + color, `GridInstance` generation
 
 **⚠️ Correction to the spec (§6.4), caught while writing this chunk:** the spec
 claims Bagua is "just one more `GridTemplate`" reusing the generic grid engine with
@@ -3560,8 +3560,322 @@ git commit -m "Add createGridForPlan orchestration"
 
 ---
 
+### Task 21: Polarity (+/-) and per-network color; seed all 5 confirmed networks
+
+**Why this task exists:** Laurent confirmed (after Task 17 was written) that every
+network line carries a **polarity** (+ or −), shown via **line style** (solid = +,
+dashed = −) under **one color per network** — not the two-colors-per-axis reading
+initially suspected from the photographed reference table. He also provided the
+authoritative spacing ranges, band widths, and vibratory bases for **5 confirmed
+networks** (Hartmann, Curry, Palm, Peyré, Wissmann) from a physical manual — enough
+to seed all 5 properly, superseding Task 17's Hartmann-only seed. A 6th network
+("Argent") was mentioned but its parameters are still unconfirmed — not seeded.
+
+**Files:**
+- Create: `supabase/migrations/0004_polarity_and_color.sql`
+- Create: `supabase/migrations/0005_seed_confirmed_networks.sql`
+- Modify: `src/domain/types.ts` (add `GridTemplate.color`, `GridLine.polarity`)
+- Modify: `src/geometry/gridGeneration.ts` + `.test.ts` (assign alternating polarity)
+- Modify: `src/data/gridTemplatesRepo.ts` + `.test.ts` (carry `color`)
+- Modify: `src/data/gridLinesRepo.ts` + `.test.ts` (carry `polarity`)
+- Modify: `src/domain/createGridForPlan.ts` + `.test.ts` (pass `polarity` through)
+- Modify: `src/components/GridTemplatePicker.tsx` + `.test.tsx` (add a color field)
+
+**Blast radius — every existing `GridTemplate`/`GridLine` literal that must gain the
+new required fields (following Task 13's precedent: widening a shared type breaks
+sibling fixtures silently under `npx vitest run` alone, since esbuild's transform
+doesn't type-check — only `tsc`/`npm run build` would catch a missed one, see Step 18
+below):**
+- `src/domain/types.test.ts` (Chunk 1, Task 4) — the `line: GridLine` literal needs
+  `polarity: '+'` added.
+- `src/data/gridInstancesRepo.test.ts` (Task 19) — the top-level `hartmann` const
+  needs `color: '#e07a5f'` added.
+- `src/domain/createGridForPlan.test.ts` (Task 20) — the top-level `hartmann` const
+  needs `color: '#e07a5f'` added (this also fixes the derived `offsetTemplate =
+  {...hartmann, originOffsetX: 5, originOffsetY: -3}`, which spreads from it).
+- `src/components/GridTemplatePicker.test.tsx` (Task 18) — **both** the first test's
+  `hartmann` const and the second test's `curry` const need `color` added (Step 14
+  below only walked through the second test's color-input interaction; the first
+  test's fixture object needs the field too, independent of any UI interaction).
+- `src/data/gridTemplatesRepo.test.ts` (Task 17) — all three tests' `createGridTemplate`
+  calls/expectations need `color` added, including the third ("throws a descriptive
+  French error…") test, not just the first two.
+
+**Reference values used below** (E-O/N-S trames for the two "réseaux globaux" —
+Palm, Peyré — and NE-SO/NO-SE trames for the two "réseaux diagonaux" — Curry,
+Wissmann — from Laurent's photographed manual page; Hartmann is also a réseau
+global):
+
+| Réseau | Trame range | Midpoint used as seed | Angle | Color |
+|---|---|---|---|---|
+| Hartmann | E-O 1,50-3,50m / N-S 1,10-2,50m | 2,5 / 1,8 | 0° | `#e07a5f` |
+| Curry | diagonal 3,00-8,00m (both directions) | 5,5 / 5,5 | 45° | `#52a675` |
+| Palm | E-O 5,50-7,50m / N-S 3,50-5,50m | 6,5 / 4,5 | 0° | `#4a90c4` |
+| Peyré | E-O 6,00-8,50m / N-S 5,00-8,00m | 7,25 / 6,5 | 0° | `#e0b83f` |
+| Wissmann | diagonal 8,50-11,50m | 10 / 10 | 45°* | `#2d6a4f` |
+
+**⚠️ Not fully confirmed:** the midpoint of each range is seeded as a starting
+point, not a fixed truth — Laurent adjusts per mission via the felt-line deformation
+(§6.2) exactly as with any other template. *Wissmann's angle is assumed identical to
+Curry's (both described as "diagonal") — the manual doesn't state whether Wissmann
+sits on the same diagonal as Curry or the other one; verify with Laurent before
+relying on it. Colors above are placeholders picked to be visually distinct — replace
+with Laurent's actual preferred hex values whenever he supplies them (a one-line
+`UPDATE grid_template SET color = ...` migration, not a code change).
+
+- [ ] **Step 1: Migration — add columns**
+
+```sql
+-- supabase/migrations/0004_polarity_and_color.sql
+alter table grid_template add column color text not null default '#888888';
+alter table grid_line add column polarity text not null default '+' check (polarity in ('+', '-'));
+```
+
+- [ ] **Step 2: Apply it**
+
+Run: `npx supabase db push`
+
+- [ ] **Step 3: Update domain types**
+
+```typescript
+// src/domain/types.ts — modify GridTemplate, add GridLinePolarity, modify GridLine
+export interface GridTemplate {
+  id: string
+  name: string
+  spacingXM: number
+  spacingYM: number
+  angleTrueNorthDeg: number
+  originOffsetX: number
+  originOffsetY: number
+  /** Single color for the whole network — polarity is shown via line style (solid/dashed), not a second color. */
+  color: string
+}
+
+export type GridLinePolarity = '+' | '-'
+
+export interface GridLine {
+  id: string
+  gridInstanceId: string
+  family: GridLineFamily
+  polarity: GridLinePolarity
+  theoreticalPoints: Point[]
+  adjustedPoints: Point[]
+}
+```
+
+- [ ] **Step 4: Write a failing test for alternating polarity in `generateTheoreticalLines`**
+
+```typescript
+// append to src/geometry/gridGeneration.test.ts, inside describe('generateTheoreticalLines')
+it('assigns alternating polarity by grid line index (theoretical convention, not a field measurement)', () => {
+  const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0 }
+  const origin = { x: 0, y: 0 }
+  const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
+  const lines = generateTheoreticalLines(template, origin, bounds)
+
+  const axisA = lines.filter((l) => l.family === 'axis-a')
+  const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)!
+  const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)!
+  expect(central.polarity).toBe('+')
+  expect(nextOver.polarity).toBe('-')
+})
+```
+
+- [ ] **Step 5: Run test to verify it fails**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: FAIL — `polarity` is `undefined`, not `'+'`/`'-'`
+
+- [ ] **Step 6: Add polarity to `generateTheoreticalLines`**
+
+```typescript
+// src/geometry/gridGeneration.ts — modify GeneratedLine and both generation loops
+export interface GeneratedLine {
+  family: GridLineFamily
+  /**
+   * Alternates by grid index (even = '+', odd = '-') — this is the network's
+   * deterministic theoretical polarity pattern (confirmed for this family of
+   * rectangular networks: a fixed checkerboard alternation), not something
+   * measured in the field. Laurent's felt-line adjustment (§6.2) can still
+   * override it per line once GridLine editing (Chunk 6) exists.
+   */
+  polarity: '+' | '-'
+  points: [Point, Point]
+}
+```
+
+```typescript
+// inside generateTheoreticalLines, both loops — add polarity from k's parity:
+  const offsetA = maxOffsetIndexNeeded(origin, template.spacingYM, bounds)
+  for (let k = -offsetA; k <= offsetA; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingYM * perpDir.x,
+      y: origin.y + k * template.spacingYM * perpDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, primaryDir, bounds)
+    if (clipped) lines.push({ family: 'axis-a', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
+  }
+
+  const offsetB = maxOffsetIndexNeeded(origin, template.spacingXM, bounds)
+  for (let k = -offsetB; k <= offsetB; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingXM * primaryDir.x,
+      y: origin.y + k * template.spacingXM * primaryDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, perpDir, bounds)
+    if (clipped) lines.push({ family: 'axis-b', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
+  }
+```
+
+(`k % 2 === 0 ? '+' : '-'` — note JS's `%` can return `-0`, which is still `=== 0`, so
+negative even `k` values correctly get `'+'` too)
+
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: PASS (7 tests)
+
+- [ ] **Step 8: Update `gridTemplatesRepo` to carry `color`**
+
+```typescript
+// src/data/gridTemplatesRepo.ts — add `color` to CreateGridTemplateInput, GridTemplateRow, mapRowToGridTemplate, and the insert payload
+export interface CreateGridTemplateInput {
+  name: string
+  spacingXM: number
+  spacingYM: number
+  angleTrueNorthDeg: number
+  originOffsetX: number
+  originOffsetY: number
+  color: string
+}
+// GridTemplateRow gains `color: string`; mapRowToGridTemplate gains `color: row.color`;
+// createGridTemplate's .insert({...}) payload gains `color: input.color`.
+```
+
+Update `gridTemplatesRepo.test.ts`'s existing payloads/expectations to include
+`color: '#52a675'` (or any test value) on both the input and the row/expected object.
+
+- [ ] **Step 9: Run tests to verify they still pass**
+
+Run: `npx vitest run src/data/gridTemplatesRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 10: Update `gridLinesRepo` to carry `polarity`**
+
+```typescript
+// src/data/gridLinesRepo.ts — add `polarity` to CreateGridLineInput, GridLineRow, mapRowToGridLine, and the insert payload
+export interface CreateGridLineInput {
+  gridInstanceId: string
+  family: GridLineFamily
+  polarity: GridLinePolarity
+  theoreticalPoints: Point[]
+}
+// GridLineRow gains `polarity: GridLinePolarity`; mapRowToGridLine gains `polarity: row.polarity`;
+// the insert mapping gains `polarity: i.polarity`.
+```
+
+Update `gridLinesRepo.test.ts`'s existing payload/expectation to include
+`polarity: '+'`.
+
+- [ ] **Step 11: Run tests to verify they still pass**
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: PASS (1 test)
+
+- [ ] **Step 12: Pass `polarity` through `createGridForPlan`**
+
+```typescript
+// src/domain/createGridForPlan.ts — the createGridLines mapping gains polarity:
+  const lines = await createGridLines(
+    generated.map((l) => ({
+      gridInstanceId: instance.id,
+      family: l.family,
+      polarity: l.polarity,
+      theoreticalPoints: l.points,
+    }))
+  )
+```
+
+Update `createGridForPlan.test.ts`'s `gridLinesRepo.createGridLines` mock
+implementation to also pass through `polarity: i.polarity` in its returned objects
+(currently omits it).
+
+- [ ] **Step 13: Run tests to verify they still pass**
+
+Run: `npx vitest run src/domain/createGridForPlan.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 14: Add a color field to `GridTemplatePicker`'s create form**
+
+```tsx
+// src/components/GridTemplatePicker.tsx — add state + field
+const [color, setColor] = useState('#888888')
+
+// in handleCreate's createGridTemplate call, add: color,
+
+// in the form JSX, add before the submit button:
+<label>
+  Couleur
+  <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+</label>
+```
+
+Update `GridTemplatePicker.test.tsx`'s creation test to set the color input
+(`fireEvent.change(screen.getByLabelText('Couleur'), { target: { value: '#52a675' } })`)
+and expect `color: '#52a675'` in the `createGridTemplate` call.
+
+- [ ] **Step 15: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GridTemplatePicker.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 16: Seed the 5 confirmed networks**
+
+```sql
+-- supabase/migrations/0005_seed_confirmed_networks.sql
+insert into grid_template (name, spacing_x_m, spacing_y_m, angle_true_north_deg, origin_offset_x, origin_offset_y, color)
+values
+  ('Hartmann', 2.5, 1.8, 0, 0, 0, '#e07a5f'),
+  ('Curry', 5.5, 5.5, 45, 0, 0, '#52a675'),
+  ('Palm', 6.5, 4.5, 0, 0, 0, '#4a90c4'),
+  ('Peyré', 7.25, 6.5, 0, 0, 0, '#e0b83f'),
+  ('Wissmann', 10, 10, 45, 0, 0, '#2d6a4f')
+on conflict (name) do update set
+  spacing_x_m = excluded.spacing_x_m,
+  spacing_y_m = excluded.spacing_y_m,
+  angle_true_north_deg = excluded.angle_true_north_deg,
+  color = excluded.color;
+```
+
+- [ ] **Step 17: Apply it and run the full test suite**
+
+Run: `npx supabase db push && npx vitest run`
+Expected: migration applies; all tests pass.
+
+- [ ] **Step 18: Type-check the whole project**
+
+Run: `npx tsc -b --noEmit`
+Expected: no errors. This step exists specifically because `npx vitest run`
+(esbuild-transformed, no type-checking) would NOT catch a `GridTemplate`/`GridLine`
+object literal left over from before this task's fields were added — the fixtures
+enumerated in this task's "Blast radius" note above are exactly the kind of gap this
+step is meant to catch. If it reports missing `color`/`polarity` properties anywhere
+not already listed there, fix them the same way (add the field with a placeholder
+value) before moving on.
+
+- [ ] **Step 19: Commit**
+
+```bash
+git add supabase/migrations/0004_polarity_and_color.sql supabase/migrations/0005_seed_confirmed_networks.sql src/domain/types.ts src/domain/types.test.ts src/geometry/gridGeneration.ts src/geometry/gridGeneration.test.ts src/data/gridTemplatesRepo.ts src/data/gridTemplatesRepo.test.ts src/data/gridLinesRepo.ts src/data/gridLinesRepo.test.ts src/data/gridInstancesRepo.test.ts src/domain/createGridForPlan.ts src/domain/createGridForPlan.test.ts src/components/GridTemplatePicker.tsx src/components/GridTemplatePicker.test.tsx
+git commit -m "Add polarity (+/-) and per-network color; seed all 5 confirmed networks"
+```
+
+---
+
 **Chunk 5 exit criteria:** `npx vitest run` passes. Laurent can, programmatically
-(not yet through the UI — Chunk 6 wires it up), select or create a `GridTemplate`,
-and generate + persist a `GridInstance` with its `GridLine`s around a chosen origin.
-Bagua is explicitly excluded (see this chunk's opening correction) pending a separate
-radial-sector generator.
+(not yet through the UI — Chunk 6 wires it up), select or create a `GridTemplate`
+(now with a color) and generate + persist a `GridInstance` with its `GridLine`s
+(now each carrying a +/- polarity) around a chosen origin. All 5 confirmed networks
+(Hartmann, Curry, Palm, Peyré, Wissmann) are seeded with real reference values;
+Argent (unconfirmed parameters) and Bagua (different geometry, see this chunk's
+opening correction) remain explicitly out of scope.
