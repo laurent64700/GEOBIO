@@ -3589,9 +3589,9 @@ below):**
 - `src/domain/types.test.ts` (Chunk 1, Task 4) — the `line: GridLine` literal needs
   `polarity: '+'` added.
 - `src/data/gridInstancesRepo.test.ts` (Task 19) — the top-level `hartmann` const
-  needs `color: '#e07a5f'` added.
+  needs `color: '#d32f2f'` added.
 - `src/domain/createGridForPlan.test.ts` (Task 20) — the top-level `hartmann` const
-  needs `color: '#e07a5f'` added (this also fixes the derived `offsetTemplate =
+  needs `color: '#d32f2f'` added (this also fixes the derived `offsetTemplate =
   {...hartmann, originOffsetX: 5, originOffsetY: -3}`, which spreads from it).
 - `src/components/GridTemplatePicker.test.tsx` (Task 18) — **both** the first test's
   `hartmann` const and the second test's `curry` const need `color` added (Step 14
@@ -3608,20 +3608,22 @@ global):
 
 | Réseau | Trame range | Midpoint used as seed | Angle | Color |
 |---|---|---|---|---|
-| Hartmann | E-O 1,50-3,50m / N-S 1,10-2,50m | 2,5 / 1,8 | 0° | `#e07a5f` |
-| Curry | diagonal 3,00-8,00m (both directions) | 5,5 / 5,5 | 45° | `#52a675` |
-| Palm | E-O 5,50-7,50m / N-S 3,50-5,50m | 6,5 / 4,5 | 0° | `#4a90c4` |
-| Peyré | E-O 6,00-8,50m / N-S 5,00-8,00m | 7,25 / 6,5 | 0° | `#e0b83f` |
-| Wissmann | diagonal 8,50-11,50m | 10 / 10 | 45°* | `#2d6a4f` |
+| Hartmann | E-O 1,50-3,50m / N-S 1,10-2,50m | 2,5 / 1,8 | 0° | `#d32f2f` (rouge — confirmed) |
+| Curry | diagonal 3,00-8,00m (both directions) | 5,5 / 5,5 | 45° | `#f2c230` (jaune — confirmed) |
+| Palm | E-O 5,50-7,50m / N-S 3,50-5,50m | 6,5 / 4,5 | 0° | `#4a90c4` (placeholder) |
+| Peyré | E-O 6,00-8,50m / N-S 5,00-8,00m | 7,25 / 6,5 | 0° | `#8e5fb3` (placeholder — shifted from an earlier gold/mustard placeholder that visually clashed with Curry's now-confirmed jaune) |
+| Wissmann | diagonal 8,50-11,50m | 10 / 10 | 45°* | `#2d6a4f` (placeholder) |
 
 **⚠️ Not fully confirmed:** the midpoint of each range is seeded as a starting
 point, not a fixed truth — Laurent adjusts per mission via the felt-line deformation
 (§6.2) exactly as with any other template. *Wissmann's angle is assumed identical to
 Curry's (both described as "diagonal") — the manual doesn't state whether Wissmann
 sits on the same diagonal as Curry or the other one; verify with Laurent before
-relying on it. Colors above are placeholders picked to be visually distinct — replace
-with Laurent's actual preferred hex values whenever he supplies them (a one-line
-`UPDATE grid_template SET color = ...` migration, not a code change).
+relying on it. Hartmann (rouge) and Curry (jaune) colors are Laurent's own confirmed
+convention. Palm/Peyré/Wissmann remain placeholders (checked to be visually distinct
+from each other and from Hartmann/Curry) pending his real values — a one-line
+`UPDATE grid_template SET color = ...` migration when he supplies them, not a code
+change.
 
 - [ ] **Step 1: Migration — add columns**
 
@@ -3835,10 +3837,10 @@ Expected: PASS (2 tests)
 -- supabase/migrations/0005_seed_confirmed_networks.sql
 insert into grid_template (name, spacing_x_m, spacing_y_m, angle_true_north_deg, origin_offset_x, origin_offset_y, color)
 values
-  ('Hartmann', 2.5, 1.8, 0, 0, 0, '#e07a5f'),
-  ('Curry', 5.5, 5.5, 45, 0, 0, '#52a675'),
+  ('Hartmann', 2.5, 1.8, 0, 0, 0, '#d32f2f'),
+  ('Curry', 5.5, 5.5, 45, 0, 0, '#f2c230'),
   ('Palm', 6.5, 4.5, 0, 0, 0, '#4a90c4'),
-  ('Peyré', 7.25, 6.5, 0, 0, 0, '#e0b83f'),
+  ('Peyré', 7.25, 6.5, 0, 0, 0, '#8e5fb3'),
   ('Wissmann', 10, 10, 45, 0, 0, '#2d6a4f')
 on conflict (name) do update set
   spacing_x_m = excluded.spacing_x_m,
