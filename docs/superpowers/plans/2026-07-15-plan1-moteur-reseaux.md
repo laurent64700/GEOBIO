@@ -3874,10 +3874,315 @@ git commit -m "Add polarity (+/-) and per-network color; seed all 5 confirmed ne
 
 ---
 
-**Chunk 5 exit criteria:** `npx vitest run` passes. Laurent can, programmatically
-(not yet through the UI — Chunk 6 wires it up), select or create a `GridTemplate`
-(now with a color) and generate + persist a `GridInstance` with its `GridLine`s
-(now each carrying a +/- polarity) around a chosen origin. All 5 confirmed networks
-(Hartmann, Curry, Palm, Peyré, Wissmann) are seeded with real reference values;
-Argent (unconfirmed parameters) and Bagua (different geometry, see this chunk's
-opening correction) remain explicitly out of scope.
+### Task 22: "Base vibratoire" — reinforced (doubled) line every Nth trame
+
+**Why this task exists:** Laurent's reference diagram shows that within a family of
+parallel lines, every **Nth line is doubled/reinforced** — N being the network's
+"base vibratoire" from the original reference table (Task 21's table): Hartmann=7,
+Curry=5, Palm=7, Peyré=9, Wissmann=5. This is a per-line rendering distinction (a
+harmonic/reinforced line), not a different kind of geometry — no new object type is
+needed, just one more derived attribute alongside `polarity`, following the exact
+same "alternate by grid index" pattern Task 21 already established.
+
+**Files:**
+- Create: `supabase/migrations/0006_vibratory_base.sql`
+- Create: `supabase/migrations/0007_seed_vibratory_base.sql`
+- Modify: `src/domain/types.ts` (add `GridTemplate.vibratoryBase`, `GridLine.reinforced`)
+- Modify: `src/geometry/gridGeneration.ts` + `.test.ts` (compute `reinforced`; widen the `Pick<GridTemplate, ...>` parameter type)
+- Modify: `src/geometry/orthogonality.test.ts` — **not required**: `familyBearingDeg`'s
+  parameter type is `Pick<GridTemplate, 'angleTrueNorthDeg'>` only, unaffected by
+  widening `GridTemplate` itself with unrelated fields.
+- Modify: `src/data/gridTemplatesRepo.ts` + `.test.ts` (carry `vibratoryBase`)
+- Modify: `src/data/gridLinesRepo.ts` + `.test.ts` (carry `reinforced`)
+- Modify: `src/domain/createGridForPlan.ts` + `.test.ts` (pass `reinforced` through)
+- Modify: `src/components/GridTemplatePicker.tsx` + `.test.tsx` (add a "base vibratoire" field)
+
+**Blast radius (same class of gap Task 21 hit twice — enumerating explicitly this
+time, for every fixture that constructs a `GridTemplate`-shaped object or calls
+`generateTheoreticalLines`):**
+- `src/geometry/gridGeneration.test.ts` — **all three** existing `template = {...}`
+  object literals (the two from Chunk 2 Task 5, plus Task 21's polarity test) need
+  `vibratoryBase: 7` added, since `generateTheoreticalLines`'s parameter type is
+  about to require it.
+- `src/domain/types.test.ts` (Chunk 1, Task 4) — the `line: GridLine` literal needs
+  `reinforced: false` added.
+- `src/data/gridTemplatesRepo.test.ts` (Task 17) — all three tests' payloads/rows
+  need `vibratoryBase` added (e.g. `5` for the `Curry` fixture used there).
+- `src/data/gridLinesRepo.test.ts` (Task 19) — the bulk-insert test's row, input, and
+  expected-insert-payload all need `reinforced: true` added (pick a value consistent
+  with the test's existing k=0-style example, matching how it already sets `polarity: '+'`).
+- `src/data/gridInstancesRepo.test.ts` (Task 19) — the `hartmann` const needs
+  `vibratoryBase: 7` added.
+- `src/domain/createGridForPlan.test.ts` (Task 20) — the `hartmann` const (and its
+  derived `offsetTemplate`) needs `vibratoryBase: 7` added; the `gridLinesRepo.createGridLines`
+  mock implementation needs to pass through `reinforced: i.reinforced` in its
+  returned objects.
+- `src/components/GridTemplatePicker.test.tsx` (Task 18) — **both** the first test's
+  `hartmann` const and the second test's `curry` const need `vibratoryBase` added;
+  the second test's form-filling steps need a new field interaction (see Step 14
+  below) and its `createGridTemplate` expectation needs `vibratoryBase` added to the
+  payload.
+
+- [ ] **Step 1: Migration — add columns**
+
+```sql
+-- supabase/migrations/0006_vibratory_base.sql
+alter table grid_template add column vibratory_base integer not null default 7 check (vibratory_base > 0);
+alter table grid_line add column reinforced boolean not null default false;
+```
+
+- [ ] **Step 2: Apply it**
+
+Run: `npx supabase db push`
+
+- [ ] **Step 3: Update domain types**
+
+```typescript
+// src/domain/types.ts — modify GridTemplate and GridLine
+export interface GridTemplate {
+  id: string
+  name: string
+  spacingXM: number
+  spacingYM: number
+  angleTrueNorthDeg: number
+  originOffsetX: number
+  originOffsetY: number
+  color: string
+  /** Every Nth line in a family is a reinforced/doubled "harmonic" line — N is this value ("base vibratoire"). */
+  vibratoryBase: number
+}
+
+export interface GridLine {
+  id: string
+  gridInstanceId: string
+  family: GridLineFamily
+  polarity: GridLinePolarity
+  /** True for every vibratoryBase-th line in its family (a reinforced/doubled harmonic line). */
+  reinforced: boolean
+  theoreticalPoints: Point[]
+  adjustedPoints: Point[]
+}
+```
+
+- [ ] **Step 4: Write a failing test for the reinforced-line pattern**
+
+```typescript
+// append to src/geometry/gridGeneration.test.ts, inside describe('generateTheoreticalLines')
+// Also add `vibratoryBase: 7` to this describe block's two existing template
+// literals (Chunk 2, Task 5) and to Task 21's polarity test's template literal —
+// generateTheoreticalLines' parameter type now requires it.
+it('marks every vibratoryBase-th line as reinforced, starting from the central (k=0) line', () => {
+  const template = { spacingXM: 2, spacingYM: 1, angleTrueNorthDeg: 0, vibratoryBase: 3 }
+  const origin = { x: 0, y: 0 }
+  const bounds = { minX: -3.5, maxX: 3.5, minY: -3.5, maxY: 3.5 }
+  const lines = generateTheoreticalLines(template, origin, bounds)
+
+  const axisA = lines.filter((l) => l.family === 'axis-a')
+  const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
+  const kThree = axisA.find((l) => Math.abs(l.points[0].x - 3) < 1e-9)! // k=3, spacingYM=1
+  const kOne = axisA.find((l) => Math.abs(l.points[0].x - 1) < 1e-9)! // k=1
+
+  expect(central.reinforced).toBe(true) // k=0 is a multiple of 3
+  expect(kThree.reinforced).toBe(true) // k=3 is a multiple of 3
+  expect(kOne.reinforced).toBe(false) // k=1 is not
+})
+```
+
+- [ ] **Step 5: Run test to verify it fails**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: FAIL — `reinforced` is `undefined`
+
+- [ ] **Step 6: Add `reinforced` to `generateTheoreticalLines`**
+
+```typescript
+// src/geometry/gridGeneration.ts — modify GeneratedLine and the function signature/loops
+export interface GeneratedLine {
+  family: GridLineFamily
+  polarity: '+' | '-'
+  reinforced: boolean
+  points: [Point, Point]
+}
+
+export function generateTheoreticalLines(
+  template: Pick<GridTemplate, 'spacingXM' | 'spacingYM' | 'angleTrueNorthDeg' | 'vibratoryBase'>,
+  origin: Point,
+  bounds: BoundingBox
+): GeneratedLine[] {
+  const primaryDir = bearingUnitVector(template.angleTrueNorthDeg)
+  const perpDir = bearingUnitVector(template.angleTrueNorthDeg + 90)
+  const lines: GeneratedLine[] = []
+
+  const offsetA = maxOffsetIndexNeeded(origin, template.spacingYM, bounds)
+  for (let k = -offsetA; k <= offsetA; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingYM * perpDir.x,
+      y: origin.y + k * template.spacingYM * perpDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, primaryDir, bounds)
+    if (clipped) {
+      lines.push({
+        family: 'axis-a',
+        polarity: k % 2 === 0 ? '+' : '-',
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
+  }
+
+  const offsetB = maxOffsetIndexNeeded(origin, template.spacingXM, bounds)
+  for (let k = -offsetB; k <= offsetB; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingXM * primaryDir.x,
+      y: origin.y + k * template.spacingXM * primaryDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, perpDir, bounds)
+    if (clipped) {
+      lines.push({
+        family: 'axis-b',
+        polarity: k % 2 === 0 ? '+' : '-',
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
+  }
+
+  return lines
+}
+```
+
+(`k % template.vibratoryBase === 0` correctly also catches negative multiples, same
+`-0 === 0` reasoning already noted for `polarity`)
+
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: PASS (8 tests)
+
+- [ ] **Step 8: Update `gridTemplatesRepo` to carry `vibratoryBase`**
+
+```typescript
+// src/data/gridTemplatesRepo.ts — add `vibratoryBase` to CreateGridTemplateInput,
+// GridTemplateRow (as `vibratory_base`), mapRowToGridTemplate, and the insert payload
+```
+
+Update `gridTemplatesRepo.test.ts`'s three tests to include `vibratoryBase: 5` (input)
+/ `vibratory_base: 5` (row) / `vibratoryBase: 5` (expected) as appropriate per test.
+
+- [ ] **Step 9: Run tests to verify they still pass**
+
+Run: `npx vitest run src/data/gridTemplatesRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 10: Update `gridLinesRepo` to carry `reinforced`**
+
+```typescript
+// src/data/gridLinesRepo.ts — add `reinforced` to CreateGridLineInput, GridLineRow,
+// mapRowToGridLine, and the insert payload
+```
+
+Update `gridLinesRepo.test.ts`'s bulk-insert test to include `reinforced: true` on
+the row, the input, and the expected insert payload.
+
+- [ ] **Step 11: Run test to verify it still passes**
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: PASS (1 test)
+
+- [ ] **Step 12: Update `gridInstancesRepo.test.ts` and `createGridForPlan` + its test**
+
+Add `vibratoryBase: 7` to `gridInstancesRepo.test.ts`'s `hartmann` const.
+
+```typescript
+// src/domain/createGridForPlan.ts — the createGridLines mapping gains reinforced:
+  const lines = await createGridLines(
+    generated.map((l) => ({
+      gridInstanceId: instance.id,
+      family: l.family,
+      polarity: l.polarity,
+      reinforced: l.reinforced,
+      theoreticalPoints: l.points,
+    }))
+  )
+```
+
+Add `vibratoryBase: 7` to `createGridForPlan.test.ts`'s `hartmann` const (which also
+fixes the derived `offsetTemplate`), and add `reinforced: i.reinforced` to that
+file's `gridLinesRepo.createGridLines` mock implementation's returned objects.
+
+- [ ] **Step 13: Run tests to verify they still pass**
+
+Run: `npx vitest run src/data/gridInstancesRepo.test.ts src/domain/createGridForPlan.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 14: Add a "base vibratoire" field to `GridTemplatePicker`'s create form**
+
+```tsx
+// src/components/GridTemplatePicker.tsx — add state + field
+const [vibratoryBase, setVibratoryBase] = useState('7')
+
+// in handleCreate's createGridTemplate call, add: vibratoryBase: Number(vibratoryBase),
+
+// in the form JSX, add after the "Couleur" field Task 21 already inserted
+// (i.e. still before the submit button):
+<label>
+  Base vibratoire
+  <input
+    type="number" step="1" min="1" value={vibratoryBase}
+    onChange={(e) => setVibratoryBase(e.target.value)} required
+  />
+</label>
+```
+
+Update `GridTemplatePicker.test.tsx`: add `vibratoryBase: 7` to the first test's
+`hartmann` const and `vibratoryBase: 5` to the second test's `curry` const; in the
+second test, add
+`fireEvent.change(screen.getByLabelText(/base vibratoire/i), { target: { value: '5' } })`
+alongside the other field interactions, and add `vibratoryBase: 5` to the expected
+`createGridTemplate` call payload.
+
+- [ ] **Step 15: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GridTemplatePicker.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 16: Update `types.test.ts`'s `GridLine` literal**
+
+Add `reinforced: false` to `src/domain/types.test.ts`'s `line: GridLine` object.
+
+- [ ] **Step 17: Seed vibratory base values for the 5 confirmed networks**
+
+```sql
+-- supabase/migrations/0007_seed_vibratory_base.sql
+update grid_template set vibratory_base = 7 where name = 'Hartmann';
+update grid_template set vibratory_base = 5 where name = 'Curry';
+update grid_template set vibratory_base = 7 where name = 'Palm';
+update grid_template set vibratory_base = 9 where name = 'Peyré';
+update grid_template set vibratory_base = 5 where name = 'Wissmann';
+```
+
+- [ ] **Step 18: Apply it, run the full suite, and type-check**
+
+Run: `npx supabase db push && npx vitest run && npx tsc -b --noEmit`
+Expected: migration applies; all tests pass; no type errors. If `tsc` reports a
+missing `vibratoryBase`/`reinforced` property anywhere not listed in this task's
+"Blast radius" note, fix it the same way before moving on.
+
+- [ ] **Step 19: Commit**
+
+```bash
+git add supabase/migrations/0006_vibratory_base.sql supabase/migrations/0007_seed_vibratory_base.sql src/domain/types.ts src/domain/types.test.ts src/geometry/gridGeneration.ts src/geometry/gridGeneration.test.ts src/data/gridTemplatesRepo.ts src/data/gridTemplatesRepo.test.ts src/data/gridLinesRepo.ts src/data/gridLinesRepo.test.ts src/data/gridInstancesRepo.test.ts src/domain/createGridForPlan.ts src/domain/createGridForPlan.test.ts src/components/GridTemplatePicker.tsx src/components/GridTemplatePicker.test.tsx
+git commit -m "Add vibratory-base reinforced-line pattern; seed values for 5 confirmed networks"
+```
+
+---
+
+**Chunk 5 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Laurent can, programmatically (not yet through the UI — Chunk 6 wires it up), select
+or create a `GridTemplate` (with color and base vibratoire) and generate + persist a
+`GridInstance` with its `GridLine`s (each carrying a +/- polarity and a
+reinforced/doubled flag every Nth line) around a chosen origin. All 5 confirmed
+networks (Hartmann, Curry, Palm, Peyré, Wissmann) are seeded with real reference
+values including their vibratory base; Argent (unconfirmed parameters) and Bagua
+(different geometry, see this chunk's opening correction) remain explicitly out of
+scope.
