@@ -2802,3 +2802,766 @@ origin, upload an interior plan photo, calibrate it against 2-4 control points, 
 see the resulting `Plan` row saved with its `calibration` transform. On-map visual
 rendering of the rubber-sheeted interior image is explicitly deferred (Task 16 note)
 pending a quick verification spike against `Leaflet.DistortableImage`'s actual API.
+
+---
+
+## Chunk 5: Grid templates (Hartmann/Curry/Peyré/Or/Argent) + `GridInstance` generation
+
+**⚠️ Correction to the spec (§6.4), caught while writing this chunk:** the spec
+claims Bagua is "just one more `GridTemplate`" reusing the generic grid engine with
+"no logic beyond it needed." That's incorrect — `generateTheoreticalLines` (Chunk 2)
+produces a **rectangular** grid (two perpendicular families of parallel, evenly-spaced
+lines), which is the right shape for Hartmann/Curry/Peyré/Or/Argent, but a Bagua is
+**8 angular wedges radiating from a center point** — a completely different geometry
+that the rectangular generator cannot produce. This wasn't caught during spec review
+either. **Bagua is therefore excluded from this chunk.** It needs its own small
+"radial sector" generator (a different pure function, sharing only the
+"plan calé au nord" prerequisite with the rectangular engine) before it can ship —
+treat that as a follow-up spike, sized similarly to a single extra Chunk-2-style task,
+not a large undertaking, but a real one, not a same-engine reuse.
+
+**Domain values used below:** only Hartmann's full parameters (2 m × 2.5 m, 0° from
+true north) were explicitly confirmed earlier in this project's conversation.
+Curry's angle (45° from Hartmann's, per spec §6.2) is also known, but not its
+spacing — and the schema requires both `spacing_x_m`/`spacing_y_m` as non-null, so a
+seed row still can't be inserted with a value that was never confirmed. Peyré, Or,
+and Argent have neither confirmed. None of the four are seeded — Laurent enters them
+himself via the template-creation UI (Task 18) once he has the real values, since
+getting a geobiology network's parameters wrong would be worse than leaving them
+blank.
+
+### Task 17: `gridTemplatesRepo` + Hartmann seed
+
+**Files:**
+- Create: `supabase/migrations/0003_seed_hartmann_template.sql`
+- Create: `src/data/gridTemplatesRepo.ts`
+- Test: `src/data/gridTemplatesRepo.test.ts`
+
+- [ ] **Step 1: Seed migration**
+
+```sql
+-- supabase/migrations/0003_seed_hartmann_template.sql
+insert into grid_template (name, spacing_x_m, spacing_y_m, angle_true_north_deg, origin_offset_x, origin_offset_y)
+values ('Hartmann', 2, 2.5, 0, 0, 0)
+on conflict (name) do nothing;
+```
+
+- [ ] **Step 2: Apply it**
+
+Run: `npx supabase db push`
+Expected: CLI reports the migration applied; a `Hartmann` row now exists in
+`grid_template`.
+
+- [ ] **Step 3: Write failing tests for `gridTemplatesRepo`**
+
+```typescript
+// src/data/gridTemplatesRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createGridTemplate, listGridTemplates } from './gridTemplatesRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+describe('gridTemplatesRepo', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a grid template and maps the row to camelCase', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 't1', name: 'Curry', spacing_x_m: 2, spacing_y_m: 2,
+        angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0,
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const template = await createGridTemplate({
+      name: 'Curry', spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45,
+      originOffsetX: 0, originOffsetY: 0,
+    })
+
+    expect(from).toHaveBeenCalledWith('grid_template')
+    expect(chain.insert).toHaveBeenCalledWith({
+      name: 'Curry', spacing_x_m: 2, spacing_y_m: 2,
+      angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0,
+    })
+    expect(template.name).toBe('Curry')
+  })
+
+  it('lists all grid templates', async () => {
+    const { from } = createSupabaseChainMock({
+      data: [
+        { id: 't0', name: 'Hartmann', spacing_x_m: 2, spacing_y_m: 2.5, angle_true_north_deg: 0, origin_offset_x: 0, origin_offset_y: 0 },
+      ],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const templates = await listGridTemplates()
+    expect(templates).toHaveLength(1)
+    expect(templates[0].name).toBe('Hartmann')
+  })
+
+  it('throws a descriptive French error when creation fails (e.g. duplicate name)', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'duplicate key value' } })
+    vi.mocked(supabase).from = from
+
+    await expect(
+      createGridTemplate({ name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0 })
+    ).rejects.toThrow('Impossible de créer le gabarit de grille : duplicate key value')
+  })
+})
+```
+
+- [ ] **Step 4: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/gridTemplatesRepo.test.ts`
+Expected: FAIL — `Cannot find module './gridTemplatesRepo'`
+
+- [ ] **Step 5: Implement `gridTemplatesRepo`**
+
+```typescript
+// src/data/gridTemplatesRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { GridTemplate } from '../domain/types'
+
+export interface CreateGridTemplateInput {
+  name: string
+  spacingXM: number
+  spacingYM: number
+  angleTrueNorthDeg: number
+  originOffsetX: number
+  originOffsetY: number
+}
+
+interface GridTemplateRow {
+  id: string
+  name: string
+  spacing_x_m: number
+  spacing_y_m: number
+  angle_true_north_deg: number
+  origin_offset_x: number
+  origin_offset_y: number
+}
+
+function mapRowToGridTemplate(row: GridTemplateRow): GridTemplate {
+  return {
+    id: row.id,
+    name: row.name,
+    spacingXM: row.spacing_x_m,
+    spacingYM: row.spacing_y_m,
+    angleTrueNorthDeg: row.angle_true_north_deg,
+    originOffsetX: row.origin_offset_x,
+    originOffsetY: row.origin_offset_y,
+  }
+}
+
+export async function createGridTemplate(input: CreateGridTemplateInput): Promise<GridTemplate> {
+  const { data, error } = await supabase
+    .from('grid_template')
+    .insert({
+      name: input.name,
+      spacing_x_m: input.spacingXM,
+      spacing_y_m: input.spacingYM,
+      angle_true_north_deg: input.angleTrueNorthDeg,
+      origin_offset_x: input.originOffsetX,
+      origin_offset_y: input.originOffsetY,
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de créer le gabarit de grille : ${error.message}`)
+  return mapRowToGridTemplate(data as GridTemplateRow)
+}
+
+export async function listGridTemplates(): Promise<GridTemplate[]> {
+  const { data, error } = await supabase.from('grid_template').select()
+
+  if (error) throw new Error(`Impossible de charger les gabarits de grille : ${error.message}`)
+  return (data as GridTemplateRow[]).map(mapRowToGridTemplate)
+}
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/gridTemplatesRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add supabase/migrations/0003_seed_hartmann_template.sql src/data/gridTemplatesRepo.ts src/data/gridTemplatesRepo.test.ts
+git commit -m "Add gridTemplatesRepo and seed the Hartmann template"
+```
+
+---
+
+### Task 18: `GridTemplatePicker` (select existing or create a new template)
+
+**Files:**
+- Create: `src/components/GridTemplatePicker.tsx`
+- Test: `src/components/GridTemplatePicker.test.tsx`
+
+**Scope simplification:** the create-template form only exposes `name`, `spacingXM`,
+`spacingYM`, `angleTrueNorthDeg` — `originOffsetX`/`originOffsetY` default to `0` and
+aren't user-editable here. Spec §3.2 defines them as part of a `GridTemplate` but
+never describes a workflow that needs a non-zero offset; exposing them would be
+speculative UI for a case nobody asked for. `gridTemplatesRepo.createGridTemplate`
+(Task 17) still accepts them, so this isn't a data-model limitation — only a
+narrower form, easy to widen later if a real need shows up.
+
+- [ ] **Step 1: Write failing tests**
+
+```tsx
+// src/components/GridTemplatePicker.test.tsx
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { GridTemplatePicker } from './GridTemplatePicker'
+import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
+
+vi.mock('../data/gridTemplatesRepo')
+
+const hartmann = {
+  id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
+  angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0,
+}
+
+describe('GridTemplatePicker', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lists existing templates and calls onSelected when one is chosen', async () => {
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([hartmann])
+    const onSelected = vi.fn()
+
+    render(<GridTemplatePicker onSelected={onSelected} />)
+
+    const option = await screen.findByRole('button', { name: /hartmann/i })
+    fireEvent.click(option)
+    expect(onSelected).toHaveBeenCalledWith(hartmann)
+  })
+
+  it('creates a new template and calls onSelected with it', async () => {
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
+    const curry = {
+      id: 't1', name: 'Curry', spacingXM: 2, spacingYM: 2,
+      angleTrueNorthDeg: 45, originOffsetX: 0, originOffsetY: 0,
+    }
+    vi.mocked(gridTemplatesRepo.createGridTemplate).mockResolvedValue(curry)
+    const onSelected = vi.fn()
+
+    render(<GridTemplatePicker onSelected={onSelected} />)
+    await screen.findByText(/aucun gabarit/i)
+
+    fireEvent.change(screen.getByLabelText('Nom'), { target: { value: 'Curry' } })
+    fireEvent.change(screen.getByLabelText(/espacement x/i), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText(/espacement y/i), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText(/angle/i), { target: { value: '45' } })
+    fireEvent.click(screen.getByRole('button', { name: /créer le gabarit/i }))
+
+    await waitFor(() =>
+      expect(gridTemplatesRepo.createGridTemplate).toHaveBeenCalledWith({
+        name: 'Curry', spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45,
+        originOffsetX: 0, originOffsetY: 0,
+      })
+    )
+    expect(onSelected).toHaveBeenCalledWith(curry)
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/GridTemplatePicker.test.tsx`
+Expected: FAIL — `Cannot find module './GridTemplatePicker'`
+
+- [ ] **Step 3: Implement `GridTemplatePicker`**
+
+```tsx
+// src/components/GridTemplatePicker.tsx
+import { useEffect, useState, type FormEvent } from 'react'
+import { createGridTemplate, listGridTemplates } from '../data/gridTemplatesRepo'
+import type { GridTemplate } from '../domain/types'
+
+export interface GridTemplatePickerProps {
+  onSelected: (template: GridTemplate) => void
+}
+
+export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
+  const [templates, setTemplates] = useState<GridTemplate[] | null>(null)
+  const [name, setName] = useState('')
+  const [spacingXM, setSpacingXM] = useState('')
+  const [spacingYM, setSpacingYM] = useState('')
+  const [angleTrueNorthDeg, setAngleTrueNorthDeg] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listGridTemplates()
+      .then(setTemplates)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+  }, [])
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault()
+    try {
+      const template = await createGridTemplate({
+        name,
+        spacingXM: Number(spacingXM),
+        spacingYM: Number(spacingYM),
+        angleTrueNorthDeg: Number(angleTrueNorthDeg),
+        originOffsetX: 0,
+        originOffsetY: 0,
+      })
+      onSelected(template)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  if (templates === null) return <p>Chargement des gabarits…</p>
+
+  return (
+    <div>
+      {error && <p role="alert">{error}</p>}
+      {templates.length === 0 ? (
+        <p>Aucun gabarit existant — créez-en un.</p>
+      ) : (
+        <ul>
+          {templates.map((t) => (
+            <li key={t.id}>
+              <button onClick={() => onSelected(t)}>{t.name}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form onSubmit={handleCreate}>
+        <label>
+          Nom
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <label>
+          Espacement X (m)
+          <input
+            type="number" step="0.01" value={spacingXM}
+            onChange={(e) => setSpacingXM(e.target.value)} required
+          />
+        </label>
+        <label>
+          Espacement Y (m)
+          <input
+            type="number" step="0.01" value={spacingYM}
+            onChange={(e) => setSpacingYM(e.target.value)} required
+          />
+        </label>
+        <label>
+          Angle par rapport au nord vrai (degrés)
+          <input
+            type="number" step="0.1" value={angleTrueNorthDeg}
+            onChange={(e) => setAngleTrueNorthDeg(e.target.value)} required
+          />
+        </label>
+        <button type="submit">Créer le gabarit</button>
+      </form>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GridTemplatePicker.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/GridTemplatePicker.tsx src/components/GridTemplatePicker.test.tsx
+git commit -m "Add GridTemplatePicker: select or create a grid template"
+```
+
+**Scope note:** `GridTemplatePicker` is not wired into `MissionWorkspace` in this
+chunk — that happens in Chunk 6, together with the map rendering of the generated
+grid lines it will trigger. Selecting/creating a template with nothing yet visible on
+the map would be a confusing dead end; Chunk 6 makes the whole "pick a template →
+place its origin → see it on the map → adjust it" flow work end-to-end in one piece.
+
+---
+
+### Task 19: `gridInstancesRepo` + `gridLinesRepo`
+
+**Files:**
+- Create: `src/data/gridInstancesRepo.ts`
+- Test: `src/data/gridInstancesRepo.test.ts`
+- Create: `src/data/gridLinesRepo.ts`
+- Test: `src/data/gridLinesRepo.test.ts`
+
+- [ ] **Step 1: Write failing tests for `gridInstancesRepo`**
+
+```typescript
+// src/data/gridInstancesRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createGridInstance } from './gridInstancesRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+const hartmann = {
+  id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
+  angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0,
+}
+
+describe('gridInstancesRepo', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a grid instance with a frozen template snapshot', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 1.5, origin_y: -2 },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const instance = await createGridInstance({
+      planId: 'p1', templateSnapshot: hartmann, originX: 1.5, originY: -2,
+    })
+
+    expect(from).toHaveBeenCalledWith('grid_instance')
+    expect(chain.insert).toHaveBeenCalledWith({
+      plan_id: 'p1', template_snapshot: hartmann, origin_x: 1.5, origin_y: -2,
+    })
+    expect(instance.templateSnapshot).toEqual(hartmann)
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/data/gridInstancesRepo.test.ts`
+Expected: FAIL — `Cannot find module './gridInstancesRepo'`
+
+- [ ] **Step 3: Implement `gridInstancesRepo`**
+
+```typescript
+// src/data/gridInstancesRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { GridInstance, GridTemplate } from '../domain/types'
+
+export interface CreateGridInstanceInput {
+  planId: string
+  templateSnapshot: GridTemplate
+  originX: number
+  originY: number
+}
+
+interface GridInstanceRow {
+  id: string
+  plan_id: string
+  template_snapshot: GridTemplate
+  origin_x: number
+  origin_y: number
+}
+
+function mapRowToGridInstance(row: GridInstanceRow): GridInstance {
+  return {
+    id: row.id,
+    planId: row.plan_id,
+    templateSnapshot: row.template_snapshot,
+    originX: row.origin_x,
+    originY: row.origin_y,
+  }
+}
+
+export async function createGridInstance(input: CreateGridInstanceInput): Promise<GridInstance> {
+  const { data, error } = await supabase
+    .from('grid_instance')
+    .insert({
+      plan_id: input.planId,
+      template_snapshot: input.templateSnapshot,
+      origin_x: input.originX,
+      origin_y: input.originY,
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de créer l'instance de grille : ${error.message}`)
+  return mapRowToGridInstance(data as GridInstanceRow)
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/data/gridInstancesRepo.test.ts`
+Expected: PASS (1 test)
+
+- [ ] **Step 5: Write failing tests for `gridLinesRepo`**
+
+```typescript
+// src/data/gridLinesRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createGridLines } from './gridLinesRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+describe('gridLinesRepo', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('bulk-creates grid lines with adjustedPoints initialized to theoreticalPoints', async () => {
+    const rows = [
+      {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a',
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      },
+    ]
+    const { from, chain } = createSupabaseChainMock({ data: rows, error: null })
+    vi.mocked(supabase).from = from
+
+    const lines = await createGridLines([
+      { gridInstanceId: 'gi1', family: 'axis-a', theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
+    ])
+
+    expect(from).toHaveBeenCalledWith('grid_line')
+    expect(chain.insert).toHaveBeenCalledWith([
+      {
+        grid_instance_id: 'gi1', family: 'axis-a',
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      },
+    ])
+    expect(lines[0].adjustedPoints).toEqual(lines[0].theoreticalPoints)
+  })
+})
+```
+
+- [ ] **Step 6: Run test to verify it fails**
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: FAIL — `Cannot find module './gridLinesRepo'`
+
+- [ ] **Step 7: Implement `gridLinesRepo`**
+
+```typescript
+// src/data/gridLinesRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { GridLine, GridLineFamily, Point } from '../domain/types'
+
+export interface CreateGridLineInput {
+  gridInstanceId: string
+  family: GridLineFamily
+  theoreticalPoints: Point[]
+}
+
+interface GridLineRow {
+  id: string
+  grid_instance_id: string
+  family: GridLineFamily
+  theoretical_points: Point[]
+  adjusted_points: Point[]
+}
+
+function mapRowToGridLine(row: GridLineRow): GridLine {
+  return {
+    id: row.id,
+    gridInstanceId: row.grid_instance_id,
+    family: row.family,
+    theoreticalPoints: row.theoretical_points,
+    adjustedPoints: row.adjusted_points,
+  }
+}
+
+export async function createGridLines(inputs: CreateGridLineInput[]): Promise<GridLine[]> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .insert(
+      inputs.map((i) => ({
+        grid_instance_id: i.gridInstanceId,
+        family: i.family,
+        theoretical_points: i.theoreticalPoints,
+        adjusted_points: i.theoreticalPoints,
+      }))
+    )
+    .select()
+
+  if (error) throw new Error(`Impossible de créer les lignes de grille : ${error.message}`)
+  return (data as GridLineRow[]).map(mapRowToGridLine)
+}
+```
+
+- [ ] **Step 8: Run test to verify it passes**
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: PASS (1 test)
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/data/gridInstancesRepo.ts src/data/gridInstancesRepo.test.ts src/data/gridLinesRepo.ts src/data/gridLinesRepo.test.ts
+git commit -m "Add gridInstancesRepo and gridLinesRepo"
+```
+
+---
+
+### Task 20: `createGridForPlan` orchestration
+
+**Files:**
+- Create: `src/domain/createGridForPlan.ts`
+- Test: `src/domain/createGridForPlan.test.ts`
+
+- [ ] **Step 1: Write a failing test**
+
+```typescript
+// src/domain/createGridForPlan.test.ts
+import { describe, it, expect, vi } from 'vitest'
+import { createGridForPlan, DEFAULT_GRID_RADIUS_M } from './createGridForPlan'
+import * as gridInstancesRepo from '../data/gridInstancesRepo'
+import * as gridLinesRepo from '../data/gridLinesRepo'
+import type { GridLine } from './types'
+
+vi.mock('../data/gridInstancesRepo')
+vi.mock('../data/gridLinesRepo')
+
+const hartmann = {
+  id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
+  angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0,
+}
+
+describe('createGridForPlan', () => {
+  it('generates theoretical lines around the origin and persists the instance + lines', async () => {
+    vi.mocked(gridInstancesRepo.createGridInstance).mockResolvedValue({
+      id: 'gi1', planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0,
+    })
+    vi.mocked(gridLinesRepo.createGridLines).mockImplementation(async (inputs) =>
+      inputs.map(
+        (i, idx): GridLine => ({
+          id: `gl${idx}`,
+          gridInstanceId: i.gridInstanceId,
+          family: i.family,
+          theoreticalPoints: i.theoreticalPoints,
+          adjustedPoints: i.theoreticalPoints,
+        })
+      )
+    )
+
+    const result = await createGridForPlan('p1', hartmann, { x: 0, y: 0 })
+
+    expect(gridInstancesRepo.createGridInstance).toHaveBeenCalledWith({
+      planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0,
+    })
+    const [linesArg] = vi.mocked(gridLinesRepo.createGridLines).mock.calls[0]
+    expect(linesArg.length).toBeGreaterThan(0)
+    expect(linesArg.every((l) => l.gridInstanceId === 'gi1')).toBe(true)
+
+    // Exact grid math is already verified in Chunk 2 — this only sanity-checks
+    // that a plausible number of lines was generated for the default radius,
+    // to catch wiring mistakes (e.g. swapped spacing/radius arguments).
+    const axisACount = linesArg.filter((l) => l.family === 'axis-a').length
+    expect(axisACount).toBeGreaterThan((2 * DEFAULT_GRID_RADIUS_M) / hartmann.spacingYM - 5)
+
+    expect(result.instance.id).toBe('gi1')
+    expect(result.lines).toHaveLength(linesArg.length)
+  })
+
+  it('composes the template origin offset into the clicked point before generating', async () => {
+    const offsetTemplate = { ...hartmann, originOffsetX: 5, originOffsetY: -3 }
+    vi.mocked(gridInstancesRepo.createGridInstance).mockResolvedValue({
+      id: 'gi2', planId: 'p1', templateSnapshot: offsetTemplate, originX: 5, originY: -3,
+    })
+    vi.mocked(gridLinesRepo.createGridLines).mockResolvedValue([])
+
+    await createGridForPlan('p1', offsetTemplate, { x: 0, y: 0 })
+
+    // Clicked (0,0) + offset (5,-3) = final origin (5,-3) — this is what must
+    // reach createGridInstance, per generateTheoreticalLines' documented
+    // contract (Chunk 2) that origin composition is this function's job.
+    expect(gridInstancesRepo.createGridInstance).toHaveBeenCalledWith({
+      planId: 'p1', templateSnapshot: offsetTemplate, originX: 5, originY: -3,
+    })
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/domain/createGridForPlan.test.ts`
+Expected: FAIL — `Cannot find module './createGridForPlan'`
+
+- [ ] **Step 3: Implement `createGridForPlan`**
+
+```typescript
+// src/domain/createGridForPlan.ts
+import { generateTheoreticalLines, type BoundingBox } from '../geometry/gridGeneration'
+import { createGridInstance } from '../data/gridInstancesRepo'
+import { createGridLines } from '../data/gridLinesRepo'
+import type { GridTemplate, Point } from './types'
+
+/**
+ * Fixed default extent around the grid origin. A real "current map viewport"
+ * bounds would need reading Leaflet's live view and converting it to local
+ * coordinates — deferred to Chunk 6, once the map actually renders the
+ * generated lines and it's clear whether this default needs to be wider.
+ */
+export const DEFAULT_GRID_RADIUS_M = 30
+
+export async function createGridForPlan(
+  planId: string,
+  template: GridTemplate,
+  originClicked: Point,
+  radiusM: number = DEFAULT_GRID_RADIUS_M
+) {
+  // generateTheoreticalLines (Chunk 2) documents that it expects the FINAL,
+  // already-composed origin — i.e. the point Laurent clicked, shifted by the
+  // template's own offset. That composition is this function's job; skipping
+  // it would silently misplace every grid generated from a template whose
+  // origin offset isn't (0, 0).
+  const origin: Point = {
+    x: originClicked.x + template.originOffsetX,
+    y: originClicked.y + template.originOffsetY,
+  }
+
+  const bounds: BoundingBox = {
+    minX: origin.x - radiusM,
+    maxX: origin.x + radiusM,
+    minY: origin.y - radiusM,
+    maxY: origin.y + radiusM,
+  }
+  const generated = generateTheoreticalLines(template, origin, bounds)
+
+  const instance = await createGridInstance({
+    planId,
+    templateSnapshot: template,
+    originX: origin.x,
+    originY: origin.y,
+  })
+  const lines = await createGridLines(
+    generated.map((l) => ({
+      gridInstanceId: instance.id,
+      family: l.family,
+      theoreticalPoints: l.points,
+    }))
+  )
+
+  return { instance, lines }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/domain/createGridForPlan.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/domain/createGridForPlan.ts src/domain/createGridForPlan.test.ts
+git commit -m "Add createGridForPlan orchestration"
+```
+
+---
+
+**Chunk 5 exit criteria:** `npx vitest run` passes. Laurent can, programmatically
+(not yet through the UI — Chunk 6 wires it up), select or create a `GridTemplate`,
+and generate + persist a `GridInstance` with its `GridLine`s around a chosen origin.
+Bagua is explicitly excluded (see this chunk's opening correction) pending a separate
+radial-sector generator.
