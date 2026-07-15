@@ -1019,3 +1019,693 @@ git commit -m "Add orthogonality micro-adjustment assist math"
 
 **Chunk 2 exit criteria:** `npx vitest run` passes all geometry tests (13 tests across
 3 files); no React/Leaflet/Supabase dependency anywhere in `src/geometry/`.
+
+---
+
+## Chunk 3: Map shell — Leaflet + IGN base layer, Mission creation, exterior Plan
+
+**Files created in this chunk map 1:1 to spec §3.1's "Extérieur" paragraph and §6.1's
+`Mission`/`Plan` rows — no calibration logic here (that's Chunk 4, interior-only).**
+
+### Task 8: Shared Supabase test mock + `missionsRepo`
+
+**Files:**
+- Create: `src/test/supabaseMock.ts`
+- Create: `src/data/missionsRepo.ts`
+- Test: `src/data/missionsRepo.test.ts`
+
+- [ ] **Step 1: Write the shared Supabase chain mock helper (used by every repo test in this plan — written once here, reused in Chunks 3-7)**
+
+```typescript
+// src/test/supabaseMock.ts
+import { vi } from 'vitest'
+
+export interface SupabaseQueryResult<T> {
+  data: T | null
+  error: { message: string } | null
+}
+
+/**
+ * A minimal fake for supabase-js's fluent query builder. Every chained method
+ * (insert/select/eq/order/...) returns the same `chain` object; `single()`
+ * resolves to `result`, and the chain itself is also thenable so queries that
+ * never call `.single()` (e.g. a bare `.select()` list query) can be awaited
+ * directly, matching how supabase-js's real builder behaves.
+ */
+export function createSupabaseChainMock<T>(result: SupabaseQueryResult<T>) {
+  const chain: any = {
+    insert: vi.fn(() => chain),
+    select: vi.fn(() => chain),
+    eq: vi.fn(() => chain),
+    order: vi.fn(() => chain),
+    single: vi.fn(() => Promise.resolve(result)),
+    then: (resolve: (value: SupabaseQueryResult<T>) => void) => resolve(result),
+  }
+  const from = vi.fn(() => chain)
+  return { from, chain }
+}
+```
+
+- [ ] **Step 2: Write failing tests for `missionsRepo`**
+
+```typescript
+// src/data/missionsRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createMission, listMissions } from './missionsRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+describe('missionsRepo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('creates a mission and maps the row to camelCase', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'm1',
+        address: '12 rue des Lilas',
+        mission_date: '2026-07-20',
+        declination_deg: 1.5,
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const mission = await createMission({
+      address: '12 rue des Lilas',
+      missionDate: '2026-07-20',
+      declinationDeg: 1.5,
+    })
+
+    expect(from).toHaveBeenCalledWith('mission')
+    expect(chain.insert).toHaveBeenCalledWith({
+      address: '12 rue des Lilas',
+      mission_date: '2026-07-20',
+      declination_deg: 1.5,
+    })
+    expect(mission).toEqual({
+      id: 'm1',
+      address: '12 rue des Lilas',
+      missionDate: '2026-07-20',
+      declinationDeg: 1.5,
+    })
+  })
+
+  it('throws a descriptive French error when the insert fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(
+      createMission({ address: 'x', missionDate: '2026-07-20' })
+    ).rejects.toThrow('Impossible de créer la mission : network down')
+  })
+
+  it('lists missions ordered by most recent date first', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [
+        { id: 'm2', address: 'B', mission_date: '2026-07-21', declination_deg: null },
+        { id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null },
+      ],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const missions = await listMissions()
+
+    expect(chain.order).toHaveBeenCalledWith('mission_date', { ascending: false })
+    expect(missions).toHaveLength(2)
+    expect(missions[0].id).toBe('m2')
+  })
+})
+```
+
+- [ ] **Step 3: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/missionsRepo.test.ts`
+Expected: FAIL — `Cannot find module './missionsRepo'`
+
+- [ ] **Step 4: Implement `missionsRepo`**
+
+```typescript
+// src/data/missionsRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { Mission } from '../domain/types'
+
+export interface CreateMissionInput {
+  address: string
+  missionDate: string // ISO date, e.g. '2026-07-20'
+  declinationDeg?: number | null
+}
+
+interface MissionRow {
+  id: string
+  address: string
+  mission_date: string
+  declination_deg: number | null
+}
+
+function mapRowToMission(row: MissionRow): Mission {
+  return {
+    id: row.id,
+    address: row.address,
+    missionDate: row.mission_date,
+    declinationDeg: row.declination_deg,
+  }
+}
+
+export async function createMission(input: CreateMissionInput): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .insert({
+      address: input.address,
+      mission_date: input.missionDate,
+      declination_deg: input.declinationDeg ?? null,
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de créer la mission : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+
+export async function listMissions(): Promise<Mission[]> {
+  const { data, error } = await supabase
+    .from('mission')
+    .select()
+    .order('mission_date', { ascending: false })
+
+  if (error) throw new Error(`Impossible de charger les missions : ${error.message}`)
+  return (data as MissionRow[]).map(mapRowToMission)
+}
+```
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/missionsRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/test/supabaseMock.ts src/data/missionsRepo.ts src/data/missionsRepo.test.ts
+git commit -m "Add Supabase test mock helper and missionsRepo"
+```
+
+---
+
+### Task 9: `MapView` with IGN base layer
+
+**Files:**
+- Create: `src/components/MapView.tsx`
+- Test: `src/components/MapView.test.tsx`
+
+- [ ] **Step 1: Write failing tests**
+
+```typescript
+// src/components/MapView.test.tsx
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { MapView } from './MapView'
+
+describe('MapView', () => {
+  it('renders a Leaflet map container', () => {
+    render(<MapView center={[48.8566, 2.3522]} />)
+    expect(document.querySelector('.leaflet-container')).not.toBeNull()
+  })
+
+  it('renders the IGN attribution', () => {
+    render(<MapView center={[48.8566, 2.3522]} />)
+    expect(screen.getByText(/IGN-F\/Géoportail/)).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/MapView.test.tsx`
+Expected: FAIL — `Cannot find module './MapView'`
+
+- [ ] **Step 3: Implement `MapView`**
+
+```tsx
+// src/components/MapView.tsx
+import { MapContainer, TileLayer } from 'react-leaflet'
+import 'leaflet/dist/leaflet.css'
+
+// IGN Géoplateforme WMTS endpoint (data.geopf.fr) — free, keyless access to
+// the standard orthophoto layer as of this plan's writing (spec §3.1/§4).
+// ⚠️ VERIFY against https://geoservices.ign.fr/documentation before relying
+// on it: IGN has changed this endpoint's domain and auth scheme before, and
+// may again — this constant is the single place to update if so.
+const IGN_ORTHOPHOTO_WMTS_URL =
+  'https://data.geopf.fr/wmts?SERVICE=WMTS&VERSION=1.0.0&REQUEST=GetTile' +
+  '&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM' +
+  '&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg'
+
+export interface MapViewProps {
+  /** [latitude, longitude] */
+  center: [number, number]
+  zoom?: number
+}
+
+export function MapView({ center, zoom = 18 }: MapViewProps) {
+  return (
+    <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+      <TileLayer url={IGN_ORTHOPHOTO_WMTS_URL} attribution="&copy; IGN-F/Géoportail" maxZoom={20} />
+    </MapContainer>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/MapView.test.tsx`
+Expected: PASS (2 tests)
+
+If this fails with a jsdom-related error from Leaflet (rare for a bare
+`MapContainer` + `TileLayer` with no markers, but Leaflet does probe some
+browser APIs on mount): add a `src/test/setup.ts` with a minimal
+`window.ResizeObserver` stub, wire it into `vite.config.ts`'s
+`test.setupFiles`, and re-run. Do not add speculative polyfills beyond what
+the actual failure message asks for.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/components/MapView.tsx src/components/MapView.test.tsx
+git commit -m "Add MapView with IGN Geoplateforme base layer"
+```
+
+---
+
+### Task 10: `plansRepo` (exterior plan creation)
+
+**Files:**
+- Create: `src/data/plansRepo.ts`
+- Test: `src/data/plansRepo.test.ts`
+
+- [ ] **Step 1: Write failing tests**
+
+```typescript
+// src/data/plansRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createPlan, listPlansForMission } from './plansRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+describe('plansRepo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('creates an exterior plan with no image/calibration', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: { id: 'p1', mission_id: 'm1', kind: 'exterieur', image_url: null, calibration: null },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const plan = await createPlan({ missionId: 'm1', kind: 'exterieur' })
+
+    expect(from).toHaveBeenCalledWith('plan')
+    expect(chain.insert).toHaveBeenCalledWith({
+      mission_id: 'm1',
+      kind: 'exterieur',
+      image_url: null,
+      calibration: null,
+    })
+    expect(plan).toEqual({ id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null })
+  })
+
+  it('throws a descriptive French error when creation fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(createPlan({ missionId: 'm1', kind: 'exterieur' })).rejects.toThrow(
+      'Impossible de créer le plan : network down'
+    )
+  })
+
+  it('lists plans scoped to a mission', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [{ id: 'p1', mission_id: 'm1', kind: 'exterieur', image_url: null, calibration: null }],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const plans = await listPlansForMission('m1')
+
+    expect(chain.eq).toHaveBeenCalledWith('mission_id', 'm1')
+    expect(plans).toHaveLength(1)
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/plansRepo.test.ts`
+Expected: FAIL — `Cannot find module './plansRepo'`
+
+- [ ] **Step 3: Implement `plansRepo`**
+
+```typescript
+// src/data/plansRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { AffineTransform, Plan, PlanKind } from '../domain/types'
+
+export interface CreatePlanInput {
+  missionId: string
+  kind: PlanKind
+  imageUrl?: string | null
+  calibration?: AffineTransform | null
+}
+
+interface PlanRow {
+  id: string
+  mission_id: string
+  kind: PlanKind
+  image_url: string | null
+  calibration: AffineTransform | null
+}
+
+function mapRowToPlan(row: PlanRow): Plan {
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    kind: row.kind,
+    imageUrl: row.image_url,
+    calibration: row.calibration,
+  }
+}
+
+export async function createPlan(input: CreatePlanInput): Promise<Plan> {
+  const { data, error } = await supabase
+    .from('plan')
+    .insert({
+      mission_id: input.missionId,
+      kind: input.kind,
+      image_url: input.imageUrl ?? null,
+      calibration: input.calibration ?? null,
+    })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de créer le plan : ${error.message}`)
+  return mapRowToPlan(data as PlanRow)
+}
+
+export async function listPlansForMission(missionId: string): Promise<Plan[]> {
+  const { data, error } = await supabase.from('plan').select().eq('mission_id', missionId)
+
+  if (error) throw new Error(`Impossible de charger les plans : ${error.message}`)
+  return (data as PlanRow[]).map(mapRowToPlan)
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/plansRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/data/plansRepo.ts src/data/plansRepo.test.ts
+git commit -m "Add plansRepo"
+```
+
+---
+
+### Task 11: `MissionForm` + `MissionWorkspace` composition
+
+**Files:**
+- Create: `src/components/MissionForm.tsx`
+- Test: `src/components/MissionForm.test.tsx`
+- Create: `src/pages/MissionWorkspace.tsx`
+- Test: `src/pages/MissionWorkspace.test.tsx`
+- Modify: `src/App.tsx` (replace the Vite starter content with `<MissionWorkspace />`)
+
+- [ ] **Step 1: Write failing tests for `MissionForm`**
+
+```typescript
+// src/components/MissionForm.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MissionForm } from './MissionForm'
+import * as missionsRepo from '../data/missionsRepo'
+
+vi.mock('../data/missionsRepo')
+
+describe('MissionForm', () => {
+  it('creates a mission and calls onCreated with the result', async () => {
+    const mission = { id: 'm1', address: '12 rue des Lilas', missionDate: '2026-07-20', declinationDeg: null }
+    vi.mocked(missionsRepo.createMission).mockResolvedValue(mission)
+    const onCreated = vi.fn()
+
+    render(<MissionForm onCreated={onCreated} />)
+    fireEvent.change(screen.getByLabelText('Adresse'), { target: { value: '12 rue des Lilas' } })
+    fireEvent.change(screen.getByLabelText('Date de mission'), { target: { value: '2026-07-20' } })
+    fireEvent.click(screen.getByRole('button', { name: /créer la mission/i }))
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(mission))
+  })
+
+  it('shows an error message when creation fails', async () => {
+    vi.mocked(missionsRepo.createMission).mockRejectedValue(
+      new Error('Impossible de créer la mission : network down')
+    )
+
+    render(<MissionForm onCreated={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Adresse'), { target: { value: 'x' } })
+    fireEvent.change(screen.getByLabelText('Date de mission'), { target: { value: '2026-07-20' } })
+    fireEvent.click(screen.getByRole('button', { name: /créer la mission/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/MissionForm.test.tsx`
+Expected: FAIL — `Cannot find module './MissionForm'`
+
+- [ ] **Step 3: Implement `MissionForm`**
+
+```tsx
+// src/components/MissionForm.tsx
+import { useState, type FormEvent } from 'react'
+import { createMission } from '../data/missionsRepo'
+import type { Mission } from '../domain/types'
+
+export interface MissionFormProps {
+  onCreated: (mission: Mission) => void
+}
+
+export function MissionForm({ onCreated }: MissionFormProps) {
+  const [address, setAddress] = useState('')
+  const [missionDate, setMissionDate] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError(null)
+    try {
+      const mission = await createMission({ address, missionDate })
+      onCreated(mission)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <label>
+        Adresse
+        <input value={address} onChange={(e) => setAddress(e.target.value)} required />
+      </label>
+      <label>
+        Date de mission
+        <input
+          type="date"
+          value={missionDate}
+          onChange={(e) => setMissionDate(e.target.value)}
+          required
+        />
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <button type="submit" disabled={submitting}>
+        {submitting ? 'Création…' : 'Créer la mission'}
+      </button>
+    </form>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/MissionForm.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Write failing tests for `MissionWorkspace`**
+
+```tsx
+// src/pages/MissionWorkspace.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { MissionWorkspace } from './MissionWorkspace'
+import * as plansRepo from '../data/plansRepo'
+
+vi.mock('../data/plansRepo')
+vi.mock('../components/MissionForm', async () => {
+  const { useEffect } = await import('react')
+  return {
+    // Calls onCreated from an effect, not during render — matches how the
+    // real MissionForm invokes it (from an async submit handler, after
+    // render completes), and avoids React's "Cannot update a component
+    // while rendering a different component" warning that a synchronous
+    // in-render call would trigger.
+    MissionForm: ({ onCreated }: { onCreated: (m: unknown) => void }) => {
+      useEffect(() => {
+        onCreated({ id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null })
+      }, [onCreated])
+      return null
+    },
+  }
+})
+vi.mock('../components/MapView', () => ({
+  MapView: () => <div data-testid="map-view" />,
+}))
+
+describe('MissionWorkspace', () => {
+  it('creates an exterior plan once a mission is created, then shows the map', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1',
+      missionId: 'm1',
+      kind: 'exterieur',
+      imageUrl: null,
+      calibration: null,
+    })
+
+    render(<MissionWorkspace />)
+
+    await waitFor(() =>
+      expect(plansRepo.createPlan).toHaveBeenCalledWith({ missionId: 'm1', kind: 'exterieur' })
+    )
+    expect(await screen.findByTestId('map-view')).toBeInTheDocument()
+  })
+
+  it('shows an error if exterior plan creation fails', async () => {
+    vi.mocked(plansRepo.createPlan).mockRejectedValue(
+      new Error('Impossible de créer le plan : network down')
+    )
+
+    render(<MissionWorkspace />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
+  })
+})
+```
+
+- [ ] **Step 6: Run tests to verify they fail**
+
+Run: `npx vitest run src/pages/MissionWorkspace.test.tsx`
+Expected: FAIL — `Cannot find module './MissionWorkspace'`
+
+- [ ] **Step 7: Implement `MissionWorkspace`**
+
+```tsx
+// src/pages/MissionWorkspace.tsx
+import { useState } from 'react'
+import { MissionForm } from '../components/MissionForm'
+import { MapView } from '../components/MapView'
+import { createPlan } from '../data/plansRepo'
+import type { Mission } from '../domain/types'
+
+// Rough center of metropolitan France — a placeholder until a mission's
+// address is geocoded to real coordinates. Geocoding isn't required by any
+// Plan 1 spec requirement (§6.0-§6.2); the operator can pan/zoom the map
+// manually to the actual site in the meantime.
+const DEFAULT_CENTER: [number, number] = [46.6, 2.5]
+
+export function MissionWorkspace() {
+  const [mission, setMission] = useState<Mission | null>(null)
+  const [planReady, setPlanReady] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleMissionCreated(created: Mission) {
+    setMission(created)
+    try {
+      await createPlan({ missionId: created.id, kind: 'exterieur' })
+      setPlanReady(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  if (!mission) {
+    return <MissionForm onCreated={handleMissionCreated} />
+  }
+
+  if (error) {
+    return <p role="alert">{error}</p>
+  }
+
+  if (!planReady) {
+    return <p>Préparation du plan extérieur…</p>
+  }
+
+  return <MapView center={DEFAULT_CENTER} />
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `npx vitest run src/pages/MissionWorkspace.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 9: Wire `MissionWorkspace` into `App.tsx`**
+
+```tsx
+// src/App.tsx — replace the entire Vite starter content with:
+import { MissionWorkspace } from './pages/MissionWorkspace'
+import './App.css'
+
+function App() {
+  return (
+    <div style={{ height: '100vh', width: '100vw' }}>
+      <MissionWorkspace />
+    </div>
+  )
+}
+
+export default App
+```
+
+- [ ] **Step 10: Manually verify in the browser**
+
+Run: `npm run dev`, open the printed URL.
+Expected: the mission creation form appears; filling it in and submitting shows
+"Préparation du plan extérieur…" briefly, then a Leaflet map centered on France
+with IGN orthophoto tiles loading.
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add src/components/MissionForm.tsx src/components/MissionForm.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx src/App.tsx
+git commit -m "Add MissionForm and MissionWorkspace, wire into App"
+```
+
+---
+
+**Chunk 3 exit criteria:** `npx vitest run` passes; `npm run dev` lets Laurent create a
+mission and see an exterior IGN-based plan render as a live map.
