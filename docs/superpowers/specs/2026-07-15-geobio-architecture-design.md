@@ -52,11 +52,21 @@ indépendants, chacun avec son propre cycle spec → plan → implémentation :
   intérieur et sur la vue aérienne IGN (coins de bâtiment généralement visibles sur
   l'orthophoto). Le logiciel calcule automatiquement la transformation
   (échelle + rotation + position) pour caler le plan intérieur dans le même
-  référentiel que l'extérieur.
+  référentiel que l'extérieur. Si moins de 2 points de contrôle sont posés, ou si les
+  points posés sont trop proches les uns des autres (< 2 m à l'échelle du plan), le
+  calage est refusé avec un message explicite plutôt que silencieusement approximatif.
 - Tous les points sont stockés en **coordonnées métriques locales** relatives au
   référentiel de la mission, convertibles vers GPS réel à tout moment — compatible
   nativement avec une future source de positionnement plus précise (RTK, UWB) sans
   changement de modèle.
+- **Référence d'angle : nord vrai**, pas nord magnétique. Les fonds IGN et le calage
+  par corrélation (ci-dessus) sont nativement en nord vrai, et le nord magnétique
+  dérive dans le temps (déclinaison variable) — un mauvais choix pour un référentiel
+  qui doit rester stable d'une mission à l'autre. Les `GridTemplate` (§3.2) expriment
+  donc leur angle en nord vrai. Si le ressenti terrain de Laurent est habituellement
+  calé sur le nord magnétique, un simple champ de déclinaison (par mission, valeur
+  connue pour la région/date) permet de convertir à l'affichage sans changer le
+  stockage.
 
 ### 3.2 Réseaux telluriques = grilles paramétrables, jamais codées en dur
 
@@ -76,6 +86,15 @@ redéploiement logiciel.
 | Rapport | Template HTML/CSS → export PDF client-side (MVP) | Pas de serveur de rendu à maintenir au départ |
 | Hébergement app | Vercel / Netlify | Déploiement simple, gratuit à ce stade |
 
+**Connectivité terrain :** confirmé par Laurent — connexion généralement disponible sur
+ses missions (pas de contrainte hors-ligne systématique type cave/zone rurale isolée).
+En conséquence, **le Plan 1 ne construit pas de synchronisation offline-first** (pas de
+queue locale, pas de résolution de conflits) : les écritures se font directement contre
+Supabase. Seule résilience prévue : si une requête échoue (coupure ponctuelle), l'action
+reste visible localement dans l'UI avec un indicateur "non synchronisé" et une reprise
+automatique dès que la connexion revient — pas une architecture offline complète, un
+filet de sécurité minimal pour un aléa ponctuel de terrain.
+
 ### Briques open source identifiées (Feng Shui / réseaux)
 
 | Brique | Usage prévu | Lien |
@@ -94,7 +113,7 @@ copie de code ni de scraping.
 
 | Phase | Contenu |
 |---|---|
-| **1 — MVP** | Fondations (mission, référentiel de coordonnées), plan extérieur (IGN) + plan intérieur calé, moteur de grilles (tous gabarits dont Bagua), lignes déformables, **saisie tap terrain manuelle**, export basique (image/PDF annoté) |
+| **1 — MVP** | Fondations (mission, référentiel de coordonnées), plan extérieur (IGN) + plan intérieur calé (minimal, sans mobilier — voir §6.0), moteur de grilles (tous gabarits dont Bagua), lignes déformables, **saisie tap terrain manuelle**. Pas d'export/rapport en Plan 1 : la consultation à l'écran suffit pour valider le cœur métier, l'export exploitable reste le rôle du Sous-système G (Phase 3) |
 | **1bis — Capture optique des baguettes** | Mode de saisie alternatif : photo aérienne (perche télescopique ou drone grand public) des baguettes colorées posées au sol → détection automatique par vision par ordinateur (segmentation couleur) → pré-remplissage des `GridLine`/`FreeformNetwork`, ajustables ensuite à la main comme en saisie manuelle. Peu coûteux (pas de matériel radio), sert directement le cœur métier — remonté juste après le MVP plutôt que différé |
 | **2** | Mesures ondes nocives sur le plan, placement mobilier (bibliothèque d'objets simples) |
 | **3** | Moteur de recommandations (règles configurables), rapport professionnel soigné |
@@ -108,22 +127,61 @@ concentré et isolé en Phase 4, qui n'est plus un prérequis.
 
 ## 6. Spec détaillée — Sous-système B : Moteur réseaux telluriques (premier sous-projet)
 
+### 6.0 Périmètre exact du premier plan d'implémentation
+
+Ce sous-projet couvre deux plans d'implémentation séquentiels, pas un seul :
+
+- **Plan 1 (MVP réseaux) :** §6.1, §6.2, §6.4 — modèle de données, calage minimal de
+  plan (voir ci-dessous), saisie manuelle tap, ajustement/déformation des lignes,
+  gabarit Bagua. C'est ce périmètre qui doit être découpé en tâches d'implémentation
+  en premier.
+- **Plan 2 (Phase 1bis, capture optique) :** §6.3 — pipeline de vision par ordinateur,
+  domaine technique différent (traitement d'image vs CRUD/UI), à spécifier et
+  implémenter une fois le Plan 1 en usage réel. Ne pas mélanger les deux dans un même
+  plan d'implémentation.
+
+**Frontière avec le Sous-système C (Digitalisation de plans) :** le Plan 1 inclut un
+objet `Plan` minimal — import du fond IGN (extérieur) et calage par corrélation d'une
+image de plan intérieur (points de contrôle, §3.1) — strictement suffisant pour servir
+de support aux grilles. Le Plan 1 ne comprend **pas** : la bibliothèque de mobilier, la
+retouche/vectorisation avancée du plan intérieur, ni la gestion multi-niveaux
+(étages) — ces sujets restent entièrement dans le périmètre du futur Sous-système C,
+qui aura sa propre spec. `leaflet-indoor` (§4) n'est donc pas requis pour ce
+sous-projet.
+
 ### 6.1 Modèle de données
 
-| Objet | Rôle |
-|---|---|
-| `Mission` | Un site/client : adresse, date, référentiel de coordonnées propre à la mission |
-| `Plan` | Extérieur (fond IGN direct) ou Intérieur (image calée par points de contrôle) — les deux dans le référentiel de la `Mission` |
-| `GridTemplate` | Gabarit réutilisable par type de réseau : Hartmann / Curry / Peyré / Or / Argent / Bagua — espacement X/Y, angle vs nord, décalage d'origine |
-| `GridInstance` | Grille générée à partir d'un `GridTemplate`, pour un `Plan` donné, ancrée sur un point de départ posé par Laurent sur le terrain |
-| `GridLine` | Ligne de grille = polyligne éditable point par point, déformable depuis son tracé théorique |
-| `FreeformNetwork` | Sources d'eau, failles : tracé libre point-à-point, sans gabarit théorique (formes non linéaires/variées) |
+| Objet | Champs clés | Relations |
+|---|---|---|
+| `Mission` | id, adresse, date, nord vrai (référence), déclinaison magnétique (optionnel, pour affichage) | 1 Mission → N `Plan` |
+| `Plan` | id, type (`exterieur` \| `interieur`), source (référence tuile IGN, ou image + points de contrôle de calage), transformation de calage (matrice affine, figée une fois calculée) | Appartient à 1 `Mission` |
+| `GridTemplate` | id, nom (Hartmann/Curry/Peyré/Or/Argent/Bagua...), espacement_x (m), espacement_y (m), angle_nord_vrai (degrés), décalage_origine (x,y) | Réutilisable entre missions, pas lié à une `Mission` |
+| `GridInstance` | id, référence à son `GridTemplate` **en copie figée** (snapshot des paramètres au moment de la génération, pas une simple clé étrangère) — modifier le `GridTemplate` plus tard n'affecte jamais rétroactivement les instances déjà générées ; point d'origine réel (x,y) posé par Laurent sur le terrain | Appartient à 1 `Plan` |
+| `GridLine` | id, liste ordonnée de points de contrôle `{x, y}` (coordonnées métriques 2D — pas d'altitude en Plan 1, hors périmètre), tracé théorique d'origine conservé séparément du tracé déformé pour permettre un "reset à la théorie" | Appartient à 1 `GridInstance` |
+| `FreeformNetwork` | id, type (source d'eau, faille...), liste ordonnée de points `{x, y}` | Appartient à 1 `Plan`, indépendant de tout `GridTemplate` |
 
 ### 6.2 Interaction terrain — saisie manuelle
 
-Un geste par point ressenti : tap sur le plan à l'endroit repéré visuellement
-(éléments visibles : murs, limites de terrain, mobilier), sélection rapide du type de
-réseau, ajout à la ligne en cours. Pas de formulaire long en plein relevé.
+**Créer un point/ligne :** un geste par point ressenti — tap sur le plan à l'endroit
+repéré visuellement (éléments visibles : murs, limites de terrain, mobilier),
+sélection rapide du type de réseau, ajout à la ligne en cours. Pas de formulaire long
+en plein relevé.
+
+**Ajuster un point existant (le geste central du sous-projet) :**
+- Tap-and-drag sur un point de contrôle déjà posé (théorique ou déjà ajusté) pour le
+  déplacer — pas de mode "édition" séparé à activer, le glissé est toujours actif sur
+  un point existant.
+- Pas de snapping automatique à la grille théorique : le principe même du module est
+  que le ressenti prime sur la théorie, un magnétisme vers la grille irait à
+  l'encontre du besoin.
+- Suppression d'un point : appui long sur le point → confirmation → retrait (les
+  points voisins de la même `GridLine` se relient directement).
+- **Undo** : pile d'annulation locale à la session de relevé (dernier geste
+  déplacer/supprimer/ajouter annulable), pas d'historique long terme en Plan 1.
+- **Reset à la théorie** : action explicite par `GridLine` qui restaure son tracé
+  théorique d'origine (conservé dans `GridLine`, voir §6.1) et efface les ajustements
+  manuels de cette ligne — utile si Laurent veut repartir de zéro sur une ligne mal
+  ajustée sans tout re-générer.
 
 ### 6.3 Interaction terrain — capture optique (Phase 1bis)
 
@@ -172,9 +230,14 @@ manuel ou d'une détection optique. Aucun changement de modèle nécessaire.
 ## 8. Points ouverts à trancher avant/pendant l'implémentation
 
 1. Matériau exact des baguettes (peinture vs ruban, teintes précises) — impacte
-   directement la fiabilité de la détection optique (§6.3)
-2. Licence exacte de Leaflet.DistortableImage à vérifier avant intégration
-3. Angle de référence des grilles : nord magnétique ou nord vrai ? (à trancher avec
-   Laurent, impacte le calcul d'orientation des `GridTemplate`)
-4. Taille type des parcelles extérieures traitées — dimensionne le besoin de
-   stitching multi-photos pour la capture optique (perche vs drone)
+   directement la fiabilité de la détection optique (§6.3). Ne bloque pas le Plan 1
+   (saisie manuelle), à trancher avant de spécifier le Plan 2 (§6.3).
+2. Licence exacte de Leaflet.DistortableImage à vérifier avant intégration — bloquant
+   pour le Plan 1 si la licence s'avère incompatible avec un usage commercial futur
+   (Phase 5).
+3. Taille type des parcelles extérieures traitées — dimensionne le besoin de
+   stitching multi-photos pour la capture optique (perche vs drone). Ne concerne que
+   le Plan 2 (§6.3).
+
+*(L'angle de référence nord vrai vs magnétique, initialement listé ici, est tranché
+au §3.1.)*
