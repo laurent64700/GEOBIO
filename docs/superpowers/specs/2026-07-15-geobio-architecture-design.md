@@ -183,6 +183,21 @@ en plein relevé.
   manuels de cette ligne — utile si Laurent veut repartir de zéro sur une ligne mal
   ajustée sans tout re-générer.
 
+**Assistant d'orthogonalité (précision opérationnelle) :** chaque `GridTemplate` définit
+une famille de lignes à un angle théorique donné par rapport au nord vrai — Hartmann :
+lignes nord/sud et est/ouest (0°/90° depuis `angle_nord_vrai`) ; Curry : lignes à 45°/135°
+(décalées de 45° par rapport à Hartmann). Après chaque ajustement d'une `GridLine`
+(glissé manuel, §6.2, ou segment pré-rempli par capture optique en Plan 2, §6.3),
+l'interface calcule l'écart angulaire entre le tracé posé et la direction théorique de
+sa famille, et affiche une **suggestion de micro-ajustement** : un aperçu superposé du
+tracé "redressé à l'orthogonal théorique" à côté du tracé actuel. Laurent accepte (la
+ligne se redresse sur ce tracé) ou ignore (le tracé ressenti est conservé tel quel).
+Ceci ne contredit pas le "pas de snapping automatique" ci-dessus : c'est une suggestion
+visible et explicite déclenchée par une action de Laurent, jamais un magnétisme
+silencieux qui déplacerait un point sans qu'il l'ait demandé. Aucune donnée
+supplémentaire requise : l'angle théorique de référence est déjà stocké dans le
+`GridTemplate` (§6.1).
+
 ### 6.3 Interaction terrain — capture optique (Phase 1bis)
 
 - Laurent pose ses baguettes de bois (~1 m, posées à plat, non plantées) au sol selon
