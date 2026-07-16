@@ -5249,9 +5249,742 @@ git commit -m "Add cadastral parcel lookup (WFS) and mission parcel selection"
 
 **Chunk 7 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass. The
 polarity bug is fixed (anchored on a sensed reference line). `FeltPoint` and cadastral
-parcel data layers exist and are tested, ready for Chunk 8 to render and wire into
-the map UI — none of this chunk renders anything on screen yet, by design (the map
-UI, including the default-hidden theoretical grid layer, the felt-point layer shown
-by default, the compass/guide-line tool, and the layer panel, all land together in
-Chunk 8 so the "what's visible by default vs. toggled on" behavior is built as one
-coherent piece rather than gradually and inconsistently).
+parcel data layers exist and are tested, ready for Chunk 8 to render on the map.
+
+**Note on chunk count:** what was originally sketched as a single "Chunk 7" (map
+foundation + rendering + layers + editing + orthogonality) turned out too large once
+Laurent's field-workflow clarifications were incorporated — it's now split into this
+chunk (data foundations, no rendering) plus **Chunk 8** (map rendering + layer
+panel) and **Chunk 9** (compass/guide-line tool + interactive editing + orthogonality
+assist UI), keeping each chunk within the plan's established size range. The
+previously-numbered "Chunk 8" (pathogenic crossing detection) and "Chunk 9"
+(FreeformNetwork + phenomena + QA) shift to **Chunk 10** and **Chunk 11**.
+
+---
+
+## Chunk 8: Map rendering — grid lines, felt points, layer panel
+
+**Renders what Chunk 7 built, read-only for now** — no dragging/editing yet
+(Chunk 9). The one behavior that matters methodologically: **`FeltPoint`s are
+visible by default; every theoretical `GridInstance` layer starts hidden**, toggled
+on only by an explicit action in the layer panel.
+
+### Task 28: `listGridInstancesForPlan` / `listGridLinesForInstance` + rendering layers
+
+**Files:**
+- Modify: `src/data/gridInstancesRepo.ts` + `.test.ts` (add `listGridInstancesForPlan`)
+- Modify: `src/data/gridLinesRepo.ts` + `.test.ts` (add `listGridLinesForInstance`)
+- Create: `src/components/NetworkLinesLayer.tsx`
+- Test: `src/components/NetworkLinesLayer.test.tsx`
+- Create: `src/components/FeltPointsLayer.tsx`
+- Test: `src/components/FeltPointsLayer.test.tsx`
+
+- [ ] **Step 1: Write failing tests for the two list functions**
+
+```typescript
+// append to src/data/gridInstancesRepo.test.ts
+it('lists grid instances scoped to a plan', async () => {
+  const { from, chain } = createSupabaseChainMock({
+    data: [{ id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 }],
+    error: null,
+  })
+  vi.mocked(supabase).from = from
+
+  const instances = await listGridInstancesForPlan('p1')
+
+  expect(chain.eq).toHaveBeenCalledWith('plan_id', 'p1')
+  expect(instances).toHaveLength(1)
+})
+```
+
+```typescript
+// append to src/data/gridLinesRepo.test.ts
+it('lists grid lines scoped to a grid instance', async () => {
+  const { from, chain } = createSupabaseChainMock({
+    data: [
+      {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      },
+    ],
+    error: null,
+  })
+  vi.mocked(supabase).from = from
+
+  const lines = await listGridLinesForInstance('gi1')
+
+  expect(chain.eq).toHaveBeenCalledWith('grid_instance_id', 'gi1')
+  expect(lines).toHaveLength(1)
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/gridInstancesRepo.test.ts src/data/gridLinesRepo.test.ts`
+Expected: FAIL — the two new functions don't exist yet
+
+- [ ] **Step 3: Implement the two list functions**
+
+```typescript
+// src/data/gridInstancesRepo.ts — add
+export async function listGridInstancesForPlan(planId: string): Promise<GridInstance[]> {
+  const { data, error } = await supabase.from('grid_instance').select().eq('plan_id', planId)
+  if (error) throw new Error(`Impossible de charger les instances de grille : ${error.message}`)
+  return (data as GridInstanceRow[]).map(mapRowToGridInstance)
+}
+```
+
+```typescript
+// src/data/gridLinesRepo.ts — add
+export async function listGridLinesForInstance(gridInstanceId: string): Promise<GridLine[]> {
+  const { data, error } = await supabase.from('grid_line').select().eq('grid_instance_id', gridInstanceId)
+  if (error) throw new Error(`Impossible de charger les lignes de grille : ${error.message}`)
+  return (data as GridLineRow[]).map(mapRowToGridLine)
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/gridInstancesRepo.test.ts src/data/gridLinesRepo.test.ts`
+Expected: PASS (2 tests in each file)
+
+- [ ] **Step 5: Write failing tests for `NetworkLinesLayer`**
+
+```tsx
+// src/components/NetworkLinesLayer.test.tsx
+import { describe, it, expect } from 'vitest'
+import { render } from '@testing-library/react'
+import { MapContainer } from 'react-leaflet'
+import { NetworkLinesLayer } from './NetworkLinesLayer'
+import type { GridLine } from '../domain/types'
+
+const missionOrigin = { lat: 48.8566, lng: 2.3522 }
+
+const lines: GridLine[] = [
+  {
+    id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
+    theoreticalPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+    adjustedPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+  },
+  {
+    id: 'gl2', gridInstanceId: 'gi1', family: 'axis-a', polarity: '-', reinforced: false,
+    theoreticalPoints: [{ x: 2.5, y: -10 }, { x: 2.5, y: 10 }],
+    adjustedPoints: [{ x: 2.5, y: -10 }, { x: 2.5, y: 10 }],
+  },
+]
+
+describe('NetworkLinesLayer', () => {
+  it('renders one polyline per line, styled by polarity and reinforced state', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <NetworkLinesLayer lines={lines} templateSnapshot={{ color: '#d32f2f' }} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    const paths = container.querySelectorAll('path.leaflet-interactive')
+    expect(paths).toHaveLength(2)
+    // gl1: polarity '+' (solid, no dashArray), reinforced (thicker stroke)
+    expect(paths[0].getAttribute('stroke')).toBe('#d32f2f')
+    expect(paths[0].getAttribute('stroke-width')).toBe('4')
+    expect(paths[0].hasAttribute('stroke-dasharray')).toBe(false)
+    // gl2: polarity '-' (dashed), not reinforced (thinner stroke)
+    expect(paths[1].getAttribute('stroke-width')).toBe('2')
+    expect(paths[1].getAttribute('stroke-dasharray')).toBe('6, 4')
+  })
+
+  it('renders nothing when visible is false', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <NetworkLinesLayer lines={lines} templateSnapshot={{ color: '#d32f2f' }} missionOrigin={missionOrigin} visible={false} />
+      </MapContainer>
+    )
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+  })
+})
+```
+
+- [ ] **Step 6: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/NetworkLinesLayer.test.tsx`
+Expected: FAIL — `Cannot find module './NetworkLinesLayer'`
+
+- [ ] **Step 7: Implement `NetworkLinesLayer`**
+
+```tsx
+// src/components/NetworkLinesLayer.tsx
+import { Polyline } from 'react-leaflet'
+import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
+import type { GridLine, GridTemplate } from '../domain/types'
+
+export interface NetworkLinesLayerProps {
+  lines: GridLine[]
+  templateSnapshot: Pick<GridTemplate, 'color'>
+  missionOrigin: LatLng
+  visible: boolean
+}
+
+export function NetworkLinesLayer({ lines, templateSnapshot, missionOrigin, visible }: NetworkLinesLayerProps) {
+  if (!visible) return null
+
+  return (
+    <>
+      {lines.map((line) => (
+        <Polyline
+          key={line.id}
+          positions={line.adjustedPoints.map((p) => {
+            const latlng = localToLatLng(p, missionOrigin)
+            return [latlng.lat, latlng.lng] as [number, number]
+          })}
+          pathOptions={{
+            color: templateSnapshot.color,
+            dashArray: line.polarity === '-' ? '6, 4' : undefined,
+            weight: line.reinforced ? 4 : 2,
+          }}
+        />
+      ))}
+    </>
+  )
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/NetworkLinesLayer.test.tsx`
+Expected: PASS (2 tests)
+
+If Leaflet/jsdom friction shows up here (same category anticipated since Chunk 3
+Task 9 — `MapContainer` needing a non-zero layout box to render `Polyline` paths):
+apply the same `src/test/setup.ts` fallback referenced there, don't treat it as a
+logic bug in `NetworkLinesLayer`.
+
+- [ ] **Step 9: Write failing tests for `FeltPointsLayer`**
+
+```tsx
+// src/components/FeltPointsLayer.test.tsx
+import { describe, it, expect } from 'vitest'
+import { render } from '@testing-library/react'
+import { MapContainer } from 'react-leaflet'
+import { FeltPointsLayer } from './FeltPointsLayer'
+import type { FeltPoint } from '../domain/types'
+
+const missionOrigin = { lat: 48.8566, lng: 2.3522 }
+const points: FeltPoint[] = [
+  { id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z' },
+  { id: 'fp2', planId: 'p1', networkName: 'Curry', x: -1, y: -1, createdAt: '2026-07-16T10:01:00Z' },
+]
+
+describe('FeltPointsLayer', () => {
+  it('renders one marker per point, colored by its network', () => {
+    const colorForNetwork = (name: string) => (name === 'Hartmann' ? '#d32f2f' : '#f2c230')
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <FeltPointsLayer points={points} colorForNetwork={colorForNetwork} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    const markers = container.querySelectorAll('path.leaflet-interactive')
+    expect(markers).toHaveLength(2)
+    expect(markers[0].getAttribute('stroke')).toBe('#d32f2f')
+    expect(markers[1].getAttribute('stroke')).toBe('#f2c230')
+  })
+
+  it('renders nothing when visible is false', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <FeltPointsLayer points={points} colorForNetwork={() => '#000'} missionOrigin={missionOrigin} visible={false} />
+      </MapContainer>
+    )
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+  })
+})
+```
+
+- [ ] **Step 10: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/FeltPointsLayer.test.tsx`
+Expected: FAIL — `Cannot find module './FeltPointsLayer'`
+
+- [ ] **Step 11: Implement `FeltPointsLayer`**
+
+```tsx
+// src/components/FeltPointsLayer.tsx
+import { CircleMarker } from 'react-leaflet'
+import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
+import type { FeltPoint } from '../domain/types'
+
+export interface FeltPointsLayerProps {
+  points: FeltPoint[]
+  colorForNetwork: (networkName: string) => string
+  missionOrigin: LatLng
+  visible: boolean
+}
+
+export function FeltPointsLayer({ points, colorForNetwork, missionOrigin, visible }: FeltPointsLayerProps) {
+  if (!visible) return null
+
+  return (
+    <>
+      {points.map((point) => {
+        const latlng = localToLatLng(point, missionOrigin)
+        return (
+          <CircleMarker
+            key={point.id}
+            center={[latlng.lat, latlng.lng]}
+            radius={5}
+            pathOptions={{ color: colorForNetwork(point.networkName), fillOpacity: 0.9 }}
+          />
+        )
+      })}
+    </>
+  )
+}
+```
+
+- [ ] **Step 12: Run tests to verify they pass, then type-check**
+
+Run: `npx vitest run src/components/FeltPointsLayer.test.tsx && npx tsc -b --noEmit`
+Expected: PASS (2 tests); no type errors.
+
+- [ ] **Step 13: Commit**
+
+```bash
+git add src/data/gridInstancesRepo.ts src/data/gridInstancesRepo.test.ts src/data/gridLinesRepo.ts src/data/gridLinesRepo.test.ts src/components/NetworkLinesLayer.tsx src/components/NetworkLinesLayer.test.tsx src/components/FeltPointsLayer.tsx src/components/FeltPointsLayer.test.tsx
+git commit -m "Add list repo functions and read-only map rendering for grid lines and felt points"
+```
+
+---
+
+### Task 29: `LayerPanel` + `SiteMapView` composition, wired into `MissionWorkspace`
+
+**Files:**
+- Modify: `src/components/MapView.tsx` + `.test.tsx` (accept `children`, so layer
+  components can be nested inside the `MapContainer` they need for react-leaflet's
+  map context)
+- Create: `src/components/LayerPanel.tsx`
+- Test: `src/components/LayerPanel.test.tsx`
+- Create: `src/components/SiteMapView.tsx`
+- Test: `src/components/SiteMapView.test.tsx`
+- Modify: `src/pages/MissionWorkspace.tsx` + `.test.tsx` (replace the bare `<MapView
+  center={...} />` in the `ready-no-interior` phase with `<SiteMapView ... />`)
+
+- [ ] **Step 1: Write a failing test for `MapView` accepting children**
+
+```typescript
+// append to src/components/MapView.test.tsx
+it('renders children inside the map container', () => {
+  render(
+    <MapView center={[48.8566, 2.3522]}>
+      <div data-testid="child-layer" />
+    </MapView>
+  )
+  expect(screen.getByTestId('child-layer')).toBeInTheDocument()
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/components/MapView.test.tsx`
+Expected: FAIL — `MapView` doesn't accept/render `children` yet
+
+- [ ] **Step 3: Add `children` support to `MapView`**
+
+```tsx
+// src/components/MapView.tsx — modify MapViewProps and the component
+import type { ReactNode } from 'react'
+
+export interface MapViewProps {
+  center: [number, number]
+  zoom?: number
+  onMapClick?: (latlng: { lat: number; lng: number }) => void
+  children?: ReactNode
+}
+
+export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProps) {
+  return (
+    <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+      <TileLayer url={IGN_ORTHOPHOTO_WMTS_URL} attribution="&copy; IGN-F/Géoportail" maxZoom={20} />
+      {onMapClick && <ClickHandler onMapClick={onMapClick} />}
+      {children}
+    </MapContainer>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/MapView.test.tsx`
+Expected: PASS (4 tests)
+
+- [ ] **Step 5: Write failing tests for `LayerPanel`**
+
+```tsx
+// src/components/LayerPanel.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { LayerPanel } from './LayerPanel'
+
+describe('LayerPanel', () => {
+  it('shows "Ressenti terrain" checked by default, grid layers unchecked by default', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText('Ressenti terrain')).toBeChecked()
+    expect(screen.getByLabelText('Hartmann')).not.toBeChecked()
+  })
+
+  it('respects explicit visibility overrides', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{ 'felt-points': false, gi1: true }}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText('Ressenti terrain')).not.toBeChecked()
+    expect(screen.getByLabelText('Hartmann')).toBeChecked()
+  })
+
+  it('calls onToggle with the layer id when a checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('Hartmann'))
+    expect(onToggle).toHaveBeenCalledWith('gi1')
+  })
+})
+```
+
+- [ ] **Step 6: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/LayerPanel.test.tsx`
+Expected: FAIL — `Cannot find module './LayerPanel'`
+
+- [ ] **Step 7: Implement `LayerPanel`**
+
+```tsx
+// src/components/LayerPanel.tsx
+export const FELT_POINTS_LAYER_ID = 'felt-points'
+
+export interface LayerEntry {
+  id: string
+  label: string
+  color: string
+}
+
+export interface LayerPanelProps {
+  gridLayers: LayerEntry[]
+  visibility: Record<string, boolean>
+  onToggle: (id: string) => void
+}
+
+export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps) {
+  return (
+    <div>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[FELT_POINTS_LAYER_ID] ?? true}
+          onChange={() => onToggle(FELT_POINTS_LAYER_ID)}
+        />
+        Ressenti terrain
+      </label>
+      {gridLayers.map((layer) => (
+        <label key={layer.id}>
+          <input
+            type="checkbox"
+            checked={visibility[layer.id] ?? false}
+            onChange={() => onToggle(layer.id)}
+          />
+          <span style={{ color: layer.color }}>{layer.label}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/LayerPanel.test.tsx`
+Expected: PASS (3 tests)
+
+- [ ] **Step 9: Write failing tests for `SiteMapView`**
+
+```tsx
+// src/components/SiteMapView.test.tsx
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { SiteMapView } from './SiteMapView'
+import * as gridInstancesRepo from '../data/gridInstancesRepo'
+import * as gridLinesRepo from '../data/gridLinesRepo'
+import * as feltPointsRepo from '../data/feltPointsRepo'
+
+vi.mock('../data/gridInstancesRepo')
+vi.mock('../data/gridLinesRepo')
+vi.mock('../data/feltPointsRepo')
+
+vi.mock('./MapView', () => ({
+  MapView: ({ children }: { children?: React.ReactNode }) => <div data-testid="map-view">{children}</div>,
+}))
+vi.mock('./NetworkLinesLayer', () => ({
+  NetworkLinesLayer: ({ visible, templateSnapshot }: { visible: boolean; templateSnapshot: { name?: string } }) =>
+    visible ? <div data-testid={`lines-${templateSnapshot.name ?? 'unknown'}`} /> : null,
+}))
+vi.mock('./FeltPointsLayer', () => ({
+  FeltPointsLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="felt-points" /> : null),
+}))
+
+const hartmannInstance = {
+  id: 'gi1', planId: 'p1',
+  templateSnapshot: { id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7 },
+  originX: 0, originY: 0,
+}
+
+describe('SiteMapView', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+
+    expect(await screen.findByTestId('felt-points')).toBeInTheDocument()
+    expect(screen.queryByTestId('lines-Hartmann')).not.toBeInTheDocument()
+  })
+
+  it('toggling the Hartmann layer in the panel shows its lines', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+
+    await screen.findByTestId('felt-points')
+    fireEvent.click(await screen.findByLabelText('Hartmann'))
+
+    await waitFor(() => expect(screen.getByTestId('lines-Hartmann')).toBeInTheDocument())
+  })
+})
+```
+
+- [ ] **Step 10: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/SiteMapView.test.tsx`
+Expected: FAIL — `Cannot find module './SiteMapView'`
+
+- [ ] **Step 11: Implement `SiteMapView`**
+
+```tsx
+// src/components/SiteMapView.tsx
+import { useEffect, useState } from 'react'
+import { MapView } from './MapView'
+import { NetworkLinesLayer } from './NetworkLinesLayer'
+import { FeltPointsLayer } from './FeltPointsLayer'
+import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
+import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
+import { listGridLinesForInstance } from '../data/gridLinesRepo'
+import { listFeltPointsForPlan } from '../data/feltPointsRepo'
+import type { GridInstance, GridLine, FeltPoint } from '../domain/types'
+import type { LatLng } from '../geometry/localCoordinates'
+
+export interface SiteMapViewProps {
+  planId: string
+  missionOrigin: LatLng
+}
+
+export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
+  const [instances, setInstances] = useState<GridInstance[]>([])
+  const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
+  const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
+  const [visibility, setVisibility] = useState<Record<string, boolean>>({})
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [loadedInstances, loadedPoints] = await Promise.all([
+          listGridInstancesForPlan(planId),
+          listFeltPointsForPlan(planId),
+        ])
+        setInstances(loadedInstances)
+        setFeltPoints(loadedPoints)
+        const entries = await Promise.all(
+          loadedInstances.map(
+            async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
+          )
+        )
+        setLinesByInstance(Object.fromEntries(entries))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+    }
+    load()
+  }, [planId])
+
+  function toggleLayer(id: string) {
+    const currentlyVisible = visibility[id] ?? id === FELT_POINTS_LAYER_ID
+    setVisibility((prev) => ({ ...prev, [id]: !currentlyVisible }))
+  }
+
+  function colorForNetwork(networkName: string): string {
+    const match = instances.find((i) => i.templateSnapshot.name === networkName)
+    return match?.templateSnapshot.color ?? '#888888'
+  }
+
+  if (error) return <p role="alert">{error}</p>
+
+  const gridLayers: LayerEntry[] = instances.map((instance) => ({
+    id: instance.id,
+    label: instance.templateSnapshot.name,
+    color: instance.templateSnapshot.color,
+  }))
+
+  return (
+    <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <MapView center={[missionOrigin.lat, missionOrigin.lng]}>
+        <FeltPointsLayer
+          points={feltPoints}
+          colorForNetwork={colorForNetwork}
+          missionOrigin={missionOrigin}
+          visible={visibility[FELT_POINTS_LAYER_ID] ?? true}
+        />
+        {instances.map((instance) => (
+          <NetworkLinesLayer
+            key={instance.id}
+            lines={linesByInstance[instance.id] ?? []}
+            templateSnapshot={instance.templateSnapshot}
+            missionOrigin={missionOrigin}
+            visible={visibility[instance.id] ?? false}
+          />
+        ))}
+      </MapView>
+      <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
+    </div>
+  )
+}
+```
+
+- [ ] **Step 12: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/SiteMapView.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 13: Wire `SiteMapView` into `MissionWorkspace`'s `ready-no-interior` phase**
+
+```tsx
+// src/pages/MissionWorkspace.tsx — modify the 'ready-no-interior' case:
+import { SiteMapView } from '../components/SiteMapView'
+
+    case 'ready-no-interior': {
+      const { originLat, originLng } = phase.mission
+      return (
+        <div>
+          <SiteMapView
+            planId={/* the mission's exterior Plan id — see note below */ phase.mission.id}
+            missionOrigin={{ lat: originLat!, lng: originLng! }}
+          />
+          <label>
+            Importer un plan intérieur (optionnel)
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => e.target.files?.[0] && handleInteriorFileChosen(e.target.files[0])}
+            />
+          </label>
+        </div>
+      )
+    }
+```
+
+**⚠️ Gap surfaced while wiring this up:** `SiteMapView` needs a `planId` (the
+exterior `Plan`'s id, not the `Mission`'s id) to load grid instances/felt points
+scoped to that plan — but `MissionWorkspace`'s `WorkspacePhase` union has never
+stored the exterior `Plan` object returned by `createPlan` in Chunk 3's
+`handleMissionCreated`; it's created and immediately discarded. Fix this now,
+since it's a one-line change with an outsized effect if left for later:
+
+```typescript
+// src/pages/MissionWorkspace.tsx — modify WorkspacePhase to carry the exterior plan:
+type WorkspacePhase =
+  | { name: 'creating-mission' }
+  | { name: 'creating-exterior-plan'; mission: Mission }
+  | { name: 'global-assessment'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'setting-origin'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'ready-no-interior'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'calibrating-interior'; mission: Mission; exteriorPlan: Plan; imageUrl: string }
+  | { name: 'error'; message: string }
+```
+
+```typescript
+// modify handleMissionCreated to keep the created Plan:
+  async function handleMissionCreated(mission: Mission) {
+    setPhase({ name: 'creating-exterior-plan', mission })
+    try {
+      const exteriorPlan = await createPlan({ missionId: mission.id, kind: 'exterieur' })
+      setPhase({ name: 'global-assessment', mission, exteriorPlan })
+    } catch (err) {
+      setPhase({ name: 'error', message: messageOf(err) })
+    }
+  }
+```
+
+Every other phase transition (`handleGlobalAssessmentSaved`, `handleOriginClick`,
+`handleInteriorFileChosen`, `handleInteriorCalibrated`) needs `exteriorPlan:
+phase.exteriorPlan` added to the object it passes to the next `setPhase` call, and
+the `ready-no-interior` case above becomes:
+
+```tsx
+      <SiteMapView planId={phase.exteriorPlan.id} missionOrigin={{ lat: originLat!, lng: originLng! }} />
+```
+
+- [ ] **Step 14: Update `MissionWorkspace.test.tsx` for the carried `exteriorPlan`**
+
+Every existing test's `plansRepo.createPlan` mock resolution already returns a full
+`Plan` object (`{ id: 'p1', missionId: 'm1', kind: 'exterieur', ... }`) — no mock
+value needs to change. Add `vi.mock('./SiteMapView', ...)` (a simple
+`<div data-testid="site-map-view" />` stub) alongside the file's other component
+mocks. **Both** existing tests that assert `screen.findByTestId('map-view')` while
+in the `ready-no-interior` phase need updating to assert `site-map-view` instead:
+the origin-setting test ("records the mission origin on map click...") and the
+interior-calibration test ("saves an interior Plan once calibration completes...",
+which returns to `ready-no-interior` after calibrating) — not just one of them.
+
+- [ ] **Step 15: Run the full suite and type-check**
+
+Run: `npx vitest run && npx tsc -b --noEmit`
+Expected: all pass, no type errors.
+
+- [ ] **Step 16: Manually verify in the browser**
+
+Run: `npm run dev`. Walk through: create mission → global assessment → set origin.
+Expected: the map shows with a "Ressenti terrain" checkbox already checked (no felt
+points yet, so nothing visible) and, once a `GridInstance` exists for this plan
+(created programmatically for now — Chunk 9 wires up the UI to trigger this), its
+checkbox in the layer panel starts unchecked; checking it reveals the grid lines.
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add src/components/MapView.tsx src/components/MapView.test.tsx src/components/LayerPanel.tsx src/components/LayerPanel.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add LayerPanel + SiteMapView, wire into MissionWorkspace, carry exteriorPlan through phases"
+```
+
+---
+
+**Chunk 8 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Once a mission reaches the map phase, felt points render by default and every grid
+layer starts hidden, toggle-able via the layer panel — the methodological ordering
+Laurent required is now structurally enforced (a grid instance simply isn't visible
+until someone deliberately checks its box), not just a UI convention to remember.
+Interactive editing, the compass/guide-line tool, and the orthogonality assist UI
+are Chunk 9.
