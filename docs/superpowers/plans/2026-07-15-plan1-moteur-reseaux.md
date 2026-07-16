@@ -5258,7 +5258,11 @@ chunk (data foundations, no rendering) plus **Chunk 8** (map rendering + layer
 panel) and **Chunk 9** (compass/guide-line tool + interactive editing + orthogonality
 assist UI), keeping each chunk within the plan's established size range. The
 previously-numbered "Chunk 8" (pathogenic crossing detection) and "Chunk 9"
-(FreeformNetwork + phenomena + QA) shift to **Chunk 10** and **Chunk 11**.
+(FreeformNetwork + phenomena + QA) shift further down the sequence — see each
+chunk's own exit criteria for the current numbering, since Chunk 10 (grid creation
+UI + mission photos) was also inserted afterward and shifted things again. As of
+this note: pathogenic crossing detection and FreeformNetwork+phenomena+QA are
+**Chunk 11** and **Chunk 12**.
 
 ---
 
