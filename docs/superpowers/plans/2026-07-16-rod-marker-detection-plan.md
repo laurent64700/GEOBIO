@@ -610,3 +610,440 @@ git commit -m "Add arucoMapping: raw marker detections to network-tagged real-wo
 entire "detections + calibration + lookup table → points" pipeline is implemented
 and fully tested, with zero dependency on js-aruco2 or any image/camera input —
 Chunk 3 only has to supply real detections to something already proven correct.
+
+---
+
+## Chunk 3: js-aruco2 glue + `RodDetectionPanel` UI
+
+### Task 6: `arucoDetector.ts` — the one module that touches js-aruco2
+
+**⚠️ External API uncertainty, same treatment as Leaflet.DistortableImage/Geoman
+and the IGN endpoints elsewhere in this project:** the exact import mechanism and
+return shape below are based on published js-aruco2 documentation
+(`new AR.Detector({ dictionaryName })`, `detector.detect(width, height, data)`
+returning markers with `{id, corners}`), **not confirmed against the installed
+package's actual TypeScript types/exports** — verify against
+https://github.com/damianofalcioni/js-aruco2 at implementation time. If the real
+API differs, only this file needs to change; `arucoMapping.ts` (Chunk 2) never
+imports js-aruco2 directly.
+
+**⚠️ Second uncertainty: jsdom's `<canvas>` support.** This function draws the
+image to an off-screen canvas to read pixel data — jsdom (Plan 1's default test
+environment) does **not** implement real 2D canvas rendering by default;
+`getContext('2d')` typically returns `null` unless a polyfill (`canvas` npm
+package) is installed, or the test runs in a real browser (Vitest browser mode /
+Playwright). This is a genuine environment gap to resolve during implementation,
+not something to guess past.
+
+**Files:**
+- Create: `src/vision/arucoDetector.ts`
+- Test: `src/vision/arucoDetector.test.ts`
+
+- [ ] **Step 1: Install js-aruco2**
+
+Run: `npm install js-aruco2`
+
+- [ ] **Step 2: Implement `detectMarkers`**
+
+```typescript
+// src/vision/arucoDetector.ts
+// @ts-expect-error — js-aruco2 ships no official TypeScript types as of writing;
+// verify this import style against the installed package before removing the
+// suppression (it may need `import * as` or a default import instead).
+import { AR } from 'js-aruco2'
+import type { RawMarkerDetection } from './arucoMapping'
+import type { Point } from '../domain/types'
+
+/**
+ * Detects ArUco markers in an already-loaded image. Draws the image to an
+ * off-screen canvas to obtain raw pixel data, since js-aruco2's detector
+ * operates on ImageData, not on an <img> element directly.
+ */
+export function detectMarkers(image: HTMLImageElement): RawMarkerDetection[] {
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    throw new Error("Impossible d'analyser l'image : contexte de dessin indisponible.")
+  }
+  ctx.drawImage(image, 0, 0)
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+
+  const detector = new AR.Detector({ dictionaryName: 'ARUCO' })
+  const markers = detector.detect(canvas.width, canvas.height, imageData.data)
+
+  return markers.map((marker: { id: number; corners: Point[] }) => {
+    // A marker is detected as a quadrilateral by construction, but this is an
+    // unverified external library's output — guard the cast rather than trust
+    // it silently, since a malformed corners array would otherwise reach
+    // arucoMapping's centroid() and read past the array undetected.
+    if (marker.corners.length !== 4) {
+      throw new Error(
+        `Marqueur ${marker.id} détecté avec ${marker.corners.length} coins au lieu de 4.`
+      )
+    }
+    return {
+      markerId: marker.id,
+      corners: marker.corners as [Point, Point, Point, Point],
+    }
+  })
+}
+```
+
+- [ ] **Step 3: Write a smoke test (not a real-marker accuracy test — see note)**
+
+**⚠️ Compound environment uncertainty, more specific than Task 6's opening note:**
+`new Image()` with no `src` set (or given only `width`/`height` constructor args,
+which set *display* size, not `naturalWidth`/`naturalHeight`) reports
+`naturalWidth`/`naturalHeight` of `0` — and `ctx.getImageData(0, 0, 0, 0)` throws
+`IndexSizeError` per the Canvas 2D spec, before the function ever reaches
+`detector.detect(...)`. A real, decodable image is needed, not a bare constructor
+call — this test uses a tiny inline PNG for that reason.
+
+```typescript
+// src/vision/arucoDetector.test.ts
+import { describe, it, expect } from 'vitest'
+import { detectMarkers } from './arucoDetector'
+
+// A real, minimal 2x2 white PNG (base64) — small enough to inline, but with
+// genuine non-zero pixel dimensions once decoded, unlike a bare `new Image()`.
+const TINY_WHITE_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4AWP4z8DwHwAFEAP/xB+kdgAAAABJRU5ErkJggg=='
+
+describe('detectMarkers', () => {
+  it('returns an empty array for a blank white image, without throwing', async () => {
+    const image = new Image()
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve()
+      image.onerror = () => reject(new Error("échec du chargement de l'image de test"))
+      image.src = TINY_WHITE_PNG
+    })
+
+    const result = detectMarkers(image)
+    expect(result).toEqual([])
+  })
+})
+```
+
+**This test only proves the pipeline doesn't crash on a trivial input** — it does
+not validate real marker detection accuracy, which requires real printed markers
+and a real photo (per the spec's §8, an explicit non-goal of automated testing).
+
+**Two layers of environment uncertainty can surface here, and they need to be told
+apart rather than guessed at together:**
+1. **`ctx.getImageData` throwing / `getContext('2d')` returning `null`** — jsdom
+   (Plan 1's default test environment) has no real 2D canvas implementation. Fix:
+   `npm install --save-dev canvas` (a native Cairo-based polyfill jsdom
+   auto-detects for `HTMLCanvasElement`).
+2. **`image.naturalWidth`/`naturalHeight` still `0` after `onload` fires, even with
+   the `canvas` package installed** — this would mean jsdom's global `Image`/`<img>`
+   isn't delegating actual pixel decoding to the `canvas` package the way
+   `HTMLCanvasElement` does. If this happens, the pragmatic fix is to move this one
+   test file to Vitest's browser mode (a real browser engine, guaranteed-correct
+   image decoding) rather than fighting jsdom's `Image` further — this is exactly
+   the kind of environment question flagged as open in the spec's §8, and it's
+   fine (expected, even) if resolving it takes a real run rather than being
+   solvable by reading this plan.
+
+Do not assume either fix in advance — run the test, read the actual failure, and
+apply the matching fix from the two above.
+
+- [ ] **Step 4: Run the test, resolve whichever environment issue actually surfaces, then verify it passes**
+
+Run: `npx vitest run src/vision/arucoDetector.test.ts`
+Expected: PASS (1 test) — likely after applying one or both fixes from Step 3's note.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add package.json package-lock.json src/vision/arucoDetector.ts src/vision/arucoDetector.test.ts
+git commit -m "Add arucoDetector: js-aruco2 glue for marker detection"
+```
+
+---
+
+### Task 7: `RodDetectionPanel` — wire calibration + detection + persistence
+
+**Files:**
+- Create: `src/components/RodDetectionPanel.tsx`
+- Test: `src/components/RodDetectionPanel.test.tsx`
+
+- [ ] **Step 1: Write failing tests**
+
+```tsx
+// src/components/RodDetectionPanel.test.tsx
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { RodDetectionPanel } from './RodDetectionPanel'
+import * as arucoDetector from '../vision/arucoDetector'
+import * as arucoMapping from '../vision/arucoMapping'
+import * as rodMarkersRepo from '../data/rodMarkersRepo'
+import * as missionPhotosRepo from '../data/missionPhotosRepo'
+import * as feltPointsRepo from '../data/feltPointsRepo'
+
+vi.mock('../vision/arucoDetector')
+vi.mock('../vision/arucoMapping')
+vi.mock('../data/rodMarkersRepo')
+vi.mock('../data/missionPhotosRepo')
+vi.mock('../data/feltPointsRepo')
+vi.mock('./PlanCalibrationTool', () => ({
+  PlanCalibrationTool: ({ onCalibrated }: { onCalibrated: (c: unknown) => void }) => (
+    <button onClick={() => onCalibrated({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })}>simulate-calibrated</button>
+  ),
+}))
+
+const uncalibratedPhoto = {
+  id: 'mp1', missionId: 'm1', imageUrl: 'https://x/a.jpg', calibration: null,
+  createdAt: '2026-07-16T10:00:00Z',
+}
+const calibratedPhoto = { ...uncalibratedPhoto, calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } }
+
+describe('RodDetectionPanel', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // jsdom's Image doesn't actually load image bytes — stub it so `new Image()`
+    // fires onload on the next tick, simulating a successful load.
+    vi.stubGlobal(
+      'Image',
+      class {
+        onload: (() => void) | null = null
+        onerror: (() => void) | null = null
+        set src(_: string) {
+          setTimeout(() => this.onload?.(), 0)
+        }
+      }
+    )
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('shows PlanCalibrationTool when the photo has no calibration yet', () => {
+    render(
+      <RodDetectionPanel
+        photo={uncalibratedPhoto}
+        planId="p1"
+        missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+        mapCenter={[48.8566, 2.3522]}
+        onCalibrated={vi.fn()}
+      />
+    )
+    expect(screen.getByText('simulate-calibrated')).toBeInTheDocument()
+  })
+
+  it('saves the calibration and notifies the parent once calibrated', async () => {
+    vi.mocked(missionPhotosRepo.setPhotoCalibration).mockResolvedValue(calibratedPhoto)
+    const onCalibrated = vi.fn()
+
+    render(
+      <RodDetectionPanel
+        photo={uncalibratedPhoto}
+        planId="p1"
+        missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+        mapCenter={[48.8566, 2.3522]}
+        onCalibrated={onCalibrated}
+      />
+    )
+    fireEvent.click(screen.getByText('simulate-calibrated'))
+
+    await waitFor(() =>
+      expect(missionPhotosRepo.setPhotoCalibration).toHaveBeenCalledWith('mp1', {
+        a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
+      })
+    )
+    expect(onCalibrated).toHaveBeenCalledWith(calibratedPhoto)
+  })
+
+  it('shows a "Détecter les tiges" button once calibrated, and runs the full pipeline on click', async () => {
+    vi.mocked(arucoDetector.detectMarkers).mockReturnValue([
+      { markerId: 101, corners: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }] },
+    ])
+    vi.mocked(rodMarkersRepo.listRodMarkers).mockResolvedValue([
+      { markerId: 101, networkName: 'Hartmann', rodNumber: 1 },
+    ])
+    vi.mocked(arucoMapping.mapDetectionsToPoints).mockReturnValue({
+      recognized: [{ networkName: 'Hartmann', x: 5, y: 5 }],
+      totalDetected: 1,
+      totalRecognized: 1,
+    })
+    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
+      id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 5, y: 5, createdAt: '2026-07-16T10:00:00Z',
+    })
+
+    render(
+      <RodDetectionPanel
+        photo={calibratedPhoto}
+        planId="p1"
+        missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+        mapCenter={[48.8566, 2.3522]}
+        onCalibrated={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /détecter les tiges/i }))
+
+    await waitFor(() =>
+      expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith({
+        planId: 'p1', networkName: 'Hartmann', x: 5, y: 5,
+      })
+    )
+    expect(await screen.findByText('1 marqueurs détectés, 1 reconnus.')).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/RodDetectionPanel.test.tsx`
+Expected: FAIL — `Cannot find module './RodDetectionPanel'`
+
+- [ ] **Step 3: Implement `RodDetectionPanel`**
+
+```tsx
+// src/components/RodDetectionPanel.tsx
+import { useState } from 'react'
+import { PlanCalibrationTool } from './PlanCalibrationTool'
+import { detectMarkers } from '../vision/arucoDetector'
+import { mapDetectionsToPoints } from '../vision/arucoMapping'
+import { listRodMarkers } from '../data/rodMarkersRepo'
+import { setPhotoCalibration } from '../data/missionPhotosRepo'
+import { createFeltPoint } from '../data/feltPointsRepo'
+import type { AffineTransform, MissionPhoto } from '../domain/types'
+import type { LatLng } from '../geometry/localCoordinates'
+
+export interface RodDetectionPanelProps {
+  photo: MissionPhoto
+  planId: string
+  missionOrigin: LatLng
+  mapCenter: [number, number]
+  onCalibrated: (photo: MissionPhoto) => void
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error("Impossible de charger l'image pour la détection."))
+    image.src = url
+  })
+}
+
+export function RodDetectionPanel({
+  photo,
+  planId,
+  missionOrigin,
+  mapCenter,
+  onCalibrated,
+}: RodDetectionPanelProps) {
+  const [detecting, setDetecting] = useState(false)
+  const [summary, setSummary] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleCalibrated(calibration: AffineTransform) {
+    try {
+      const updated = await setPhotoCalibration(photo.id, calibration)
+      onCalibrated(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleDetect() {
+    if (!photo.calibration) return
+    setDetecting(true)
+    setError(null)
+    setSummary(null)
+    try {
+      const image = await loadImage(photo.imageUrl)
+      const detections = detectMarkers(image)
+      const rodMarkers = await listRodMarkers()
+      const { recognized, totalDetected, totalRecognized } = mapDetectionsToPoints(
+        detections,
+        photo.calibration,
+        rodMarkers
+      )
+
+      await Promise.all(
+        recognized.map((point) =>
+          createFeltPoint({ planId, networkName: point.networkName, x: point.x, y: point.y })
+        )
+      )
+
+      setSummary(`${totalDetected} marqueurs détectés, ${totalRecognized} reconnus.`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  if (!photo.calibration) {
+    return (
+      <PlanCalibrationTool
+        imageUrl={photo.imageUrl}
+        missionOrigin={missionOrigin}
+        mapCenter={mapCenter}
+        onCalibrated={handleCalibrated}
+      />
+    )
+  }
+
+  return (
+    <div>
+      {error && <p role="alert">{error}</p>}
+      {summary && <p>{summary}</p>}
+      <button onClick={handleDetect} disabled={detecting}>
+        {detecting ? 'Détection en cours…' : 'Détecter les tiges'}
+      </button>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass, type-check**
+
+Run: `npx vitest run src/components/RodDetectionPanel.test.tsx && npx tsc -b --noEmit`
+Expected: PASS (3 tests); no type errors.
+
+- [ ] **Step 5: Wire `RodDetectionPanel` into `MissionPhotosGallery`**
+
+Add a way to select a photo from the gallery and open `RodDetectionPanel` for it —
+e.g. a "Détecter les tiges" link/button per photo thumbnail that renders
+`<RodDetectionPanel photo={photo} planId={...} .../>` in place of (or alongside) the
+gallery. `MissionPhotosGallery` currently has no `planId` prop (Plan 1, Chunk 10,
+Task 34) — add one, threaded from wherever `MissionPhotosGallery` is rendered in
+`MissionWorkspace` (`phase.exteriorPlan.id`, the same value already used for
+`SiteMapView`, Plan 1 Chunk 8).
+
+This wiring step is intentionally left as an integration task without full example
+code here — by this point in the plan, the pattern (add a prop, pass it down from
+`MissionWorkspace`'s phase state, mock the child in that page's tests) has been
+demonstrated repeatedly in Plan 1 (e.g. Chunk 8 Task 29 Step 13's `phase.exteriorPlan.id`
+threading, and Chunk 10 Task 34 Step 12's `MissionPhotosGallery` wiring itself). Write
+the failing test first in `MissionPhotosGallery.test.tsx` and
+`MissionWorkspace.test.tsx`, following that established pattern, before writing the
+implementation.
+
+- [ ] **Step 6: Manually verify in the browser**
+
+Run: `npm run dev`. Upload an aerial photo, calibrate it, print a test ArUco marker
+(dictionary `ARUCO`, any ID) and photograph it, upload that test photo, click
+"Détecter les tiges".
+Expected: the summary message shows the marker was detected; if its ID isn't yet in
+`rod_marker`, it's correctly reported as "détecté" but not "reconnu."
+
+- [ ] **Step 7: Type-check and commit**
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/components/RodDetectionPanel.tsx src/components/RodDetectionPanel.test.tsx src/components/MissionPhotosGallery.tsx src/components/MissionPhotosGallery.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add RodDetectionPanel and wire it into MissionPhotosGallery"
+```
+
+---
+
+**Chunk 3 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Laurent can, from a mission's photo gallery: calibrate an aerial photo, click
+"Détecter les tiges," and see recognized markers turn into `FeltPoint`s on the map
+— entirely client-side, no network call for the detection step itself.
