@@ -40,12 +40,27 @@ deux raisons : le wifi/GSM actif perturbe son ressenti, et une zone rurale n'a p
 toujours de réseau. **La détection doit donc s'exécuter entièrement sur l'appareil,
 sans aucun appel réseau.**
 
-**Choix technique : OpenCV.js** (la bibliothèque OpenCV C++ de référence, compilée en
-WebAssembly, exécutée dans le navigateur). Ce choix résout un dilemme apparent —
-Laurent voulait à la fois une solution robuste/évolutive (pensant à Python/OpenCV
-serveur) et un fonctionnement hors-ligne (incompatible avec un serveur distant) :
-OpenCV.js est le même moteur de détection que la version Python (module ArUco
-inclus), mais s'exécute 100% localement, sans serveur.
+**Choix technique : js-aruco2** (bibliothèque JavaScript pure, dédiée à la détection
+ArUco/estimation de pose — [damianofalcioni/js-aruco2](https://github.com/damianofalcioni/js-aruco2)).
+
+**⚠️ Correction post-recherche technique (2026-07-16) :** ce document recommandait
+initialement OpenCV.js (le moteur C++ de référence compilé en WebAssembly), en
+pensant résoudre le dilemme de Laurent entre robustesse (il pensait Python/OpenCV
+serveur) et fonctionnement hors-ligne (incompatible avec un serveur distant). Une
+vérification a révélé un problème réel : **les binaires OpenCV.js précompilés
+standards n'incluent PAS le module ArUco** (il fait partie d'`opencv_contrib` et
+nécessite une compilation personnalisée avec la chaîne d'outils Emscripten — un
+vrai chantier de build, pas un simple import). js-aruco2 est un choix plus adapté :
+même famille d'algorithme (détection de marqueurs carrés fiduciaires), construit
+spécifiquement pour ce cas d'usage, **aucune compilation ni WebAssembly à gérer**
+(JavaScript pur, simple import npm) — ce qui résout du même coup deux des
+incertitudes listées en §8 (environnement de test, packaging).
+
+**Limite à connaître, indépendante du choix de bibliothèque :** la détection ArUco
+classique (que ce soit via OpenCV ou js-aruco2, même famille d'algorithme) a des
+limites documentées en conditions d'éclairage difficiles — un vrai test terrain
+avec de vrais marqueurs imprimés reste indispensable, pas seulement un test en
+environnement contrôlé.
 
 **Périmètre de ce sous-projet vs. futur chantier "hors-ligne complet" :** Laurent a
 décrit un modèle en 4 phases pour l'usage terrain : préparation (online : adresse,
@@ -56,11 +71,8 @@ photos, détection, positionnement de grilles) → remontée des données (onlin
 ressentis, les grilles...) est un chantier d'architecture séparé et plus large, qui
 touche tout ce qui a déjà été construit en Plan 1 — explicitement **hors périmètre
 ici**. Ce sous-projet garantit seulement que **la détection elle-même** ne dépend
-d'aucune connexion, ce qui est vrai par construction avec OpenCV.js — **à condition
-que le fichier OpenCV.js (WASM) soit inclus comme asset statique packagé avec
-l'application** (mis en cache par le PWA) plutôt que chargé depuis un CDN à
-l'exécution, comme le font de nombreux tutoriels OpenCV.js par défaut. Ce point est
-repris explicitement en §8.
+d'aucune connexion, ce qui est vrai par construction avec js-aruco2 (JS pur, aucun
+appel réseau, aucun asset WASM à charger).
 
 ## 4. Flux utilisateur
 
@@ -75,7 +87,7 @@ repris explicitement en §8.
    depuis la galerie de photos de mission pour ce nouvel usage (voir §5,
    `RodDetectionPanel`).
 3. Il clique "Détecter les tiges".
-4. La détection s'exécute dans le navigateur (OpenCV.js) sur l'image calée.
+4. La détection s'exécute dans le navigateur (js-aruco2) sur l'image calée.
 5. Chaque marqueur détecté est identifié via la table `rod_marker` (association
    fixe marqueur → réseau + tige, définie à la fabrication).
 6. Les positions pixel des marqueurs reconnus sont converties en coordonnées réelles
@@ -98,15 +110,16 @@ même si Hartmann et Peyré (même angle théorique 0°) apparaissent sur la mê
 |---|---|---|
 | `rod_marker` (table) | `marker_id → {network_name, rod_number}`, fixé à la fabrication des tiges | — (données de config) |
 | `arucoMapping.ts` | Logique pure : détections brutes + transformation de calage + table `rod_marker` → liste de points `{réseau, x, y}` | 100% testable avec des détections simulées, sans image réelle |
-| `arucoDetector.ts` | Charge OpenCV.js, lance la détection sur une image, retourne les détections brutes `{marker_id, position pixel}` | Test de fumée seulement (charge sans planter) — la précision réelle se valide avec de vrais marqueurs imprimés, pas par test automatisé |
-| `RodDetectionPanel` (UI, nouveau) | Câble le flux complet depuis `MissionPhotosGallery` : ouvre `PlanCalibrationTool` pour caler la photo sélectionnée (réutilisation, pas de nouveau calage), déclenche `arucoDetector` + `arucoMapping`, affiche le message "X marqueurs détectés, Y reconnus" (§6), persiste les points via `feltPointsRepo.createFeltPoint` avec `planId = exteriorPlan.id` | Logique de câblage testée en mockant `arucoDetector`/`arucoMapping`/le repo — pas de dépendance à OpenCV réel dans ses propres tests |
+| `arucoDetector.ts` | Charge js-aruco2, lance la détection sur une image, retourne les détections brutes `{marker_id, position pixel}` | Test de fumée + tests avec de vraies images de marqueurs générées (js-aruco2 étant du JS pur, testable directement en Vitest/jsdom sans souci de chargement WASM) — la précision en conditions réelles (éclairage terrain) se valide avec de vrais marqueurs imprimés, pas par test automatisé |
+| `RodDetectionPanel` (UI, nouveau) | Câble le flux complet depuis `MissionPhotosGallery` : ouvre `PlanCalibrationTool` pour caler la photo sélectionnée (réutilisation, pas de nouveau calage), déclenche `arucoDetector` + `arucoMapping`, affiche le message "X marqueurs détectés, Y reconnus" (§6), persiste les points via `feltPointsRepo.createFeltPoint` avec `planId = exteriorPlan.id` | Logique de câblage testée en mockant `arucoDetector`/`arucoMapping`/le repo — pas de dépendance à js-aruco2 réel dans ses propres tests |
 | Extension de `feltPointsRepo` | Ajout de `deleteFeltPoint` (**manquant actuellement** — nécessaire pour "corriger après coup") | Testé comme les autres fonctions du repo |
 
 **Frontière de responsabilité :** `arucoDetector.ts` est la seule brique qui touche
-OpenCV.js directement — si son API réelle diffère de ce qui est documenté (même
+js-aruco2 directement — si son API réelle diffère de ce qui est documenté (même
 traitement d'incertitude que Leaflet.DistortableImage et Leaflet-Geoman ailleurs
-dans Plan 1), seule cette brique doit changer. `arucoMapping.ts` ne dépend que de
-types de données simples (positions, IDs), jamais d'OpenCV directement.
+dans Plan 1, bien que le risque soit moindre ici : JS pur, pas de binaire externe),
+seule cette brique doit changer. `arucoMapping.ts` ne dépend que de types de
+données simples (positions, IDs), jamais de js-aruco2 directement.
 
 ## 6. Gestion des erreurs
 
@@ -136,15 +149,18 @@ types de données simples (positions, IDs), jamais d'OpenCV directement.
 
 ## 8. Points ouverts à vérifier en implémentation
 
-1. OpenCV.js (WebAssembly) doit être testé dans l'environnement de test actuel
-   (Vitest/jsdom) — possible que le chargement du WASM nécessite un vrai navigateur
-   (Playwright) plutôt que jsdom. À confirmer tôt, avant d'écrire beaucoup de code
-   autour de `arucoDetector.ts`.
-2. Taille exacte des marqueurs ArUco (~8-15cm estimé pour une perche à 3m) — à
+**Résolus par le passage à js-aruco2 (2026-07-16) :**
+- ~~Test dans l'environnement Vitest/jsdom~~ — js-aruco2 est du JS pur, pas de WASM
+  à charger, testable directement en Vitest/jsdom sans souci particulier.
+- ~~Packaging de l'asset WASM~~ — sans objet, js-aruco2 est un simple import npm.
+
+**Encore ouverts :**
+1. Taille exacte des marqueurs ArUco (~8-15cm estimé pour une perche à 3m) — à
    valider avec de vrais marqueurs imprimés et une vraie photo test.
-3. API exacte d'OpenCV.js pour la détection ArUco (noms de fonctions, format des
-   détections retournées) — à vérifier contre la documentation au moment de
-   l'implémentation.
-4. Le fichier OpenCV.js (WASM) doit être servi comme asset statique packagé avec
-   l'application (mis en cache par le PWA), pas chargé depuis un CDN externe à
-   l'exécution — sans quoi la garantie "aucun appel réseau" du §3 serait rompue.
+2. API exacte de js-aruco2 pour la détection (noms de fonctions/classes, format des
+   détections retournées) — à vérifier contre la documentation/le code source du
+   projet au moment de l'implémentation.
+3. Fiabilité de détection en conditions d'éclairage réelles variables (soleil direct,
+   ombre partielle) — limite documentée de la famille d'algorithmes ArUco en
+   général, pas spécifique à js-aruco2 ; à valider empiriquement, pas à supposer
+   résolue par le choix de bibliothèque.
