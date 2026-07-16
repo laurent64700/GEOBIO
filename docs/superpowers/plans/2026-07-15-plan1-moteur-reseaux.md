@@ -4195,7 +4195,7 @@ git commit -m "Add vibratory-base reinforced-line pattern; seed values for 5 con
 ---
 
 **Chunk 5 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
-Laurent can, programmatically (not yet through the UI — Chunk 6 wires it up), select
+Laurent can, programmatically (not yet through the UI — Chunk 7 wires it up), select
 or create a `GridTemplate` (with color and base vibratoire) and generate + persist a
 `GridInstance` with its `GridLine`s (each carrying a +/- polarity and a
 reinforced/doubled flag every Nth line) around a chosen origin. All 5 confirmed
@@ -4204,3 +4204,450 @@ values including their vibratory base; the planetary-scale Or/Argent/Cuivre syst
 and Bagua (both a different kind of object than `GridTemplate`, see this chunk's
 opening corrections) remain explicitly out of scope, deferred to their own future
 sub-projects.
+
+---
+
+## Chunk 6: Global assessment (nuisance causes + Bovis vibratory rate)
+
+**Why this chunk exists, and why it comes before grid rendering/editing:** Laurent's
+real field workflow does this measurement **first**, right after creating the
+mission and its exterior plan — before locating magnetic north, before any water or
+grid search. The result conditions what he investigates next (e.g. a high
+"géobiologique" cause reading focuses the rest of the visit on telluric networks).
+It's also fully independent of the map/grid work — a simple one-time-per-mission
+form — so it's a clean, self-contained chunk to build ahead of the more complex
+Chunk 7 (map rendering, layers, grid editing).
+
+**Scale confirmed by Laurent:** the 5 nuisance causes (architectural,
+électromagnétique, géobiologique, paranormal, autres) are each rated **0 to 10**.
+The vibratory rate uses the Bovis scale, **0 to 180 000**.
+
+### Task 23: Global assessment schema + repo
+
+**Files:**
+- Create: `supabase/migrations/0008_global_assessment.sql`
+- Modify: `src/domain/types.ts` (add global assessment fields to `Mission`)
+- Modify: `src/data/missionsRepo.ts` + `.test.ts` (add `setGlobalAssessment`)
+
+**Blast radius:** widening `Mission` again means every existing `Mission`-shaped
+fixture across the plan needs the 6 new nullable fields added. Enumerating them,
+following the same rigor as Chunk 5's Tasks 21/22:
+- `src/data/missionsRepo.test.ts` (Chunk 3/4) — all `Mission`/row fixtures.
+- `src/components/MissionForm.test.tsx` (Chunk 3) — the `mission` object literal.
+- `src/pages/MissionWorkspace.test.tsx` (Chunk 4) — the inline `MissionForm` mock's
+  hardcoded object, and the `missionWithOrigin` const.
+All 6 new fields are nullable (`number | null`), so every existing fixture can just
+add them as `null` — no need to invent plausible non-null values for fixtures that
+aren't testing this feature.
+
+- [ ] **Step 1: Migration**
+
+```sql
+-- supabase/migrations/0008_global_assessment.sql
+alter table mission add column cause_architectural numeric check (cause_architectural between 0 and 10);
+alter table mission add column cause_electromagnetique numeric check (cause_electromagnetique between 0 and 10);
+alter table mission add column cause_geobiologique numeric check (cause_geobiologique between 0 and 10);
+alter table mission add column cause_paranormale numeric check (cause_paranormale between 0 and 10);
+alter table mission add column cause_autres numeric check (cause_autres between 0 and 10);
+alter table mission add column bovis_rate numeric check (bovis_rate between 0 and 180000);
+```
+
+- [ ] **Step 2: Apply it**
+
+Run: `npx supabase db push`
+
+- [ ] **Step 3: Extend the `Mission` type**
+
+```typescript
+// src/domain/types.ts — modify Mission
+export interface Mission {
+  id: string
+  address: string
+  missionDate: string
+  declinationDeg: number | null
+  originLat: number | null
+  originLng: number | null
+  causeArchitectural: number | null
+  causeElectromagnetique: number | null
+  causeGeobiologique: number | null
+  causeParanormale: number | null
+  causeAutres: number | null
+  bovisRate: number | null
+}
+```
+
+- [ ] **Step 4: Fix the blast-radius fixtures**
+
+Add `causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
+causeParanormale: null, causeAutres: null, bovisRate: null` (and the equivalent
+`_snake_case: null` row fields in `missionsRepo.test.ts`'s DB-row literals) to every
+fixture enumerated in this task's "Blast radius" note above.
+
+- [ ] **Step 5: Write a failing test for `setGlobalAssessment`**
+
+```typescript
+// append to src/data/missionsRepo.test.ts
+it('sets the global assessment and maps it back', async () => {
+  const { from, chain } = createSupabaseChainMock({
+    data: {
+      id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null,
+      origin_lat: null, origin_lng: null,
+      cause_architectural: 3, cause_electromagnetique: 6, cause_geobiologique: 8,
+      cause_paranormale: 1, cause_autres: 0, bovis_rate: 9500,
+    },
+    error: null,
+  })
+  vi.mocked(supabase).from = from
+
+  const mission = await setGlobalAssessment('m1', {
+    causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+    causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+  })
+
+  expect(from).toHaveBeenCalledWith('mission')
+  expect(chain.eq).toHaveBeenCalledWith('id', 'm1')
+  expect(mission.bovisRate).toBe(9500)
+  expect(mission.causeGeobiologique).toBe(8)
+})
+```
+
+- [ ] **Step 6: Run test to verify it fails**
+
+Run: `npx vitest run src/data/missionsRepo.test.ts`
+Expected: FAIL — `setGlobalAssessment is not a function`
+
+- [ ] **Step 7: Implement `setGlobalAssessment`**
+
+```typescript
+// src/data/missionsRepo.ts — modify MissionRow, mapRowToMission, and add:
+interface MissionRow {
+  id: string
+  address: string
+  mission_date: string
+  declination_deg: number | null
+  origin_lat: number | null
+  origin_lng: number | null
+  cause_architectural: number | null
+  cause_electromagnetique: number | null
+  cause_geobiologique: number | null
+  cause_paranormale: number | null
+  cause_autres: number | null
+  bovis_rate: number | null
+}
+
+function mapRowToMission(row: MissionRow): Mission {
+  return {
+    id: row.id,
+    address: row.address,
+    missionDate: row.mission_date,
+    declinationDeg: row.declination_deg,
+    originLat: row.origin_lat,
+    originLng: row.origin_lng,
+    causeArchitectural: row.cause_architectural,
+    causeElectromagnetique: row.cause_electromagnetique,
+    causeGeobiologique: row.cause_geobiologique,
+    causeParanormale: row.cause_paranormale,
+    causeAutres: row.cause_autres,
+    bovisRate: row.bovis_rate,
+  }
+}
+
+export interface GlobalAssessmentInput {
+  causeArchitectural: number
+  causeElectromagnetique: number
+  causeGeobiologique: number
+  causeParanormale: number
+  causeAutres: number
+  bovisRate: number
+}
+
+export async function setGlobalAssessment(
+  missionId: string,
+  input: GlobalAssessmentInput
+): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({
+      cause_architectural: input.causeArchitectural,
+      cause_electromagnetique: input.causeElectromagnetique,
+      cause_geobiologique: input.causeGeobiologique,
+      cause_paranormale: input.causeParanormale,
+      cause_autres: input.causeAutres,
+      bovis_rate: input.bovisRate,
+    })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer les mesures globales : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/missionsRepo.test.ts`
+Expected: PASS (5 tests — 4 from before, unchanged in count by Step 4's fixture fix,
+plus this new one)
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add supabase/migrations/0008_global_assessment.sql src/domain/types.ts src/data/missionsRepo.ts src/data/missionsRepo.test.ts src/components/MissionForm.test.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add global assessment (nuisance causes + Bovis rate) schema and repo"
+```
+
+---
+
+### Task 24: `GlobalAssessmentForm` UI + wire into `MissionWorkspace`
+
+**Files:**
+- Create: `src/components/GlobalAssessmentForm.tsx`
+- Test: `src/components/GlobalAssessmentForm.test.tsx`
+- Modify (full rewrite of the `WorkspacePhase` union and switch): `src/pages/MissionWorkspace.tsx`
+- Modify: `src/pages/MissionWorkspace.test.tsx`
+
+- [ ] **Step 1: Write failing tests for `GlobalAssessmentForm`**
+
+```tsx
+// src/components/GlobalAssessmentForm.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { GlobalAssessmentForm } from './GlobalAssessmentForm'
+
+describe('GlobalAssessmentForm', () => {
+  it('renders a 0-10 slider for each of the 5 causes and a 0-180000 slider for Bovis', () => {
+    render(<GlobalAssessmentForm onSaved={vi.fn()} />)
+    ;[
+      'Architectural', 'Électromagnétique', 'Géobiologique', 'Paranormal', 'Autres',
+    ].forEach((label) => {
+      const input = screen.getByLabelText(label) as HTMLInputElement
+      expect(input.min).toBe('0')
+      expect(input.max).toBe('10')
+    })
+    const bovis = screen.getByLabelText(/taux vibratoire/i) as HTMLInputElement
+    expect(bovis.min).toBe('0')
+    expect(bovis.max).toBe('180000')
+  })
+
+  it('calls onSaved with the slider values when submitted', () => {
+    const onSaved = vi.fn()
+    render(<GlobalAssessmentForm onSaved={onSaved} />)
+
+    fireEvent.change(screen.getByLabelText('Architectural'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('Électromagnétique'), { target: { value: '6' } })
+    fireEvent.change(screen.getByLabelText('Géobiologique'), { target: { value: '8' } })
+    fireEvent.change(screen.getByLabelText('Paranormal'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Autres'), { target: { value: '0' } })
+    fireEvent.change(screen.getByLabelText(/taux vibratoire/i), { target: { value: '9500' } })
+    fireEvent.click(screen.getByRole('button', { name: /enregistrer/i }))
+
+    expect(onSaved).toHaveBeenCalledWith({
+      causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+      causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+    })
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/GlobalAssessmentForm.test.tsx`
+Expected: FAIL — `Cannot find module './GlobalAssessmentForm'`
+
+- [ ] **Step 3: Implement `GlobalAssessmentForm`**
+
+```tsx
+// src/components/GlobalAssessmentForm.tsx
+import { useState } from 'react'
+import type { GlobalAssessmentInput } from '../data/missionsRepo'
+
+export interface GlobalAssessmentFormProps {
+  onSaved: (input: GlobalAssessmentInput) => void
+}
+
+interface CauseSliderProps {
+  label: string
+  value: number
+  onChange: (v: number) => void
+}
+
+function CauseSlider({ label, value, onChange }: CauseSliderProps) {
+  return (
+    <label>
+      {label}
+      <input
+        type="range" min={0} max={10} step={1} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+      <span>{value}</span>
+    </label>
+  )
+}
+
+export function GlobalAssessmentForm({ onSaved }: GlobalAssessmentFormProps) {
+  const [causeArchitectural, setCauseArchitectural] = useState(0)
+  const [causeElectromagnetique, setCauseElectromagnetique] = useState(0)
+  const [causeGeobiologique, setCauseGeobiologique] = useState(0)
+  const [causeParanormale, setCauseParanormale] = useState(0)
+  const [causeAutres, setCauseAutres] = useState(0)
+  const [bovisRate, setBovisRate] = useState(0)
+
+  return (
+    <div>
+      <CauseSlider label="Architectural" value={causeArchitectural} onChange={setCauseArchitectural} />
+      <CauseSlider label="Électromagnétique" value={causeElectromagnetique} onChange={setCauseElectromagnetique} />
+      <CauseSlider label="Géobiologique" value={causeGeobiologique} onChange={setCauseGeobiologique} />
+      <CauseSlider label="Paranormal" value={causeParanormale} onChange={setCauseParanormale} />
+      <CauseSlider label="Autres" value={causeAutres} onChange={setCauseAutres} />
+      <label>
+        Taux vibratoire (Bovis)
+        <input
+          type="range" min={0} max={180000} step={500} value={bovisRate}
+          onChange={(e) => setBovisRate(Number(e.target.value))}
+        />
+        <span>{bovisRate}</span>
+      </label>
+      <button
+        onClick={() =>
+          onSaved({
+            causeArchitectural, causeElectromagnetique, causeGeobiologique,
+            causeParanormale, causeAutres, bovisRate,
+          })
+        }
+      >
+        Enregistrer les mesures globales
+      </button>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GlobalAssessmentForm.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Insert a `global-assessment` phase into `MissionWorkspace`, between exterior-plan creation and origin-setting**
+
+This follows Laurent's confirmed field order: mission → exterior plan → **global
+assessment** → magnetic north / origin → everything else.
+
+```typescript
+// src/pages/MissionWorkspace.tsx — modify the WorkspacePhase union:
+type WorkspacePhase =
+  | { name: 'creating-mission' }
+  | { name: 'creating-exterior-plan'; mission: Mission }
+  | { name: 'global-assessment'; mission: Mission }
+  | { name: 'setting-origin'; mission: Mission }
+  | { name: 'ready-no-interior'; mission: Mission }
+  | { name: 'calibrating-interior'; mission: Mission; imageUrl: string }
+  | { name: 'error'; message: string }
+```
+
+```typescript
+// modify handleMissionCreated's success path:
+      await createPlan({ missionId: mission.id, kind: 'exterieur' })
+      setPhase({ name: 'global-assessment', mission })
+```
+
+```typescript
+// add a new handler:
+import { setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
+
+async function handleGlobalAssessmentSaved(input: GlobalAssessmentInput) {
+  if (phase.name !== 'global-assessment') return
+  try {
+    const updated = await setGlobalAssessment(phase.mission.id, input)
+    setPhase({ name: 'setting-origin', mission: updated })
+  } catch (err) {
+    setPhase({ name: 'error', message: messageOf(err) })
+  }
+}
+```
+
+```tsx
+// add a new switch case, alongside the existing ones:
+import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
+
+    case 'global-assessment':
+      return <GlobalAssessmentForm onSaved={handleGlobalAssessmentSaved} />
+```
+
+- [ ] **Step 6: Write a failing test for the new phase**
+
+```typescript
+// append to src/pages/MissionWorkspace.test.tsx
+vi.mock('../components/GlobalAssessmentForm', () => ({
+  GlobalAssessmentForm: ({ onSaved }: { onSaved: (i: unknown) => void }) => (
+    <button
+      onClick={() =>
+        onSaved({
+          causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+          causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+        })
+      }
+    >
+      simulate-global-assessment
+    </button>
+  ),
+}))
+
+it('shows the global assessment form after the exterior plan, then proceeds to origin-setting', async () => {
+  vi.mocked(plansRepo.createPlan).mockResolvedValue({
+    id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+  })
+  vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue({
+    ...missionWithOrigin, originLat: null, originLng: null,
+    causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+    causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+  })
+
+  render(<MissionWorkspace />)
+
+  fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+  await waitFor(() =>
+    expect(missionsRepo.setGlobalAssessment).toHaveBeenCalledWith('m1', {
+      causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+      causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+    })
+  )
+  expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+})
+```
+
+Also add `vi.mocked(missionsRepo.setGlobalAssessment)` to the file's existing
+`vi.mock('../data/missionsRepo')` auto-mock (no factory change needed — auto-mock
+already covers any new export).
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `npx vitest run src/pages/MissionWorkspace.test.tsx`
+Expected: PASS (6 tests)
+
+- [ ] **Step 8: Run the full suite and type-check**
+
+Run: `npx vitest run && npx tsc -b --noEmit`
+Expected: all pass, no type errors.
+
+- [ ] **Step 9: Manually verify in the browser**
+
+Run: `npm run dev`. Create a mission, wait for the exterior plan, move the 6 sliders,
+click "Enregistrer les mesures globales".
+Expected: no crash; the origin-setting prompt appears next; in Supabase, the
+mission row has all 6 fields populated.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add src/components/GlobalAssessmentForm.tsx src/components/GlobalAssessmentForm.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add GlobalAssessmentForm and wire it as a MissionWorkspace phase"
+```
+
+---
+
+**Chunk 6 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Right after creating a mission and its exterior plan, Laurent rates the 5 nuisance
+causes (0-10) and the Bovis vibratory rate (0-180 000) via sliders, saved to the
+mission before moving on to origin-setting and grid work (Chunk 7).
