@@ -6810,3 +6810,612 @@ plan so far. This is a real gap, not an oversight: it needs its own small task o
 the felt-point-first calibration flow (Chunk 7's `FeltPoint`s feeding into where the
 origin should go) is designed in enough detail to avoid building a UI that gets
 immediately reworked. Flag this to Laurent before starting Chunk 10.
+
+**Resolved (2026-07-16):** Laurent confirmed the flow is exactly as simple as
+hoped — he places `FeltPoint`s during blind search, then picks a template and
+clicks the origin himself, informed by what he sees on screen, with **no**
+automatic origin-suggestion algorithm needed. Chunk 10 below builds this.
+
+---
+
+## Chunk 10: Grid creation UI + mission-level aerial photos
+
+### Task 33: `GridCreationPanel` — pick a template, click an origin, indicate polarity, generate
+
+**Files:**
+- Create: `src/components/GridCreationPanel.tsx`
+- Test: `src/components/GridCreationPanel.test.tsx`
+- Modify: `src/components/SiteMapView.tsx` + `.test.tsx` (wire it in; consolidate
+  map-click handling so grid-placement and the guide-line tool from Chunk 9,
+  Task 30 never both listen for a click at once)
+
+**Flow:** "Ajouter une grille" → `GridTemplatePicker` (Chunk 5, Task 18, already
+built) appears → once a template is chosen, the panel prompts "cliquez l'origine
+sur la carte" → the next map click sets a pending origin point → a `+`/`-` toggle
+appears ("quelle est la polarité ressentie sur ce point ?") → "Générer" calls
+`createGridForPlan` and refreshes the map's instances/lines.
+
+- [ ] **Step 1: Write failing tests for `GridCreationPanel`**
+
+```tsx
+// src/components/GridCreationPanel.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { GridCreationPanel } from './GridCreationPanel'
+import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
+
+vi.mock('../data/gridTemplatesRepo')
+
+const hartmann = {
+  id: 't0', name: 'Hartmann', spacingXM: 2.5, spacingYM: 1.8, angleTrueNorthDeg: 0,
+  originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7,
+}
+
+describe('GridCreationPanel', () => {
+  it('starts collapsed, showing only an "Ajouter une grille" button', () => {
+    render(<GridCreationPanel onOriginRequested={vi.fn()} onGenerate={vi.fn()} pendingOrigin={null} />)
+    expect(screen.getByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
+    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the template picker after "Ajouter une grille", then prompts for an origin click once one is chosen', async () => {
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([hartmann])
+    const onOriginRequested = vi.fn()
+
+    render(<GridCreationPanel onOriginRequested={onOriginRequested} onGenerate={vi.fn()} pendingOrigin={null} />)
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+
+    fireEvent.click(await screen.findByRole('button', { name: /hartmann/i }))
+
+    expect(onOriginRequested).toHaveBeenCalled()
+    expect(screen.getByText(/cliquez l'origine sur la carte/i)).toBeInTheDocument()
+  })
+
+  it('shows a polarity toggle once a pending origin exists, and calls onGenerate with the template/origin/polarity', async () => {
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([hartmann])
+    const onGenerate = vi.fn()
+
+    const { rerender } = render(
+      <GridCreationPanel onOriginRequested={vi.fn()} onGenerate={onGenerate} pendingOrigin={null} />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /hartmann/i }))
+
+    // Simulates SiteMapView reporting a map click back to this panel as a prop update:
+    rerender(
+      <GridCreationPanel onOriginRequested={vi.fn()} onGenerate={onGenerate} pendingOrigin={{ x: 3, y: -2 }} />
+    )
+
+    expect(screen.getByText(/polarité ressentie/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '+' }))
+    fireEvent.click(screen.getByRole('button', { name: /générer/i }))
+
+    expect(onGenerate).toHaveBeenCalledWith(hartmann, { x: 3, y: -2 }, '+')
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/GridCreationPanel.test.tsx`
+Expected: FAIL — `Cannot find module './GridCreationPanel'`
+
+- [ ] **Step 3: Implement `GridCreationPanel`**
+
+```tsx
+// src/components/GridCreationPanel.tsx
+import { useState } from 'react'
+import { GridTemplatePicker } from './GridTemplatePicker'
+import type { GridTemplate, GridLinePolarity, Point } from '../domain/types'
+
+export interface GridCreationPanelProps {
+  pendingOrigin: Point | null
+  onOriginRequested: () => void
+  onGenerate: (template: GridTemplate, origin: Point, polarity: GridLinePolarity) => void
+}
+
+type Step = 'collapsed' | 'picking-template' | 'awaiting-origin' | 'awaiting-polarity'
+
+export function GridCreationPanel({ pendingOrigin, onOriginRequested, onGenerate }: GridCreationPanelProps) {
+  const [template, setTemplate] = useState<GridTemplate | null>(null)
+  const [polarity, setPolarity] = useState<GridLinePolarity>('+')
+  const [expanded, setExpanded] = useState(false)
+
+  const step: Step = !expanded
+    ? 'collapsed'
+    : !template
+      ? 'picking-template'
+      : !pendingOrigin
+        ? 'awaiting-origin'
+        : 'awaiting-polarity'
+
+  function handleTemplateSelected(selected: GridTemplate) {
+    setTemplate(selected)
+    onOriginRequested()
+  }
+
+  if (step === 'collapsed') {
+    return <button onClick={() => setExpanded(true)}>Ajouter une grille</button>
+  }
+
+  if (step === 'picking-template') {
+    return <GridTemplatePicker onSelected={handleTemplateSelected} />
+  }
+
+  if (step === 'awaiting-origin') {
+    return <p>Cliquez l'origine sur la carte.</p>
+  }
+
+  // step === 'awaiting-polarity'
+  return (
+    <div>
+      <p>Quelle est la polarité ressentie sur ce point ?</p>
+      <button
+        onClick={() => setPolarity('+')}
+        style={{ fontWeight: polarity === '+' ? 'bold' : 'normal' }}
+      >
+        +
+      </button>
+      <button
+        onClick={() => setPolarity('-')}
+        style={{ fontWeight: polarity === '-' ? 'bold' : 'normal' }}
+      >
+        -
+      </button>
+      <button onClick={() => onGenerate(template!, pendingOrigin!, polarity)}>Générer</button>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GridCreationPanel.test.tsx`
+Expected: PASS (3 tests)
+
+- [ ] **Step 5: Wire `GridCreationPanel` into `SiteMapView`, consolidating map-click modes**
+
+`SiteMapView` now has two features that both want `MapView`'s single `onMapClick`
+slot: the guide-line tool (Chunk 9, Task 30) and grid-origin placement. Only one can
+be "listening" at a time — model this explicitly rather than letting them silently
+race.
+
+```typescript
+// src/components/SiteMapView.tsx — add state and a single click dispatcher
+import { GridCreationPanel } from './GridCreationPanel'
+import { createGridForPlan } from '../domain/createGridForPlan'
+import type { GridTemplate, GridLinePolarity } from '../domain/types'
+
+// ... add state:
+const [pendingGridOrigin, setPendingGridOrigin] = useState<Point | null>(null)
+const [awaitingGridOrigin, setAwaitingGridOrigin] = useState(false)
+
+// Starting one map-click mode must actively cancel the other — the prior draft
+// of this task claimed this was true "by construction" without actually
+// resetting the opposite flag, which left a real race (both flags could end up
+// true at once, and a stale flag could silently consume an unrelated later
+// click). Both directions are now explicit:
+function handleGridOriginRequested() {
+  setAwaitingGridOrigin(true)
+  setPendingGridOrigin(null)
+  setPlacingGuideLine(false) // cancel any in-progress guide-line placement
+}
+
+async function handleGenerateGrid(template: GridTemplate, origin: Point, polarity: GridLinePolarity) {
+  try {
+    const { instance, lines } = await createGridForPlan(planId, template, origin, polarity)
+    setInstances((prev) => [...prev, instance])
+    setLinesByInstance((prev) => ({ ...prev, [instance.id]: lines }))
+    setAwaitingGridOrigin(false)
+    setPendingGridOrigin(null)
+  } catch (err) {
+    setError(err instanceof Error ? err.message : String(err))
+  }
+}
+
+// The single MapView onMapClick dispatches by whichever mode is active. Because
+// both "start" handlers now clear the other flag (see handleGridOriginRequested
+// above and the modified "Placer ici" button below), awaitingGridOrigin and
+// placingGuideLine are genuinely mutually exclusive at every point in time, not
+// just in the common case.
+function handleMapClick(latlng: { lat: number; lng: number }) {
+  const point = latLngToLocal(latlng, missionOrigin)
+  if (awaitingGridOrigin) {
+    setPendingGridOrigin(point)
+    setAwaitingGridOrigin(false)
+    return
+  }
+  if (placingGuideLine) {
+    handleGuideLineMapClick(latlng)
+  }
+}
+
+// Modify the existing "Placer ici" button from Chunk 9, Task 30 (the one that
+// currently only does setPlacingGuideLine(true)) to also cancel any pending
+// grid-origin request:
+<button onClick={() => { setPlacingGuideLine(true); setAwaitingGridOrigin(false) }} disabled={guideLineBearing === null}>
+  Placer ici
+</button>
+
+// ... MapView usage becomes:
+<MapView
+  center={[missionOrigin.lat, missionOrigin.lng]}
+  onMapClick={awaitingGridOrigin || placingGuideLine ? handleMapClick : undefined}
+>
+  {/* ...existing children... */}
+</MapView>
+
+// ... in the JSX, alongside <LayerPanel>:
+<GridCreationPanel
+  pendingOrigin={pendingGridOrigin}
+  onOriginRequested={handleGridOriginRequested}
+  onGenerate={handleGenerateGrid}
+/>
+```
+
+- [ ] **Step 6: Write a failing integration test in `SiteMapView.test.tsx`, then run it green**
+
+```tsx
+// append to src/components/SiteMapView.test.tsx
+//
+// vi.mock(...) calls are hoisted above every import AND above the file's own
+// top-level `const hartmannInstance = {...}` (defined in Chunk 8, Task 29) — a
+// factory that closes over `hartmannInstance` directly would throw
+// "Cannot access 'hartmannInstance' before initialization" the moment this file
+// loads. vi.hoisted(...) exists exactly for this: it runs its callback at the
+// same hoisted position as vi.mock, so the value is safe to reference inside
+// the factory below.
+const { mockHartmannInstance } = vi.hoisted(() => ({
+  mockHartmannInstance: {
+    id: 'gi1', planId: 'p1',
+    templateSnapshot: {
+      id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0,
+      originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7,
+    },
+    originX: 0, originY: 0,
+  },
+}))
+
+vi.mock('../domain/createGridForPlan')
+vi.mock('./GridTemplatePicker', () => ({
+  GridTemplatePicker: ({ onSelected }: { onSelected: (t: unknown) => void }) => (
+    <button onClick={() => onSelected(mockHartmannInstance.templateSnapshot)}>simulate-select-hartmann</button>
+  ),
+}))
+
+it('creates a grid end-to-end: pick template, click origin, set polarity, generate', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+  vi.mocked(createGridForPlan).mockResolvedValue({
+    instance: mockHartmannInstance,
+    lines: [],
+  })
+
+  render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+  await screen.findByTestId('map-view')
+
+  fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+  fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+  fireEvent.click(screen.getByText('simulate-map-click'))
+  fireEvent.click(await screen.findByRole('button', { name: '+' }))
+  fireEvent.click(screen.getByRole('button', { name: /générer/i }))
+
+  await waitFor(() =>
+    expect(createGridForPlan).toHaveBeenCalledWith(
+      'p1',
+      mockHartmannInstance.templateSnapshot,
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      '+'
+    )
+  )
+})
+```
+
+Run: `npx vitest run src/components/SiteMapView.test.tsx`
+Expected: FAIL first (nothing wired), then PASS (5 tests) once Step 5 lands.
+
+- [ ] **Step 7: Manually verify in the browser, type-check, and commit**
+
+Run: `npm run dev`. Reach the map phase, click "Ajouter une grille", pick Hartmann,
+click a spot on the map, pick a polarity, click "Générer".
+Expected: a new grid layer appears in the layer panel, initially hidden (per Chunk
+8's default-hidden rule) — check it to see the generated lines.
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/components/GridCreationPanel.tsx src/components/GridCreationPanel.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx
+git commit -m "Add GridCreationPanel: pick template, click origin, set polarity, generate a grid"
+```
+
+---
+
+### Task 34: Mission-level aerial photo attachment (documentation only, no detection)
+
+**Scope, per Laurent's explicit correction:** photos attach to the **mission**, not
+to a specific grid — "one photo per network" was the wrong framing. For Plan 1,
+this is **storage and display only** — no rod recognition. That's a separate,
+larger feature (ArUco markers + image processing) that Laurent and this project
+agreed needs its own dedicated design cycle, not something to build inline here.
+
+**Files:**
+- Create: `supabase/migrations/0011_mission_photo.sql`
+- Modify: `src/domain/types.ts` (add `MissionPhoto`)
+- Create: `src/data/missionPhotosRepo.ts`
+- Test: `src/data/missionPhotosRepo.test.ts`
+- Create: `src/components/MissionPhotosGallery.tsx`
+- Test: `src/components/MissionPhotosGallery.test.tsx`
+
+- [ ] **Step 1: Migration**
+
+```sql
+-- supabase/migrations/0011_mission_photo.sql
+create table mission_photo (
+  id uuid primary key default gen_random_uuid(),
+  mission_id uuid not null references mission(id) on delete cascade,
+  image_url text not null,
+  created_at timestamptz not null default now()
+);
+create index mission_photo_mission_id_idx on mission_photo(mission_id);
+```
+
+- [ ] **Step 2: Apply it, add the type**
+
+Run: `npx supabase db push`
+
+```typescript
+// src/domain/types.ts — add
+export interface MissionPhoto {
+  id: string
+  missionId: string
+  imageUrl: string
+  createdAt: string
+}
+```
+
+- [ ] **Step 3: Write failing tests for `missionPhotosRepo`**
+
+```typescript
+// src/data/missionPhotosRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { addMissionPhoto, listMissionPhotos } from './missionPhotosRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({
+  supabase: { from: vi.fn(), storage: { from: vi.fn() } },
+}))
+
+describe('missionPhotosRepo', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('uploads the file and records it against the mission', async () => {
+    const upload = vi.fn().mockResolvedValue({ data: { path: 'm1/photo.jpg' }, error: null })
+    const getPublicUrl = vi.fn().mockReturnValue({
+      data: { publicUrl: 'https://x/storage/v1/object/public/mission-photos/m1/photo.jpg' },
+    })
+    vi.mocked(supabase.storage.from).mockReturnValue({ upload, getPublicUrl } as any)
+
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'mp1', mission_id: 'm1',
+        image_url: 'https://x/storage/v1/object/public/mission-photos/m1/photo.jpg',
+        created_at: '2026-07-16T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase.from).mockImplementation(from)
+
+    const file = new File(['x'], 'photo.jpg', { type: 'image/jpeg' })
+    const photo = await addMissionPhoto('m1', file)
+
+    expect(supabase.storage.from).toHaveBeenCalledWith('mission-photos')
+    expect(upload).toHaveBeenCalledWith('m1/photo.jpg', file, { upsert: false })
+    expect(chain.insert).toHaveBeenCalledWith({
+      mission_id: 'm1',
+      image_url: 'https://x/storage/v1/object/public/mission-photos/m1/photo.jpg',
+    })
+    expect(photo.imageUrl).toContain('photo.jpg')
+  })
+
+  it('lists photos scoped to a mission', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [
+        { id: 'mp1', mission_id: 'm1', image_url: 'https://x/a.jpg', created_at: '2026-07-16T10:00:00Z' },
+      ],
+      error: null,
+    })
+    vi.mocked(supabase.from).mockImplementation(from)
+
+    const photos = await listMissionPhotos('m1')
+
+    expect(chain.eq).toHaveBeenCalledWith('mission_id', 'm1')
+    expect(photos).toHaveLength(1)
+  })
+})
+```
+
+- [ ] **Step 4: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/missionPhotosRepo.test.ts`
+Expected: FAIL — `Cannot find module './missionPhotosRepo'`
+
+- [ ] **Step 5: Implement `missionPhotosRepo`**
+
+```typescript
+// src/data/missionPhotosRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { MissionPhoto } from '../domain/types'
+
+const BUCKET = 'mission-photos'
+
+interface MissionPhotoRow {
+  id: string
+  mission_id: string
+  image_url: string
+  created_at: string
+}
+
+function mapRowToMissionPhoto(row: MissionPhotoRow): MissionPhoto {
+  return { id: row.id, missionId: row.mission_id, imageUrl: row.image_url, createdAt: row.created_at }
+}
+
+export async function addMissionPhoto(missionId: string, file: File): Promise<MissionPhoto> {
+  const path = `${missionId}/${file.name}`
+  const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: false })
+  if (uploadError) throw new Error(`Impossible d'envoyer la photo : ${uploadError.message}`)
+
+  const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(path)
+
+  const { data, error } = await supabase
+    .from('mission_photo')
+    .insert({ mission_id: missionId, image_url: publicUrlData.publicUrl })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer la photo : ${error.message}`)
+  return mapRowToMissionPhoto(data as MissionPhotoRow)
+}
+
+export async function listMissionPhotos(missionId: string): Promise<MissionPhoto[]> {
+  const { data, error } = await supabase.from('mission_photo').select().eq('mission_id', missionId)
+  if (error) throw new Error(`Impossible de charger les photos : ${error.message}`)
+  return (data as MissionPhotoRow[]).map(mapRowToMissionPhoto)
+}
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/missionPhotosRepo.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 7: ⚠️ Human checkpoint**
+
+Create a **public** Supabase Storage bucket named `mission-photos` (same process as
+the `plans` bucket, Chunk 4 Task 14, Step 5). Confirm before moving on.
+
+- [ ] **Step 8: Write failing tests for `MissionPhotosGallery`**
+
+```tsx
+// src/components/MissionPhotosGallery.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { MissionPhotosGallery } from './MissionPhotosGallery'
+import * as missionPhotosRepo from '../data/missionPhotosRepo'
+
+vi.mock('../data/missionPhotosRepo')
+
+describe('MissionPhotosGallery', () => {
+  it('loads and displays existing photos', async () => {
+    vi.mocked(missionPhotosRepo.listMissionPhotos).mockResolvedValue([
+      { id: 'mp1', missionId: 'm1', imageUrl: 'https://x/a.jpg', createdAt: '2026-07-16T10:00:00Z' },
+    ])
+    render(<MissionPhotosGallery missionId="m1" />)
+    expect(await screen.findByAltText(/photo aérienne/i)).toBeInTheDocument()
+  })
+
+  it('uploads a chosen file and adds it to the displayed list', async () => {
+    vi.mocked(missionPhotosRepo.listMissionPhotos).mockResolvedValue([])
+    vi.mocked(missionPhotosRepo.addMissionPhoto).mockResolvedValue({
+      id: 'mp1', missionId: 'm1', imageUrl: 'https://x/new.jpg', createdAt: '2026-07-16T10:05:00Z',
+    })
+
+    render(<MissionPhotosGallery missionId="m1" />)
+    await waitFor(() => expect(missionPhotosRepo.listMissionPhotos).toHaveBeenCalled())
+
+    const file = new File(['x'], 'new.jpg', { type: 'image/jpeg' })
+    fireEvent.change(screen.getByLabelText(/ajouter une photo/i), { target: { files: [file] } })
+
+    await waitFor(() => expect(missionPhotosRepo.addMissionPhoto).toHaveBeenCalledWith('m1', file))
+    expect(await screen.findByAltText(/photo aérienne/i)).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 9: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/MissionPhotosGallery.test.tsx`
+Expected: FAIL — `Cannot find module './MissionPhotosGallery'`
+
+- [ ] **Step 10: Implement `MissionPhotosGallery`**
+
+```tsx
+// src/components/MissionPhotosGallery.tsx
+import { useEffect, useState } from 'react'
+import { addMissionPhoto, listMissionPhotos } from '../data/missionPhotosRepo'
+import type { MissionPhoto } from '../domain/types'
+
+export interface MissionPhotosGalleryProps {
+  missionId: string
+}
+
+export function MissionPhotosGallery({ missionId }: MissionPhotosGalleryProps) {
+  const [photos, setPhotos] = useState<MissionPhoto[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listMissionPhotos(missionId)
+      .then(setPhotos)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+  }, [missionId])
+
+  async function handleFileChosen(file: File) {
+    try {
+      const photo = await addMissionPhoto(missionId, file)
+      setPhotos((prev) => [...prev, photo])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <div>
+      {error && <p role="alert">{error}</p>}
+      <label>
+        Ajouter une photo (vue de haut)
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => e.target.files?.[0] && handleFileChosen(e.target.files[0])}
+        />
+      </label>
+      <div>
+        {photos.map((photo) => (
+          <img key={photo.id} src={photo.imageUrl} alt="Photo aérienne de la mission" style={{ maxWidth: 200 }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 11: Run tests to verify they pass, type-check**
+
+Run: `npx vitest run src/components/MissionPhotosGallery.test.tsx && npx tsc -b --noEmit`
+Expected: PASS (2 tests); no type errors.
+
+- [ ] **Step 12: Wire `MissionPhotosGallery` into `MissionWorkspace`'s `ready-no-interior` phase**
+
+Add it alongside `SiteMapView` and the interior-upload `<label>`, passing
+`missionId={phase.mission.id}`. Update `MissionWorkspace.test.tsx` with a
+`vi.mock('../components/MissionPhotosGallery', ...)` stub, same pattern as every
+other child-component mock in that file.
+
+- [ ] **Step 13: Manually verify in the browser, then commit**
+
+Run: `npm run dev`. Reach the map phase, upload a photo.
+Expected: it appears in the gallery; the `mission_photo` table has a new row.
+
+```bash
+git add supabase/migrations/0011_mission_photo.sql src/domain/types.ts src/data/missionPhotosRepo.ts src/data/missionPhotosRepo.test.ts src/components/MissionPhotosGallery.tsx src/components/MissionPhotosGallery.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add mission-level aerial photo attachment (storage/display only, no detection yet)"
+```
+
+---
+
+**Chunk 10 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Laurent can, from the map screen: add a grid (pick a template, click an origin,
+indicate the sensed polarity, generate), and attach aerial photos to the mission for
+documentation. Rod recognition from those photos is explicitly out of scope — it's
+the next dedicated design cycle, not a Plan 1 task (see the ArUco-marker discussion
+captured in this project's memory).
