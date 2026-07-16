@@ -56,26 +56,37 @@ photos, détection, positionnement de grilles) → remontée des données (onlin
 ressentis, les grilles...) est un chantier d'architecture séparé et plus large, qui
 touche tout ce qui a déjà été construit en Plan 1 — explicitement **hors périmètre
 ici**. Ce sous-projet garantit seulement que **la détection elle-même** ne dépend
-d'aucune connexion, ce qui est vrai par construction avec OpenCV.js.
+d'aucune connexion, ce qui est vrai par construction avec OpenCV.js — **à condition
+que le fichier OpenCV.js (WASM) soit inclus comme asset statique packagé avec
+l'application** (mis en cache par le PWA) plutôt que chargé depuis un CDN à
+l'exécution, comme le font de nombreux tutoriels OpenCV.js par défaut. Ce point est
+repris explicitement en §8.
 
 ## 4. Flux utilisateur
 
 1. Laurent prend une photo aérienne (perche ~3 m) et l'ajoute à la galerie de photos
    de la mission (`MissionPhotosGallery`, déjà construit — Plan 1, Chunk 10).
-2. Il cale la photo sur la carte IGN — 2 à 4 points de repère communs (coin de
-   bâtiment, allée...) entre la photo et la vue aérienne, exactement le même
-   mécanisme que le calage du plan intérieur (`calibratePlan`, déjà construit,
-   Plan 1 Chunk 2/4). Réutilisation directe, pas de nouvelle logique de calage.
+2. Depuis cette galerie, il déclenche le calage de cette photo — 2 à 4 points de
+   repère communs (coin de bâtiment, allée...) entre la photo et la vue aérienne,
+   exactement le même mécanisme que le calage du plan intérieur (`calibratePlan`,
+   déjà construit, Plan 1 Chunk 2/4). Réutilisation directe de la logique de calage ;
+   **le composant `PlanCalibrationTool`** (Plan 1 Chunk 4), aujourd'hui câblé
+   uniquement dans le flux d'import du plan intérieur, doit être rendu accessible
+   depuis la galerie de photos de mission pour ce nouvel usage (voir §5,
+   `RodDetectionPanel`).
 3. Il clique "Détecter les tiges".
 4. La détection s'exécute dans le navigateur (OpenCV.js) sur l'image calée.
 5. Chaque marqueur détecté est identifié via la table `rod_marker` (association
    fixe marqueur → réseau + tige, définie à la fabrication).
 6. Les positions pixel des marqueurs reconnus sont converties en coordonnées réelles
    locales via la transformation de calage de l'étape 2.
-7. Chaque point est **enregistré directement** comme `FeltPoint` (réseau, x, y) —
-   visible immédiatement dans la couche "Ressenti terrain" (déjà visible par défaut,
-   Plan 1 Chunk 8). Pas d'étape de prévisualisation/validation intermédiaire —
-   Laurent corrige après coup comme n'importe quel point posé à la main.
+7. Chaque point est **enregistré directement** comme `FeltPoint` — rattaché au
+   `Plan` extérieur de la mission (`exteriorPlan.id`, déjà disponible dans l'état de
+   `MissionWorkspace` au moment où la galerie de photos est affichée ; `FeltPoint`
+   exige un `planId`, pas seulement une mission) — visible immédiatement dans la
+   couche "Ressenti terrain" (déjà visible par défaut, Plan 1 Chunk 8). Pas d'étape
+   de prévisualisation/validation intermédiaire — Laurent corrige après coup comme
+   n'importe quel point posé à la main (via le nouveau `deleteFeltPoint`, §5).
 
 **Une photo peut contenir des tiges de plusieurs réseaux mélangées** — chaque
 marqueur est identifié individuellement par son propre ID, donc aucune ambiguïté
@@ -88,6 +99,7 @@ même si Hartmann et Peyré (même angle théorique 0°) apparaissent sur la mê
 | `rod_marker` (table) | `marker_id → {network_name, rod_number}`, fixé à la fabrication des tiges | — (données de config) |
 | `arucoMapping.ts` | Logique pure : détections brutes + transformation de calage + table `rod_marker` → liste de points `{réseau, x, y}` | 100% testable avec des détections simulées, sans image réelle |
 | `arucoDetector.ts` | Charge OpenCV.js, lance la détection sur une image, retourne les détections brutes `{marker_id, position pixel}` | Test de fumée seulement (charge sans planter) — la précision réelle se valide avec de vrais marqueurs imprimés, pas par test automatisé |
+| `RodDetectionPanel` (UI, nouveau) | Câble le flux complet depuis `MissionPhotosGallery` : ouvre `PlanCalibrationTool` pour caler la photo sélectionnée (réutilisation, pas de nouveau calage), déclenche `arucoDetector` + `arucoMapping`, affiche le message "X marqueurs détectés, Y reconnus" (§6), persiste les points via `feltPointsRepo.createFeltPoint` avec `planId = exteriorPlan.id` | Logique de câblage testée en mockant `arucoDetector`/`arucoMapping`/le repo — pas de dépendance à OpenCV réel dans ses propres tests |
 | Extension de `feltPointsRepo` | Ajout de `deleteFeltPoint` (**manquant actuellement** — nécessaire pour "corriger après coup") | Testé comme les autres fonctions du repo |
 
 **Frontière de responsabilité :** `arucoDetector.ts` est la seule brique qui touche
@@ -103,6 +115,7 @@ types de données simples (positions, IDs), jamais d'OpenCV directement.
 | Aucun marqueur détecté | Message clair, aucun `FeltPoint` créé, pas de plantage |
 | Marqueur détecté mais absent de `rod_marker` (marqueur inconnu/mal imprimé) | Ignoré silencieusement pour la création de points, mais Laurent est informé ("X marqueurs détectés, Y reconnus") — jamais une perte de donnée totalement silencieuse |
 | Une seule extrémité d'une tige détectée (l'autre masquée/floue) | Le point détecté est quand même créé — mieux qu'une perte totale de la donnée pour cette tige |
+| Le même `marker_id` détecté deux fois sur une photo (marqueur dupliqué/mal imprimé) | Chaque détection est traitée indépendamment (`arucoMapping.ts` ne déduplique pas) — crée deux points ; un marqueur physique dupliqué est une erreur de fabrication à corriger en amont, pas quelque chose que la détection doit deviner |
 
 ## 7. Hors périmètre (explicite)
 
@@ -132,3 +145,6 @@ types de données simples (positions, IDs), jamais d'OpenCV directement.
 3. API exacte d'OpenCV.js pour la détection ArUco (noms de fonctions, format des
    détections retournées) — à vérifier contre la documentation au moment de
    l'implémentation.
+4. Le fichier OpenCV.js (WASM) doit être servi comme asset statique packagé avec
+   l'application (mis en cache par le PWA), pas chargé depuis un CDN externe à
+   l'exécution — sans quoi la garantie "aucun appel réseau" du §3 serait rompue.
