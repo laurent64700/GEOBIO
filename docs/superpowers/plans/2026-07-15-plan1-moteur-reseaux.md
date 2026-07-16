@@ -5988,3 +5988,825 @@ Laurent required is now structurally enforced (a grid instance simply isn't visi
 until someone deliberately checks its box), not just a UI convention to remember.
 Interactive editing, the compass/guide-line tool, and the orthogonality assist UI
 are Chunk 9.
+
+---
+
+## Chunk 9: Guide-line tool, interactive grid editing, orthogonality assist UI
+
+### Task 30: Guide-line tool (transient directional aid, self-contained in `SiteMapView`)
+
+**What this is:** a gray, dashed, non-persisted reference line Laurent places at his
+current position on the map, oriented along a bearing (N/S for Hartmann, 45° for
+Curry, or a custom angle) — purely a walking aid while doing blind ressenti search,
+never stored as mission data. It lives entirely inside `SiteMapView` (which already
+owns the map and isn't juggling a competing `onMapClick` user — origin-setting's
+click handler belongs to a different, earlier `WorkspacePhase` and a different
+`MapView` instance entirely), so no new prop threading through `MissionWorkspace` is
+needed.
+
+**Files:**
+- Create: `src/geometry/guideLine.ts`
+- Test: `src/geometry/guideLine.test.ts`
+- Create: `src/components/GuideLineLayer.tsx` (the actual `Polyline` rendering,
+  extracted into its own component — same reason `NetworkLinesLayer` and
+  `FeltPointsLayer` are separate components rather than inlined into
+  `SiteMapView`: it needs a real `<MapContainer>` to render, and `SiteMapView`'s own
+  tests mock `MapView` down to a plain `<div>` with no real Leaflet context, so
+  anything rendering a real `Polyline`/`CircleMarker` directly inside
+  `SiteMapView`'s JSX would crash in that test file. Mocking `GuideLineLayer` itself
+  in `SiteMapView.test.tsx` sidesteps that, exactly as already done for the other
+  two layers.)
+- Test: `src/components/GuideLineLayer.test.tsx`
+- Modify: `src/components/SiteMapView.tsx` + `.test.tsx` (add the guide-line
+  controls and click-to-place state; render `<GuideLineLayer>` rather than a raw
+  `<Polyline>`)
+
+- [ ] **Step 1: Write failing tests for the pure endpoint math**
+
+```typescript
+// src/geometry/guideLine.test.ts
+import { describe, it, expect } from 'vitest'
+import { computeGuideLineEndpoints } from './guideLine'
+
+describe('computeGuideLineEndpoints', () => {
+  it('extends a N/S (0°) line symmetrically through the anchor', () => {
+    const [a, b] = computeGuideLineEndpoints({ x: 5, y: 5 }, 0, 60)
+    expect(a).toEqual({ x: 5, y: -55 })
+    expect(b).toEqual({ x: 5, y: 65 })
+  })
+
+  it('extends a 45° line symmetrically through the anchor', () => {
+    const [a, b] = computeGuideLineEndpoints({ x: 0, y: 0 }, 45, Math.SQRT2 * 10)
+    expect(a.x).toBeCloseTo(-10)
+    expect(a.y).toBeCloseTo(-10)
+    expect(b.x).toBeCloseTo(10)
+    expect(b.y).toBeCloseTo(10)
+  })
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/geometry/guideLine.test.ts`
+Expected: FAIL — `Cannot find module './guideLine'`
+
+- [ ] **Step 3: Implement `computeGuideLineEndpoints`**
+
+```typescript
+// src/geometry/guideLine.ts
+import { bearingUnitVector } from './gridGeneration'
+import type { Point } from '../domain/types'
+
+/**
+ * A long segment through `anchor` at `bearingDeg`, `halfLengthM` in each
+ * direction — enough to look like a line crossing the visible map area for a
+ * typical residential-scale mission. Purely a visual walking aid (§Chunk 9
+ * intro); never persisted.
+ */
+export function computeGuideLineEndpoints(
+  anchor: Point,
+  bearingDeg: number,
+  halfLengthM = 60
+): [Point, Point] {
+  const dir = bearingUnitVector(bearingDeg)
+  return [
+    { x: anchor.x - dir.x * halfLengthM, y: anchor.y - dir.y * halfLengthM },
+    { x: anchor.x + dir.x * halfLengthM, y: anchor.y + dir.y * halfLengthM },
+  ]
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/geometry/guideLine.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Write failing tests for `GuideLineLayer`**
+
+```tsx
+// src/components/GuideLineLayer.test.tsx
+import { describe, it, expect } from 'vitest'
+import { render } from '@testing-library/react'
+import { MapContainer } from 'react-leaflet'
+import { GuideLineLayer } from './GuideLineLayer'
+
+const missionOrigin = { lat: 48.8566, lng: 2.3522 }
+
+describe('GuideLineLayer', () => {
+  it('renders a gray dashed line through the anchor when anchor and bearing are set', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <GuideLineLayer anchor={{ x: 0, y: 0 }} bearingDeg={0} missionOrigin={missionOrigin} />
+      </MapContainer>
+    )
+    const path = container.querySelector('path.leaflet-interactive')
+    expect(path?.getAttribute('stroke')).toBe('#888888')
+    expect(path?.getAttribute('stroke-dasharray')).toBe('4, 6')
+  })
+
+  it('renders nothing when anchor is null', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <GuideLineLayer anchor={null} bearingDeg={0} missionOrigin={missionOrigin} />
+      </MapContainer>
+    )
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+  })
+
+  it('renders nothing when bearingDeg is null', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <GuideLineLayer anchor={{ x: 0, y: 0 }} bearingDeg={null} missionOrigin={missionOrigin} />
+      </MapContainer>
+    )
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+  })
+})
+```
+
+- [ ] **Step 6: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/GuideLineLayer.test.tsx`
+Expected: FAIL — `Cannot find module './GuideLineLayer'`
+
+- [ ] **Step 7: Implement `GuideLineLayer`**
+
+```tsx
+// src/components/GuideLineLayer.tsx
+import { Polyline } from 'react-leaflet'
+import { computeGuideLineEndpoints } from '../geometry/guideLine'
+import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
+import type { Point } from '../domain/types'
+
+export interface GuideLineLayerProps {
+  anchor: Point | null
+  bearingDeg: number | null
+  missionOrigin: LatLng
+}
+
+export function GuideLineLayer({ anchor, bearingDeg, missionOrigin }: GuideLineLayerProps) {
+  if (anchor === null || bearingDeg === null) return null
+
+  return (
+    <Polyline
+      positions={computeGuideLineEndpoints(anchor, bearingDeg).map((p) => {
+        const latlng = localToLatLng(p, missionOrigin)
+        return [latlng.lat, latlng.lng] as [number, number]
+      })}
+      pathOptions={{ color: '#888888', dashArray: '4, 6', weight: 1 }}
+    />
+  )
+}
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/GuideLineLayer.test.tsx`
+Expected: PASS (3 tests)
+
+- [ ] **Step 9: Write failing tests for the guide-line controls in `SiteMapView`**
+
+```tsx
+// append to src/components/SiteMapView.test.tsx
+
+// Extend the file's existing top-of-file MapView mock (do not add a second
+// vi.mock('./MapView', ...) call — replace the one already there, since Vitest
+// only honors the first mock factory per module per file) to also forward
+// onMapClick via a test button, same pattern already used in
+// MissionWorkspace.test.tsx (Chunk 4, Task 13):
+vi.mock('./MapView', () => ({
+  MapView: ({ children, onMapClick }: { children?: React.ReactNode; onMapClick?: (l: { lat: number; lng: number }) => void }) => (
+    <div data-testid="map-view">
+      {children}
+      {onMapClick && (
+        <button onClick={() => onMapClick({ lat: 48.8567, lng: 2.3523 })}>simulate-map-click</button>
+      )}
+    </div>
+  ),
+}))
+
+// Mock GuideLineLayer the same way NetworkLinesLayer/FeltPointsLayer are already
+// mocked in this file — it needs a real MapContainer to render for real (covered
+// by its own test, Step 5 above), which this file's mocked MapView doesn't provide.
+vi.mock('./GuideLineLayer', () => ({
+  GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
+    anchor !== null && bearingDeg !== null ? <div data-testid="guide-line" /> : null,
+}))
+
+it('places a guide line at the clicked point once a bearing preset and "placer" are active', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+  render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+  await screen.findByTestId('map-view')
+
+  fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+  fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+  fireEvent.click(screen.getByText('simulate-map-click'))
+
+  expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+})
+
+it('does not place a guide line from a map click when "placer" is not active', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+  render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+  await screen.findByTestId('map-view')
+
+  fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+  // no "Placer" click this time — onMapClick shouldn't even be wired up
+  expect(screen.queryByText('simulate-map-click')).not.toBeInTheDocument()
+})
+```
+
+- [ ] **Step 10: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/SiteMapView.test.tsx`
+Expected: FAIL — no guide-line controls exist yet
+
+- [ ] **Step 11: Add the guide-line controls and placement state to `SiteMapView`**
+
+```tsx
+// src/components/SiteMapView.tsx — add imports, state, and JSX
+import { GuideLineLayer } from './GuideLineLayer'
+import { latLngToLocal } from '../geometry/localCoordinates'
+
+// ... inside SiteMapView, add state:
+const [guideLineBearing, setGuideLineBearing] = useState<number | null>(null)
+const [guideLineAnchor, setGuideLineAnchor] = useState<Point | null>(null)
+const [placingGuideLine, setPlacingGuideLine] = useState(false)
+
+function handleGuideLineMapClick(latlng: { lat: number; lng: number }) {
+  setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
+  setPlacingGuideLine(false)
+}
+
+// ... in the JSX, add controls (outside <MapView>, e.g. alongside <LayerPanel>):
+<div>
+  <button onClick={() => setGuideLineBearing(0)}>N/S</button>
+  <button onClick={() => setGuideLineBearing(90)}>E/O</button>
+  <button onClick={() => setGuideLineBearing(45)}>45°</button>
+  <button onClick={() => setPlacingGuideLine(true)} disabled={guideLineBearing === null}>
+    Placer ici
+  </button>
+</div>
+
+// ... pass onMapClick to MapView only while actively placing, and render the layer:
+<MapView
+  center={[missionOrigin.lat, missionOrigin.lng]}
+  onMapClick={placingGuideLine ? handleGuideLineMapClick : undefined}
+>
+  {/* ...existing FeltPointsLayer / NetworkLinesLayer children... */}
+  <GuideLineLayer anchor={guideLineAnchor} bearingDeg={guideLineBearing} missionOrigin={missionOrigin} />
+</MapView>
+```
+
+- [ ] **Step 12: Run tests to verify they pass**
+
+Run: `npx vitest run src/components/SiteMapView.test.tsx`
+Expected: PASS (4 tests — the 2 from Chunk 8, Task 29 plus this task's 2 new ones)
+
+- [ ] **Step 13: Type-check and commit**
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/geometry/guideLine.ts src/geometry/guideLine.test.ts src/components/GuideLineLayer.tsx src/components/GuideLineLayer.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx
+git commit -m "Add guide-line tool: transient directional aid for blind field search"
+```
+
+---
+
+### Task 31: Interactive `GridLine` editing — drag, undo, reset-to-theoretical
+
+**⚠️ External API uncertainty, same treatment as Leaflet.DistortableImage (Chunk 4)
+and the IGN endpoints (Chunk 3/7):** this task uses `@geoman-io/leaflet-geoman-free`
+(named in this plan's header stack list) to make polyline vertices draggable on the
+map. Neither of us can browse its current docs live, and its exact event names/API
+(`layer.pm.enable()`, the shape of drag-end events, whether react-leaflet needs a
+wrapper hook) are not confirmed. This task isolates that uncertainty to one thin
+"glue" function (Step 5) and makes everything around it — what happens to the data
+when a vertex moves, undo, reset — pure, tested logic that doesn't depend on Geoman
+being wired correctly to prove itself out.
+
+**Calibration direction, per Laurent's explicit correction earlier in this project:
+dragging a vertex fits the theoretical line onto sensed reality — it is never the
+other way around.** There is no code difference this implies (a drag is a drag
+either way), but the UI copy/labels in Step 6 reflect this framing deliberately
+("caler sur le ressenti", not "ajuster la grille").
+
+**Files:**
+- Modify: `src/data/gridLinesRepo.ts` + `.test.ts` (add `updateAdjustedPoints`)
+- Create: `src/geometry/lineEditing.ts`
+- Test: `src/geometry/lineEditing.test.ts`
+- Create: `src/components/EditableNetworkLine.tsx`
+- Test: `src/components/EditableNetworkLine.test.tsx`
+
+- [ ] **Step 1: Write a failing test for `updateAdjustedPoints`**
+
+```typescript
+// append to src/data/gridLinesRepo.test.ts
+it('updates a single line\'s adjusted points', async () => {
+  const { from, chain } = createSupabaseChainMock({
+    data: {
+      id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+      theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjusted_points: [{ x: 0.3, y: -3 }, { x: 0, y: 3 }],
+    },
+    error: null,
+  })
+  vi.mocked(supabase).from = from
+
+  const line = await updateAdjustedPoints('gl1', [{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
+
+  expect(chain.eq).toHaveBeenCalledWith('id', 'gl1')
+  expect(chain.update).toHaveBeenCalledWith({ adjusted_points: [{ x: 0.3, y: -3 }, { x: 0, y: 3 }] })
+  expect(line.adjustedPoints).toEqual([{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails, then implement, then verify it passes**
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: FAIL, then implement:
+
+```typescript
+// src/data/gridLinesRepo.ts — add
+export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point[]): Promise<GridLine> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .update({ adjusted_points: adjustedPoints })
+    .eq('id', lineId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de mettre à jour la ligne : ${error.message}`)
+  return mapRowToGridLine(data as GridLineRow)
+}
+```
+
+Run: `npx vitest run src/data/gridLinesRepo.test.ts`
+Expected: PASS (4 tests)
+
+- [ ] **Step 3: Write failing tests for the pure vertex-drag/reset logic**
+
+```typescript
+// src/geometry/lineEditing.test.ts
+import { describe, it, expect } from 'vitest'
+import { applyVertexDrag, resetToTheoretical } from './lineEditing'
+import type { GridLine } from '../domain/types'
+
+const baseLine: GridLine = {
+  id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+  theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+  adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+}
+
+describe('applyVertexDrag', () => {
+  it('replaces only the dragged point, leaving other points and all other fields untouched', () => {
+    const updated = applyVertexDrag(baseLine, 0, { x: 0.4, y: -3 })
+    expect(updated.adjustedPoints).toEqual([{ x: 0.4, y: -3 }, { x: 0, y: 3 }])
+    expect(updated.theoreticalPoints).toBe(baseLine.theoreticalPoints) // untouched reference
+    expect(updated.id).toBe(baseLine.id)
+  })
+})
+
+describe('resetToTheoretical', () => {
+  it('overwrites adjustedPoints with a copy of theoreticalPoints', () => {
+    const dragged = applyVertexDrag(baseLine, 0, { x: 0.4, y: -3 })
+    const reset = resetToTheoretical(dragged)
+    expect(reset.adjustedPoints).toEqual(dragged.theoreticalPoints)
+    expect(reset.adjustedPoints).not.toBe(reset.theoreticalPoints) // a copy, not the same array reference
+  })
+})
+```
+
+- [ ] **Step 4: Run test to verify it fails, then implement, then verify it passes**
+
+```typescript
+// src/geometry/lineEditing.ts
+import type { GridLine, Point } from '../domain/types'
+
+export function applyVertexDrag(line: GridLine, pointIndex: number, newPoint: Point): GridLine {
+  const adjustedPoints = [...line.adjustedPoints]
+  adjustedPoints[pointIndex] = newPoint
+  return { ...line, adjustedPoints }
+}
+
+export function resetToTheoretical(line: GridLine): GridLine {
+  return { ...line, adjustedPoints: [...line.theoreticalPoints] }
+}
+```
+
+Run: `npx vitest run src/geometry/lineEditing.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: The Geoman "glue" — isolated, uncertain, thin**
+
+```tsx
+// src/components/EditableNetworkLine.tsx
+import { useEffect, useRef } from 'react'
+import { Polyline, useMap } from 'react-leaflet'
+import type { Layer } from 'leaflet'
+import { localToLatLng, latLngToLocal, type LatLng } from '../geometry/localCoordinates'
+import { applyVertexDrag } from '../geometry/lineEditing'
+import type { GridLine } from '../domain/types'
+
+export interface EditableNetworkLineProps {
+  line: GridLine
+  color: string
+  missionOrigin: LatLng
+  editable: boolean
+  onChanged: (updated: GridLine) => void
+}
+
+/**
+ * ⚠️ The `pm.enable()` call and `pm:markerdragend` event name below are a
+ * best-effort guess at leaflet-geoman-free's actual API — VERIFY against
+ * https://github.com/geoman-io/leaflet-geoman before relying on this. If the
+ * event/method names are wrong, the surrounding logic (applyVertexDrag,
+ * onChanged, the repo update, undo) is unaffected — only this glue needs
+ * correcting.
+ */
+export function EditableNetworkLine({ line, color, missionOrigin, editable, onChanged }: EditableNetworkLineProps) {
+  const layerRef = useRef<Layer & { pm?: { enable: () => void; disable: () => void } }>(null)
+  useMap() // ensures this only ever renders inside a MapContainer
+
+  useEffect(() => {
+    const layer = layerRef.current
+    if (!layer?.pm) return
+    if (editable) layer.pm.enable()
+    else layer.pm.disable()
+  }, [editable])
+
+  useEffect(() => {
+    const layer = layerRef.current as unknown as {
+      on: (event: string, handler: (e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) => void) => void
+      off: (event: string) => void
+    } | null
+    if (!layer) return
+
+    function handleDragEnd(e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) {
+      const latlngs = e.target.getLatLngs()
+      latlngs.forEach((latlng, index) => {
+        const point = latLngToLocal(latlng, missionOrigin)
+        onChanged(applyVertexDrag(line, index, point))
+      })
+    }
+
+    layer.on('pm:markerdragend', handleDragEnd)
+    return () => layer.off('pm:markerdragend')
+  }, [line, missionOrigin, onChanged])
+
+  return (
+    <Polyline
+      ref={layerRef}
+      positions={line.adjustedPoints.map((p) => {
+        const latlng = localToLatLng(p, missionOrigin)
+        return [latlng.lat, latlng.lng] as [number, number]
+      })}
+      pathOptions={{
+        color,
+        dashArray: line.polarity === '-' ? '6, 4' : undefined,
+        weight: line.reinforced ? 4 : 2,
+      }}
+    />
+  )
+}
+```
+
+**This component is not unit-tested against real Geoman behavior** (that would
+require either a real browser environment or faking Geoman's internals in a way
+that proves nothing) — its only test (Step 6) verifies it renders without crashing
+and that `editable`/`color`/dash/weight props reach the underlying `Polyline`
+correctly, i.e. the part that doesn't depend on Geoman actually being present.
+
+- [ ] **Step 6: Write a smoke test for `EditableNetworkLine`**
+
+```tsx
+// src/components/EditableNetworkLine.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render } from '@testing-library/react'
+import { MapContainer } from 'react-leaflet'
+import { EditableNetworkLine } from './EditableNetworkLine'
+import type { GridLine } from '../domain/types'
+
+const line: GridLine = {
+  id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '-', reinforced: true,
+  theoreticalPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+  adjustedPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+}
+
+describe('EditableNetworkLine', () => {
+  it('renders without crashing and applies color/dash/weight from the line', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <EditableNetworkLine
+          line={line}
+          color="#d32f2f"
+          missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+          editable={false}
+          onChanged={vi.fn()}
+        />
+      </MapContainer>
+    )
+    const path = container.querySelector('path.leaflet-interactive')
+    expect(path?.getAttribute('stroke')).toBe('#d32f2f')
+    expect(path?.getAttribute('stroke-width')).toBe('4')
+    expect(path?.getAttribute('stroke-dasharray')).toBe('6, 4')
+  })
+})
+```
+
+- [ ] **Step 7: Run test to verify it passes**
+
+Run: `npx vitest run src/components/EditableNetworkLine.test.tsx`
+Expected: PASS (1 test)
+
+- [ ] **Step 8: Wire `EditableNetworkLine` + undo + reset into `SiteMapView`**
+
+Replace `NetworkLinesLayer`'s usage for the currently-visible-and-editable instance
+with a mapping over `EditableNetworkLine`, add an "Éditer" toggle per grid layer in
+`LayerPanel` (or a simpler single global "Mode édition" toggle — since Laurent
+works on one network at a time in the field, a single toggle affecting whichever
+layer is currently visible is simpler and matches his actual workflow; don't build
+per-layer edit toggles unless a real need for editing multiple layers at once shows
+up), plus:
+
+```typescript
+// inside SiteMapView, add an undo stack (session-local, not persisted) and reset:
+const [undoStack, setUndoStack] = useState<Record<string, GridLine[]>>({}) // per gridInstanceId
+
+function handleLineChanged(instanceId: string, updated: GridLine) {
+  setUndoStack((prev) => ({
+    ...prev,
+    [instanceId]: [...(prev[instanceId] ?? []), linesByInstance[instanceId].find((l) => l.id === updated.id)!],
+  }))
+  setLinesByInstance((prev) => ({
+    ...prev,
+    [instanceId]: prev[instanceId].map((l) => (l.id === updated.id ? updated : l)),
+  }))
+  updateAdjustedPoints(updated.id, updated.adjustedPoints).catch((err) =>
+    setError(err instanceof Error ? err.message : String(err))
+  )
+}
+
+function handleUndo(instanceId: string) {
+  const stack = undoStack[instanceId]
+  if (!stack || stack.length === 0) return
+  const previous = stack[stack.length - 1]
+  setUndoStack((prev) => ({ ...prev, [instanceId]: prev[instanceId].slice(0, -1) }))
+  setLinesByInstance((prev) => ({
+    ...prev,
+    [instanceId]: prev[instanceId].map((l) => (l.id === previous.id ? previous : l)),
+  }))
+  updateAdjustedPoints(previous.id, previous.adjustedPoints).catch((err) =>
+    setError(err instanceof Error ? err.message : String(err))
+  )
+}
+
+function handleResetLine(instanceId: string, lineId: string) {
+  const line = linesByInstance[instanceId]?.find((l) => l.id === lineId)
+  if (!line) return
+  handleLineChanged(instanceId, resetToTheoretical(line))
+}
+```
+
+This task doesn't write a full end-to-end test for the undo/reset wiring inside
+`SiteMapView` (its test file is already substantial) — Step 9's manual browser
+check is the verification for this step. If a future chunk needs to change this
+logic, consider extracting it into its own tested module first.
+
+- [ ] **Step 9: Manually verify in the browser**
+
+Run: `npm run dev`. Reach a mission with a generated `GridInstance` (create one
+programmatically via the browser console using the repo functions, until a "create
+grid" UI exists — that UI isn't part of this plan yet, see the note at the end of
+this chunk). Toggle its layer visible, toggle edit mode, drag a vertex.
+Expected: no crash; the dragged point persists after a page reload; "Annuler"
+reverts the last drag; "Réinitialiser" restores the theoretical position for that
+line.
+
+- [ ] **Step 10: Type-check and commit**
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/data/gridLinesRepo.ts src/data/gridLinesRepo.test.ts src/geometry/lineEditing.ts src/geometry/lineEditing.test.ts src/components/EditableNetworkLine.tsx src/components/EditableNetworkLine.test.tsx src/components/SiteMapView.tsx
+git commit -m "Add interactive GridLine editing: drag (Geoman), undo, reset-to-theoretical"
+```
+
+---
+
+### Task 32: Orthogonality assist UI
+
+**Reuses, doesn't reimplement:** all the math already exists and is already tested
+— `getOrthogonalitySuggestion` (Chunk 2, Task 7). This task is UI-only: show its
+result as a preview after Laurent adjusts a line, let him accept or dismiss.
+
+**Files:**
+- Create: `src/components/OrthogonalitySuggestion.tsx`
+- Test: `src/components/OrthogonalitySuggestion.test.tsx`
+- Modify: `src/components/SiteMapView.tsx` (wire it into `handleLineChanged`)
+
+- [ ] **Step 1: Write failing tests for `OrthogonalitySuggestion`**
+
+```tsx
+// src/components/OrthogonalitySuggestion.test.tsx
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { MapContainer } from 'react-leaflet'
+import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
+
+const missionOrigin = { lat: 48.8566, lng: 2.3522 }
+
+describe('OrthogonalitySuggestion', () => {
+  it('shows the deviation and a preview line, and calls onAccept with the suggested points', () => {
+    const onAccept = vi.fn()
+    const onDismiss = vi.fn()
+    render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <OrthogonalitySuggestion
+          linePoints={[{ x: 0, y: -10 }, { x: 0.8, y: 10 }]}
+          family="axis-a"
+          template={{ angleTrueNorthDeg: 0 }}
+          missionOrigin={missionOrigin}
+          onAccept={onAccept}
+          onDismiss={onDismiss}
+        />
+      </MapContainer>
+    )
+
+    expect(screen.getByText(/écart/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /redresser/i }))
+    expect(onAccept).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ x: expect.any(Number) })])
+    )
+  })
+
+  it('calls onDismiss without changing anything when ignored', () => {
+    const onDismiss = vi.fn()
+    render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <OrthogonalitySuggestion
+          linePoints={[{ x: 0, y: -10 }, { x: 0.8, y: 10 }]}
+          family="axis-a"
+          template={{ angleTrueNorthDeg: 0 }}
+          missionOrigin={missionOrigin}
+          onAccept={vi.fn()}
+          onDismiss={onDismiss}
+        />
+      </MapContainer>
+    )
+    fireEvent.click(screen.getByRole('button', { name: /ignorer/i }))
+    expect(onDismiss).toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/components/OrthogonalitySuggestion.test.tsx`
+Expected: FAIL — `Cannot find module './OrthogonalitySuggestion'`
+
+- [ ] **Step 3: Implement `OrthogonalitySuggestion`**
+
+```tsx
+// src/components/OrthogonalitySuggestion.tsx
+import { Polyline } from 'react-leaflet'
+import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
+import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
+import type { GridLineFamily, GridTemplate, Point } from '../domain/types'
+
+export interface OrthogonalitySuggestionProps {
+  linePoints: Point[]
+  family: GridLineFamily
+  template: Pick<GridTemplate, 'angleTrueNorthDeg'>
+  missionOrigin: LatLng
+  onAccept: (suggestedPoints: Point[]) => void
+  onDismiss: () => void
+}
+
+export function OrthogonalitySuggestion({
+  linePoints,
+  family,
+  template,
+  missionOrigin,
+  onAccept,
+  onDismiss,
+}: OrthogonalitySuggestionProps) {
+  const { deviationDeg, suggestedPoints } = getOrthogonalitySuggestion(linePoints, family, template)
+
+  return (
+    <>
+      <Polyline
+        positions={suggestedPoints.map((p) => {
+          const latlng = localToLatLng(p, missionOrigin)
+          return [latlng.lat, latlng.lng] as [number, number]
+        })}
+        pathOptions={{ color: '#888888', dashArray: '2, 6', weight: 2 }}
+      />
+      <div>
+        <p>Écart à l'orthogonal théorique : {deviationDeg.toFixed(1)}°</p>
+        <button onClick={() => onAccept(suggestedPoints)}>Redresser</button>
+        <button onClick={onDismiss}>Ignorer</button>
+      </div>
+    </>
+  )
+}
+```
+
+**Note:** the `<div>` with the deviation text and buttons is rendered as a sibling
+of the `<Polyline>` inside the `MapContainer` tree — Leaflet tolerates plain DOM
+children mixed with layer components (they just don't participate in map panning),
+which is fine for a small floating info box. If this causes layout issues once
+placed in the real app shell (Step 4), move the text/buttons out via a portal or
+lift them to `SiteMapView`'s own JSX (outside `MapView`) instead, passing the
+computed `deviationDeg`/`suggestedPoints` up — a presentation detail to settle
+during Step 4, not a change to `getOrthogonalitySuggestion`'s usage.
+
+- [ ] **Step 4: Run tests to verify they pass, wire into `SiteMapView`, type-check, and commit**
+
+Run: `npx vitest run src/components/OrthogonalitySuggestion.test.tsx`
+Expected: PASS (2 tests)
+
+Wire it into `SiteMapView`. Three concrete additions to the file (Task 31, Step 8
+already added `handleLineChanged`/`handleUndo`/`handleResetLine` — this extends
+`handleLineChanged` and adds one new piece of state):
+
+```typescript
+// src/components/SiteMapView.tsx — add this state alongside the undo stack from Task 31:
+const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
+
+// modify handleLineChanged (Task 31, Step 8) to also flag the line for review:
+function handleLineChanged(instanceId: string, updated: GridLine) {
+  setUndoStack((prev) => ({
+    ...prev,
+    [instanceId]: [...(prev[instanceId] ?? []), linesByInstance[instanceId].find((l) => l.id === updated.id)!],
+  }))
+  setLinesByInstance((prev) => ({
+    ...prev,
+    [instanceId]: prev[instanceId].map((l) => (l.id === updated.id ? updated : l)),
+  }))
+  updateAdjustedPoints(updated.id, updated.adjustedPoints).catch((err) =>
+    setError(err instanceof Error ? err.message : String(err))
+  )
+  setAwaitingOrthogonalityReview(updated.id) // NEW — triggers the suggestion below
+}
+```
+
+```tsx
+// in the JSX, inside the instances.map(...) that already renders EditableNetworkLine
+// (Task 31, Step 8) — for the specific instance/line matching awaitingOrthogonalityReview:
+{instances.map((instance) => {
+  const reviewedLine = linesByInstance[instance.id]?.find((l) => l.id === awaitingOrthogonalityReview)
+  return (
+    <div key={instance.id}>
+      {/* ...existing EditableNetworkLine mapping... */}
+      {reviewedLine && (
+        <OrthogonalitySuggestion
+          linePoints={reviewedLine.adjustedPoints}
+          family={reviewedLine.family}
+          template={{ angleTrueNorthDeg: instance.templateSnapshot.angleTrueNorthDeg }}
+          missionOrigin={missionOrigin}
+          onAccept={(suggestedPoints) => {
+            handleLineChanged(instance.id, { ...reviewedLine, adjustedPoints: suggestedPoints })
+            setAwaitingOrthogonalityReview(null)
+          }}
+          onDismiss={() => setAwaitingOrthogonalityReview(null)}
+        />
+      )}
+    </div>
+  )
+})}
+```
+
+Note `family`/`template` are deliberately sourced from two different objects:
+`family` is a field on the `GridLine` itself (`reviewedLine.family`), never on
+`GridTemplate` — only `angleTrueNorthDeg` (needed for the suggestion math) comes
+from the instance's `templateSnapshot`.
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/components/OrthogonalitySuggestion.tsx src/components/OrthogonalitySuggestion.test.tsx src/components/SiteMapView.tsx
+git commit -m "Add orthogonality assist UI, wired after each GridLine adjustment"
+```
+
+---
+
+**Chunk 9 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass.
+Laurent can place a transient compass-aligned guide line while searching blind, then
+(separately, once he toggles a grid layer visible) drag its lines to fit his sensed
+reality, undo a drag, reset a line to its theoretical position, and accept or
+dismiss an orthogonality straightening suggestion after each adjustment.
+
+**What's still missing from a complete field workflow, carried forward explicitly:**
+there is still no UI to actually *create* a `GridInstance` (pick a template, click an
+origin, indicate the reference line's sensed polarity) — `createGridForPlan`
+(Chunk 5/7) is fully built and tested but only ever called programmatically in this
+plan so far. This is a real gap, not an oversight: it needs its own small task once
+the felt-point-first calibration flow (Chunk 7's `FeltPoint`s feeding into where the
+origin should go) is designed in enough detail to avoid building a UI that gets
+immediately reworked. Flag this to Laurent before starting Chunk 10.
