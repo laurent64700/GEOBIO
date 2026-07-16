@@ -4651,3 +4651,607 @@ git commit -m "Add GlobalAssessmentForm and wire it as a MissionWorkspace phase"
 Right after creating a mission and its exterior plan, Laurent rates the 5 nuisance
 causes (0-10) and the Bovis vibratory rate (0-180 000) via sliders, saved to the
 mission before moving on to origin-setting and grid work (Chunk 7).
+
+---
+
+## Chunk 7: Field-sensing foundation — polarity anchor fix, "ressenti" layer, compass guide
+
+**Why this chunk exists, and why it precedes grid rendering/editing (now Chunk 8):**
+Laurent clarified a methodologically critical point after Chunk 5/6 were written:
+**the theoretical grid must never be visible while he's doing blind field sensing**
+— seeing pre-drawn lines while trying to feel a network's actual position creates
+confirmation bias (he'd unconsciously place his felt points to match what he sees,
+rather than reporting what he actually senses). The theoretical grid is toggled on
+**afterward**, manually, purely as a comparison/calibration aid — and calibration
+means fitting the theoretical lines onto his recorded felt data, never the reverse.
+
+This chunk builds the foundation that Chunk 8 (grid rendering/layers/editing) will
+render and let him toggle: the felt-point data model, the polarity-anchor fix
+(a real bug in already-committed Chunk 5 code), the compass/guide-line field tool,
+and the cadastral parcel base map. None of this renders a theoretical grid line yet
+— that's deliberately Chunk 8's job, once the "what shows by default" question
+(this chunk) is settled first.
+
+### Task 25: Fix polarity anchor — reference line, not a hardcoded parity
+
+**The bug:** `generateTheoreticalLines` (Chunk 2, hardened in Chunk 5's Tasks 21-22)
+currently assigns `polarity: k % 2 === 0 ? '+' : '-'` unconditionally — line index
+`k=0` is always `'+'`. But Laurent's actual field process is the reverse: **he
+senses which polarity a specific line actually has, and the software should
+extrapolate the rest from that anchor** — the assignment can't be hardcoded, because
+which physical line is "+" isn't a universal constant, it's discovered per-mission
+by feel.
+
+**Files:**
+- Modify: `src/geometry/gridGeneration.ts` + `.test.ts` (add an `originPolarity` parameter)
+- Modify: `src/domain/createGridForPlan.ts` + `.test.ts` (thread `originPolarity` through)
+
+**Blast radius:** every existing call to `generateTheoreticalLines` needs the new
+parameter added:
+- `src/geometry/gridGeneration.test.ts` — all 4 existing test calls (2 from Chunk 2
+  Task 5, 1 from Chunk 5 Task 21's polarity test, 1 from Task 22's vibratory-base
+  test) need `'+'` passed as the new argument, chosen so none of their existing
+  polarity assertions change (since `'+'` is what the old hardcoded behavior already
+  produced for even `k` — passing `'+'` keeps every prior assertion valid unchanged).
+- `src/domain/createGridForPlan.test.ts` — both existing tests' calls to
+  `createGridForPlan(...)` need an `originPolarity` argument added.
+
+- [ ] **Step 1: Write a failing test for a flipped anchor**
+
+```typescript
+// append to src/geometry/gridGeneration.test.ts, inside describe('generateTheoreticalLines')
+// First, update the 4 existing calls in this file to pass '+' as the new 4th
+// positional argument (or named field, per Step 3's exact signature) — this keeps
+// every existing assertion in this file valid since '+' reproduces the old
+// hardcoded k%2===0 behavior for the central/even lines.
+
+it('flips the whole alternation when originPolarity is "-" instead of "+"', () => {
+  const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
+  const origin = { x: 0, y: 0 }
+  const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
+
+  const lines = generateTheoreticalLines(template, origin, bounds, '-')
+  const axisA = lines.filter((l) => l.family === 'axis-a')
+  const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
+  const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)! // k=1
+
+  expect(central.polarity).toBe('-') // k=0 now takes the anchor's polarity
+  expect(nextOver.polarity).toBe('+') // k=1 is the opposite
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: FAIL — `generateTheoreticalLines` doesn't accept a 4th argument yet (or,
+depending on how TS/esbuild handles the extra arg, the test's `central.polarity`
+assertion fails because polarity is still hardcoded)
+
+- [ ] **Step 3: Add the `originPolarity` parameter**
+
+```typescript
+// src/geometry/gridGeneration.ts — modify generateTheoreticalLines' signature and both loops
+export function generateTheoreticalLines(
+  template: Pick<GridTemplate, 'spacingXM' | 'spacingYM' | 'angleTrueNorthDeg' | 'vibratoryBase'>,
+  origin: Point,
+  bounds: BoundingBox,
+  /**
+   * The polarity Laurent actually sensed on the k=0 (central/origin) line in the
+   * field — NOT a universal constant. Every other line's polarity is extrapolated
+   * from this single anchor by alternation (§6.2's "j'indique la polarité d'une
+   * ligne et le logiciel extrapole les autres").
+   */
+  originPolarity: '+' | '-'
+): GeneratedLine[] {
+  const primaryDir = bearingUnitVector(template.angleTrueNorthDeg)
+  const perpDir = bearingUnitVector(template.angleTrueNorthDeg + 90)
+  const lines: GeneratedLine[] = []
+
+  function polarityForIndex(k: number): '+' | '-' {
+    const isEvenK = k % 2 === 0
+    if (isEvenK) return originPolarity
+    return originPolarity === '+' ? '-' : '+'
+  }
+
+  const offsetA = maxOffsetIndexNeeded(origin, template.spacingYM, bounds)
+  for (let k = -offsetA; k <= offsetA; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingYM * perpDir.x,
+      y: origin.y + k * template.spacingYM * perpDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, primaryDir, bounds)
+    if (clipped) {
+      lines.push({
+        family: 'axis-a',
+        polarity: polarityForIndex(k),
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
+  }
+
+  const offsetB = maxOffsetIndexNeeded(origin, template.spacingXM, bounds)
+  for (let k = -offsetB; k <= offsetB; k++) {
+    const linePoint: Point = {
+      x: origin.x + k * template.spacingXM * primaryDir.x,
+      y: origin.y + k * template.spacingXM * primaryDir.y,
+    }
+    const clipped = clipLineToBounds(linePoint, perpDir, bounds)
+    if (clipped) {
+      lines.push({
+        family: 'axis-b',
+        polarity: polarityForIndex(k),
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
+  }
+
+  return lines
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/geometry/gridGeneration.test.ts`
+Expected: PASS (9 tests)
+
+- [ ] **Step 5: Thread `originPolarity` through `createGridForPlan`**
+
+```typescript
+// src/domain/createGridForPlan.ts — add a parameter and pass it through
+export async function createGridForPlan(
+  planId: string,
+  template: GridTemplate,
+  originClicked: Point,
+  originPolarity: '+' | '-',
+  radiusM: number = DEFAULT_GRID_RADIUS_M
+) {
+  const origin: Point = {
+    x: originClicked.x + template.originOffsetX,
+    y: originClicked.y + template.originOffsetY,
+  }
+
+  const bounds: BoundingBox = {
+    minX: origin.x - radiusM,
+    maxX: origin.x + radiusM,
+    minY: origin.y - radiusM,
+    maxY: origin.y + radiusM,
+  }
+  const generated = generateTheoreticalLines(template, origin, bounds, originPolarity)
+
+  const instance = await createGridInstance({
+    planId,
+    templateSnapshot: template,
+    originX: origin.x,
+    originY: origin.y,
+  })
+  const lines = await createGridLines(
+    generated.map((l) => ({
+      gridInstanceId: instance.id,
+      family: l.family,
+      polarity: l.polarity,
+      reinforced: l.reinforced,
+      theoreticalPoints: l.points,
+    }))
+  )
+
+  return { instance, lines }
+}
+```
+
+Update both existing tests in `createGridForPlan.test.ts` to pass `'+'` as the new
+`originPolarity` argument (fourth positional argument, before `radiusM`'s default) —
+this reproduces the previous behavior exactly, so no other assertion in either test
+needs to change.
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `npx vitest run src/domain/createGridForPlan.test.ts && npx tsc -b --noEmit`
+Expected: PASS; no type errors.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/geometry/gridGeneration.ts src/geometry/gridGeneration.test.ts src/domain/createGridForPlan.ts src/domain/createGridForPlan.test.ts
+git commit -m "Fix polarity: anchor from a Laurent-sensed reference line, not a hardcoded parity"
+```
+
+---
+
+### Task 26: `FeltPoint` — the "ressenti terrain" data layer
+
+**What this is:** a point Laurent taps on the map **while actively searching for a
+named network** (Hartmann, Curry, ...), recorded with zero reference to any
+theoretical grid. This is the raw ground truth that Chunk 8's grid calibration will
+later fit theoretical lines onto. It is deliberately a separate, simpler concept than
+`GridLine`: no template, no theoretical/adjusted distinction, just "at this point, I
+felt network X." Map rendering/placement UI for this is Chunk 8's job (alongside the
+rest of the map's layer system) — this task is the data layer only.
+
+**Files:**
+- Create: `supabase/migrations/0009_felt_point.sql`
+- Modify: `src/domain/types.ts` (add `FeltPoint`)
+- Create: `src/data/feltPointsRepo.ts`
+- Test: `src/data/feltPointsRepo.test.ts`
+
+- [ ] **Step 1: Migration**
+
+```sql
+-- supabase/migrations/0009_felt_point.sql
+create table felt_point (
+  id uuid primary key default gen_random_uuid(),
+  plan_id uuid not null references plan(id) on delete cascade,
+  network_name text not null,
+  x double precision not null,
+  y double precision not null,
+  created_at timestamptz not null default now()
+);
+create index felt_point_plan_id_idx on felt_point(plan_id);
+```
+
+- [ ] **Step 2: Apply it**
+
+Run: `npx supabase db push`
+
+- [ ] **Step 3: Add the `FeltPoint` type**
+
+```typescript
+// src/domain/types.ts — add
+export interface FeltPoint {
+  id: string
+  planId: string
+  /** Free text, not a foreign key to GridTemplate — Laurent may search for a
+   * network before its GridTemplate row exists, or use a name not yet templated. */
+  networkName: string
+  x: number
+  y: number
+  createdAt: string
+}
+```
+
+- [ ] **Step 4: Write failing tests for `feltPointsRepo`**
+
+```typescript
+// src/data/feltPointsRepo.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createFeltPoint, listFeltPointsForPlan } from './feltPointsRepo'
+import { supabase } from '../lib/supabaseClient'
+import { createSupabaseChainMock } from '../test/supabaseMock'
+
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+
+describe('feltPointsRepo', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a felt point', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'fp1', plan_id: 'p1', network_name: 'Hartmann',
+        x: 1.2, y: -3.4, created_at: '2026-07-16T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const point = await createFeltPoint({ planId: 'p1', networkName: 'Hartmann', x: 1.2, y: -3.4 })
+
+    expect(from).toHaveBeenCalledWith('felt_point')
+    expect(chain.insert).toHaveBeenCalledWith({
+      plan_id: 'p1', network_name: 'Hartmann', x: 1.2, y: -3.4,
+    })
+    expect(point.networkName).toBe('Hartmann')
+  })
+
+  it('throws a descriptive French error when creation fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(
+      createFeltPoint({ planId: 'p1', networkName: 'Hartmann', x: 0, y: 0 })
+    ).rejects.toThrow("Impossible d'enregistrer le point ressenti : network down")
+  })
+
+  it('lists felt points scoped to a plan', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [
+        { id: 'fp1', plan_id: 'p1', network_name: 'Hartmann', x: 0, y: 0, created_at: '2026-07-16T10:00:00Z' },
+        { id: 'fp2', plan_id: 'p1', network_name: 'Curry', x: 1, y: 1, created_at: '2026-07-16T10:05:00Z' },
+      ],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const points = await listFeltPointsForPlan('p1')
+
+    expect(chain.eq).toHaveBeenCalledWith('plan_id', 'p1')
+    expect(points).toHaveLength(2)
+    expect(points.map((p) => p.networkName)).toEqual(['Hartmann', 'Curry'])
+  })
+})
+```
+
+- [ ] **Step 5: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/feltPointsRepo.test.ts`
+Expected: FAIL — `Cannot find module './feltPointsRepo'`
+
+- [ ] **Step 6: Implement `feltPointsRepo`**
+
+```typescript
+// src/data/feltPointsRepo.ts
+import { supabase } from '../lib/supabaseClient'
+import type { FeltPoint } from '../domain/types'
+
+export interface CreateFeltPointInput {
+  planId: string
+  networkName: string
+  x: number
+  y: number
+}
+
+interface FeltPointRow {
+  id: string
+  plan_id: string
+  network_name: string
+  x: number
+  y: number
+  created_at: string
+}
+
+function mapRowToFeltPoint(row: FeltPointRow): FeltPoint {
+  return {
+    id: row.id,
+    planId: row.plan_id,
+    networkName: row.network_name,
+    x: row.x,
+    y: row.y,
+    createdAt: row.created_at,
+  }
+}
+
+export async function createFeltPoint(input: CreateFeltPointInput): Promise<FeltPoint> {
+  const { data, error } = await supabase
+    .from('felt_point')
+    .insert({ plan_id: input.planId, network_name: input.networkName, x: input.x, y: input.y })
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer le point ressenti : ${error.message}`)
+  return mapRowToFeltPoint(data as FeltPointRow)
+}
+
+export async function listFeltPointsForPlan(planId: string): Promise<FeltPoint[]> {
+  const { data, error } = await supabase.from('felt_point').select().eq('plan_id', planId)
+
+  if (error) throw new Error(`Impossible de charger les points ressentis : ${error.message}`)
+  return (data as FeltPointRow[]).map(mapRowToFeltPoint)
+}
+```
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/feltPointsRepo.test.ts`
+Expected: PASS (3 tests)
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add supabase/migrations/0009_felt_point.sql src/domain/types.ts src/data/feltPointsRepo.ts src/data/feltPointsRepo.test.ts
+git commit -m "Add FeltPoint: raw field-sensing data layer, independent of any theoretical grid"
+```
+
+---
+
+### Task 27: Cadastral parcel lookup + selection ("la base c'est d'avoir un fond de carte propre avec la délimitation du terrain")
+
+**⚠️ External API uncertainty, same treatment as the IGN WMTS orthophoto URL
+(Chunk 3, Task 9) and Leaflet.DistortableImage (Chunk 4):** neither of us can browse
+IGN's current WFS documentation live. The endpoint, `TYPENAME`, and GeoJSON property
+names below (`numero`, `section`) are a best-effort guess at IGN Géoplateforme's
+cadastre WFS shape, **not confirmed**. Isolate this uncertainty in one small module
+(`cadastreService.ts`) so it's a single place to fix if wrong — the parsing logic
+itself is fully tested against a controlled, hand-written GeoJSON fixture, so that
+part is verified regardless of whether the live endpoint details are exactly right.
+
+**Files:**
+- Create: `src/data/cadastreService.ts`
+- Test: `src/data/cadastreService.test.ts`
+- Create: `supabase/migrations/0010_mission_parcel_refs.sql`
+- Modify: `src/domain/types.ts` (add `Mission.parcelRefs`)
+- Modify: `src/data/missionsRepo.ts` + `.test.ts` (add `setSelectedParcels`)
+
+**Blast radius:** `parcelRefs` is a new nullable-by-default (empty array) field on
+`Mission` — following Chunk 6's precedent, add `parcelRefs: []` to every existing
+`Mission` fixture across the plan (`missionsRepo.test.ts`, `MissionForm.test.tsx`,
+`MissionWorkspace.test.tsx`'s `missionWithOrigin` and inline `MissionForm` mock).
+
+- [ ] **Step 1: Write failing tests for parcel parsing**
+
+```typescript
+// src/data/cadastreService.test.ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { fetchParcelsInBounds } from './cadastreService'
+
+const sampleGeoJson = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: { numero: '1167', section: 'AB' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [2.35, 48.85],
+            [2.351, 48.85],
+            [2.351, 48.851],
+            [2.35, 48.851],
+            [2.35, 48.85],
+          ],
+        ],
+      },
+    },
+  ],
+}
+
+describe('fetchParcelsInBounds', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  it('parses parcel features into id/section/ringsLatLng', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleGeoJson),
+    } as Response)
+
+    const parcels = await fetchParcelsInBounds({ minLat: 48.85, maxLat: 48.86, minLng: 2.35, maxLng: 2.36 })
+
+    expect(parcels).toHaveLength(1)
+    expect(parcels[0].id).toBe('1167')
+    expect(parcels[0].section).toBe('AB')
+    expect(parcels[0].ringsLatLng[0][0]).toEqual({ lat: 48.85, lng: 2.35 })
+  })
+
+  it('throws a descriptive French error when the request fails', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as Response)
+
+    await expect(
+      fetchParcelsInBounds({ minLat: 0, maxLat: 1, minLng: 0, maxLng: 1 })
+    ).rejects.toThrow('Impossible de charger les parcelles cadastrales : 500')
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run src/data/cadastreService.test.ts`
+Expected: FAIL — `Cannot find module './cadastreService'`
+
+- [ ] **Step 3: Implement `cadastreService`**
+
+```typescript
+// src/data/cadastreService.ts
+import type { LatLng } from '../geometry/localCoordinates'
+
+export interface CadastralParcel {
+  id: string
+  section: string
+  ringsLatLng: LatLng[][]
+}
+
+export interface LatLngBounds {
+  minLat: number
+  maxLat: number
+  minLng: number
+  maxLng: number
+}
+
+// ⚠️ VERIFY against https://geoservices.ign.fr/documentation/donnees/vecteur/cadastre
+// before relying on this — endpoint, TYPENAME, and property names are a best-effort
+// guess, not confirmed against live IGN Géoplateforme docs.
+const CADASTRE_WFS_URL = 'https://data.geopf.fr/wfs/ows'
+const PARCEL_TYPE_NAME = 'CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle'
+
+function parseParcelFeature(feature: {
+  properties?: Record<string, unknown>
+  geometry: { coordinates: number[][][] }
+}): CadastralParcel {
+  const props = feature.properties ?? {}
+  const ringsLatLng: LatLng[][] = feature.geometry.coordinates.map((ring) =>
+    ring.map(([lng, lat]) => ({ lat, lng }))
+  )
+  return {
+    id: String(props.numero ?? 'inconnu'),
+    section: String(props.section ?? ''),
+    ringsLatLng,
+  }
+}
+
+export async function fetchParcelsInBounds(bounds: LatLngBounds): Promise<CadastralParcel[]> {
+  const bbox = `${bounds.minLng},${bounds.minLat},${bounds.maxLng},${bounds.maxLat},EPSG:4326`
+  const url =
+    `${CADASTRE_WFS_URL}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature` +
+    `&TYPENAME=${PARCEL_TYPE_NAME}&OUTPUTFORMAT=application/json&BBOX=${bbox}`
+
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Impossible de charger les parcelles cadastrales : ${response.status}`)
+  }
+  const geojson = (await response.json()) as {
+    features: Array<{ properties?: Record<string, unknown>; geometry: { coordinates: number[][][] } }>
+  }
+  return geojson.features.map(parseParcelFeature)
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run src/data/cadastreService.test.ts`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Migration + type + repo for selected parcels**
+
+```sql
+-- supabase/migrations/0010_mission_parcel_refs.sql
+alter table mission add column parcel_refs text[] not null default '{}';
+```
+
+```typescript
+// src/domain/types.ts — modify Mission
+export interface Mission {
+  // ...existing fields...
+  parcelRefs: string[]
+}
+```
+
+Add `parcelRefs: []` to every existing `Mission` fixture in `missionsRepo.test.ts`,
+`MissionForm.test.tsx`, and `MissionWorkspace.test.tsx` (both the inline
+`MissionForm` mock and `missionWithOrigin`), and `parcel_refs: []` to every
+`MissionRow`-shaped DB row literal in `missionsRepo.test.ts`.
+
+```typescript
+// src/data/missionsRepo.ts — modify MissionRow/mapRowToMission, add:
+export async function setSelectedParcels(missionId: string, parcelRefs: string[]): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({ parcel_refs: parcelRefs })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer les parcelles sélectionnées : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+```
+
+- [ ] **Step 6: Write a failing test for `setSelectedParcels`, run it, then run it green**
+
+Follow the same pattern as `setMissionOrigin`/`setGlobalAssessment`'s tests
+(Chunk 4 Task 13, Chunk 6 Task 23) — mock the `.update().eq().select().single()`
+chain, assert `chain.eq` called with `('id', missionId)`, assert the mapped
+`parcelRefs` on the returned `Mission`.
+
+Run: `npx vitest run src/data/missionsRepo.test.ts`
+Expected: PASS (6 tests — 5 from before + this one)
+
+- [ ] **Step 7: Type-check and commit**
+
+Run: `npx tsc -b --noEmit`
+
+```bash
+git add src/data/cadastreService.ts src/data/cadastreService.test.ts supabase/migrations/0010_mission_parcel_refs.sql src/domain/types.ts src/data/missionsRepo.ts src/data/missionsRepo.test.ts src/components/MissionForm.test.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Add cadastral parcel lookup (WFS) and mission parcel selection"
+```
+
+---
+
+**Chunk 7 exit criteria:** `npx vitest run` and `npx tsc -b --noEmit` both pass. The
+polarity bug is fixed (anchored on a sensed reference line). `FeltPoint` and cadastral
+parcel data layers exist and are tested, ready for Chunk 8 to render and wire into
+the map UI — none of this chunk renders anything on screen yet, by design (the map
+UI, including the default-hidden theoretical grid layer, the felt-point layer shown
+by default, the compass/guide-line tool, and the layer panel, all land together in
+Chunk 8 so the "what's visible by default vs. toggled on" behavior is built as one
+coherent piece rather than gradually and inconsistently).
