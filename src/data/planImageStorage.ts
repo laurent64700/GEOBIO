@@ -11,8 +11,26 @@ const BUCKET = 'plans'
 // (par ex. en stockant le chemin de l'objet plutôt qu'une URL signée complète).
 const SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 24 * 365
 
+// file.name comes straight from the user's phone/camera (French property
+// owners uploading photos) and can contain spaces, accents, or other
+// characters that are unreliable in Supabase Storage object keys (e.g.
+// "plan intérieur.jpg", "Photo été 2026.jpg"). Rather than slugify an
+// arbitrary original name — which still leaves a filename-collision
+// question if two uploads slugify to the same key — we use a fixed,
+// deterministic name per mission: the domain model allows only one
+// 'interieur' plan per mission (see PlanKind in src/domain/types.ts), so
+// there is never more than one interior plan image to name. Combined with
+// upload's { upsert: true }, this makes re-uploads for the same mission
+// cleanly replace the previous image instead of risking an unexpected
+// normalized-name collision with a *different* file.
+function planImagePath(missionId: string, fileName: string): string {
+  const match = /\.[^./\\]+$/.exec(fileName)
+  const extension = match ? match[0].toLowerCase() : ''
+  return `${missionId}/interior-plan${extension}`
+}
+
 export async function uploadPlanImage(missionId: string, file: File): Promise<string> {
-  const path = `${missionId}/${file.name}`
+  const path = planImagePath(missionId, file.name)
   const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: true })
 
   if (uploadError) throw new Error(`Impossible d'envoyer l'image du plan : ${uploadError.message}`)

@@ -11,9 +11,11 @@ describe('uploadPlanImage', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('uploads the file to the plans bucket and returns its signed URL', async () => {
-    const upload = vi.fn().mockResolvedValue({ data: { path: 'm1/plan.jpg' }, error: null })
+    const upload = vi.fn().mockResolvedValue({ data: { path: 'm1/interior-plan.jpg' }, error: null })
     const createSignedUrl = vi.fn().mockResolvedValue({
-      data: { signedUrl: 'https://xxx.supabase.co/storage/v1/object/sign/plans/m1/plan.jpg?token=abc' },
+      data: {
+        signedUrl: 'https://xxx.supabase.co/storage/v1/object/sign/plans/m1/interior-plan.jpg?token=abc',
+      },
       error: null,
     })
     vi.mocked(supabase.storage.from).mockReturnValue({ upload, createSignedUrl } as any)
@@ -22,9 +24,26 @@ describe('uploadPlanImage', () => {
     const url = await uploadPlanImage('m1', file)
 
     expect(supabase.storage.from).toHaveBeenCalledWith('plans')
-    expect(upload).toHaveBeenCalledWith('m1/plan.jpg', file, { upsert: true })
-    expect(createSignedUrl).toHaveBeenCalledWith('m1/plan.jpg', 60 * 60 * 24 * 365)
-    expect(url).toBe('https://xxx.supabase.co/storage/v1/object/sign/plans/m1/plan.jpg?token=abc')
+    expect(upload).toHaveBeenCalledWith('m1/interior-plan.jpg', file, { upsert: true })
+    expect(createSignedUrl).toHaveBeenCalledWith('m1/interior-plan.jpg', 60 * 60 * 24 * 365)
+    expect(url).toBe('https://xxx.supabase.co/storage/v1/object/sign/plans/m1/interior-plan.jpg?token=abc')
+  })
+
+  it('sanitizes a filename with spaces and accents into a deterministic path', async () => {
+    const upload = vi.fn().mockResolvedValue({ data: { path: 'm1/interior-plan.jpg' }, error: null })
+    const createSignedUrl = vi.fn().mockResolvedValue({
+      data: {
+        signedUrl: 'https://xxx.supabase.co/storage/v1/object/sign/plans/m1/interior-plan.jpg?token=abc',
+      },
+      error: null,
+    })
+    vi.mocked(supabase.storage.from).mockReturnValue({ upload, createSignedUrl } as any)
+
+    const file = new File(['fake-image-bytes'], 'plan intérieur été 2026.JPG', { type: 'image/jpeg' })
+    await uploadPlanImage('m1', file)
+
+    expect(upload).toHaveBeenCalledWith('m1/interior-plan.jpg', file, { upsert: true })
+    expect(createSignedUrl).toHaveBeenCalledWith('m1/interior-plan.jpg', 60 * 60 * 24 * 365)
   })
 
   it('throws a descriptive French error when the upload fails', async () => {

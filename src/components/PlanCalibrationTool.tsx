@@ -32,6 +32,14 @@ export interface PlanCalibrationToolProps {
 
 const MAX_CONTROL_POINTS = 4 // spec §3.1: "2 à 4 points de contrôle"
 
+// MapView's root element is styled height: '100%', which resolves against its
+// parent's actual (not content-derived) height. Every wrapper that directly
+// contains a <MapView> must therefore give it an explicit concrete height, or
+// the map collapses to ~0px in a real browser (invisible in tests, where
+// MapView is always mocked to a placeholder div). Matches the pattern used in
+// MissionWorkspace.tsx.
+const MAP_WRAPPER_STYLE = { height: 400 }
+
 export function PlanCalibrationTool({
   imageUrl,
   missionOrigin,
@@ -87,7 +95,9 @@ export function PlanCalibrationTool({
         onClick={handleImageClick}
         style={{ maxWidth: '100%' }}
       />
-      <MapView center={mapCenter} onMapClick={handleMapClick} />
+      <div style={MAP_WRAPPER_STYLE}>
+        <MapView center={mapCenter} onMapClick={handleMapClick} />
+      </div>
       {error && <p role="alert">{error}</p>}
       {points.length > 0 && (
         <button onClick={handleUndoLastPoint}>Retirer le dernier point</button>
