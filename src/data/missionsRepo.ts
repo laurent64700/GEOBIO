@@ -13,6 +13,8 @@ interface MissionRow {
   address: string
   mission_date: string
   declination_deg: number | null
+  origin_lat: number | null
+  origin_lng: number | null
 }
 
 function mapRowToMission(row: MissionRow): Mission {
@@ -21,6 +23,8 @@ function mapRowToMission(row: MissionRow): Mission {
     address: row.address,
     missionDate: row.mission_date,
     declinationDeg: row.declination_deg,
+    originLat: row.origin_lat,
+    originLng: row.origin_lng,
   }
 }
 
@@ -47,4 +51,19 @@ export async function listMissions(): Promise<Mission[]> {
 
   if (error) throw new Error(`Impossible de charger les missions : ${error.message}`)
   return (data as MissionRow[]).map(mapRowToMission)
+}
+
+export async function setMissionOrigin(
+  missionId: string,
+  origin: { lat: number; lng: number }
+): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({ origin_lat: origin.lat, origin_lng: origin.lng })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer l'origine de la mission : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
 }

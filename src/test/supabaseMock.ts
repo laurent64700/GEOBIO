@@ -12,10 +12,14 @@ export interface SupabaseQueryResult<T> {
  * resolves to `result`, and the chain itself is also thenable so queries that
  * never call `.single()` (e.g. a bare `.select()` list query) can be awaited
  * directly, matching how supabase-js's real builder behaves.
+ *
+ * Each `createSupabaseChainMock` instance represents a single query round-trip
+ * (not for testing two different sequential results from the same chain).
  */
 export function createSupabaseChainMock<T>(result: SupabaseQueryResult<T>) {
   const chain: any = {
     insert: vi.fn(() => chain),
+    update: vi.fn(() => chain),
     select: vi.fn(() => chain),
     eq: vi.fn(() => chain),
     order: vi.fn(() => chain),

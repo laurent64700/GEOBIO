@@ -18,6 +18,8 @@ export interface Mission {
   address: string
   missionDate: string // ISO date
   declinationDeg: number | null
+  originLat: number | null
+  originLng: number | null
 }
 
 export type PlanKind = 'exterieur' | 'interieur'

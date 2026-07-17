@@ -14,7 +14,7 @@ vi.mock('../components/MissionForm', async () => {
     // in-render call would trigger.
     MissionForm: ({ onCreated }: { onCreated: (m: unknown) => void }) => {
       useEffect(() => {
-        onCreated({ id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null })
+        onCreated({ id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null, originLat: null, originLng: null })
       }, [onCreated])
       return null
     },

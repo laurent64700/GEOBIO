@@ -7,7 +7,7 @@ vi.mock('../data/missionsRepo')
 
 describe('MissionForm', () => {
   it('creates a mission and calls onCreated with the result', async () => {
-    const mission = { id: 'm1', address: '12 rue des Lilas', missionDate: '2026-07-20', declinationDeg: null }
+    const mission = { id: 'm1', address: '12 rue des Lilas', missionDate: '2026-07-20', declinationDeg: null, originLat: null, originLng: null }
     vi.mocked(missionsRepo.createMission).mockResolvedValue(mission)
     const onCreated = vi.fn()
 
