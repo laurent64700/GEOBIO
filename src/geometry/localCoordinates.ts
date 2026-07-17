@@ -9,12 +9,15 @@ export interface LatLng {
 
 /**
  * Converts a WGS84 lat/lng to mission-local planar meters (x = east, y =
- * north) relative to `origin`, using an equirectangular approximation. This
- * is accurate to within centimeters over distances of a few hundred meters —
- * comfortably sufficient for a residential property (spec §3.1's local
- * metric referential). It is deliberately NOT a geodesy-grade projection
- * (no ellipsoid correction) — do not reuse this for anything beyond a single
- * property's local referential.
+ * north) relative to `origin`, using an equirectangular approximation. The
+ * flattening error (holding cos(origin.lat) constant across the extent) is
+ * sub-centimeter over a few hundred meters. Note the fixed 111_320 m/degree
+ * constant is the WGS84 equatorial value, not a latitude-specific one, so
+ * absolute scale carries a systematic ~0.1-0.2% error (decimeter-level at a
+ * few hundred meters) — fine for a self-consistent local referential
+ * (round-trips are numerically exact), but don't treat local-frame lengths
+ * as survey-grade absolute distances. Do not reuse this for anything beyond
+ * a single property's local referential.
  */
 export function latLngToLocal(point: LatLng, origin: LatLng): Point {
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos((origin.lat * Math.PI) / 180)
