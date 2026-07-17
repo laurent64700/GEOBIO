@@ -3,10 +3,12 @@ import { supabase } from '../lib/supabaseClient'
 
 const BUCKET = 'plans'
 // Bucket 'plans' is private (photos de plans intérieurs = données RGPD-sensibles).
-// URL signée longue durée (1 an) : stockée dans plan.image_url et affichée à chaque
-// consultation du plan ; le bucket privé rend l'URL non devinable/énumérable, donc
-// pas besoin de la re-signer à chaque affichage. À revoir si un signing à la demande
-// (plus court, re-signé côté serveur) devient nécessaire.
+// 1 an : un bucket privé exige un token d'URL signée valide pour l'accès (contrairement
+// à l'ancienne approche bucket public, qui reposait sur un chemin non devinable). Une
+// longue durée évite de re-signer à chaque affichage, mais rend cette URL non permanente :
+// elle cessera silencieusement de fonctionner passé ce délai, sauf si quelque chose la
+// re-signe plus tard. À revoir si la couche d'affichage doit re-signer à la lecture
+// (par ex. en stockant le chemin de l'objet plutôt qu'une URL signée complète).
 const SIGNED_URL_EXPIRY_SECONDS = 60 * 60 * 24 * 365
 
 export async function uploadPlanImage(missionId: string, file: File): Promise<string> {
