@@ -122,6 +122,26 @@ describe('PlanCalibrationTool', () => {
     expect(onCalibrated).toHaveBeenCalledWith(fakeTransform)
   })
 
+  it('removes the last collected point when the undo button is clicked', () => {
+    render(
+      <PlanCalibrationTool
+        imageUrl="https://example.com/plan.jpg"
+        missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+        mapCenter={[48.8566, 2.3522]}
+        onCalibrated={vi.fn()}
+      />
+    )
+    const img = screen.getByAltText('Plan intérieur à caler') as HTMLImageElement
+    setupImage(img)
+
+    placeOneControlPoint(img, 0, 0)
+    placeOneControlPoint(img, 10, 10)
+    expect(screen.getByText(/2 point\(s\) posé/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /retirer le dernier point/i }))
+    expect(screen.getByText(/1 point\(s\) posé/)).toBeInTheDocument()
+  })
+
   it('shows the CalibrationError message and does not call onCalibrated when validation fails', () => {
     vi.mocked(calibratePlan).mockImplementation(() => {
       throw new CalibrationError('Les points de contrôle 1 et 2 sont trop proches.')

@@ -66,6 +66,12 @@ export function PlanCalibrationTool({
     }
   }
 
+  function handleUndoLastPoint() {
+    setPoints((prev) => prev.slice(0, -1))
+    setPendingImagePoint(null)
+    setError(null)
+  }
+
   return (
     <div>
       <p>
@@ -83,6 +89,9 @@ export function PlanCalibrationTool({
       />
       <MapView center={mapCenter} onMapClick={handleMapClick} />
       {error && <p role="alert">{error}</p>}
+      {points.length > 0 && (
+        <button onClick={handleUndoLastPoint}>Retirer le dernier point</button>
+      )}
       <button onClick={handleValidate} disabled={points.length < 2}>
         Valider le calage ({points.length} points)
       </button>
