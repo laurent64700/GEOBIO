@@ -48,7 +48,7 @@ npm install -D vite-plugin-pwa vitest @testing-library/react @testing-library/je
 
 ```typescript
 // vite.config.ts
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
