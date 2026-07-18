@@ -41,7 +41,7 @@ describe('generateTheoreticalLines', () => {
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
 
-    const lines = generateTheoreticalLines(template, origin, bounds)
+    const lines = generateTheoreticalLines(template, origin, bounds, '+')
 
     const axisA = lines.filter((l) => l.family === 'axis-a')
     const axisB = lines.filter((l) => l.family === 'axis-b')
@@ -59,7 +59,7 @@ describe('generateTheoreticalLines', () => {
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
 
-    const lines = generateTheoreticalLines(template, origin, bounds)
+    const lines = generateTheoreticalLines(template, origin, bounds, '+')
     // The central (k=0) axis-a line passes through the origin, but
     // clipLineToBounds returns its box-boundary endpoints, not the origin
     // itself — so identify it by midpoint (which IS the origin for the
@@ -82,7 +82,7 @@ describe('generateTheoreticalLines', () => {
     const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
-    const lines = generateTheoreticalLines(template, origin, bounds)
+    const lines = generateTheoreticalLines(template, origin, bounds, '+')
 
     const axisA = lines.filter((l) => l.family === 'axis-a')
     const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)!
@@ -95,7 +95,7 @@ describe('generateTheoreticalLines', () => {
     const template = { spacingXM: 2, spacingYM: 1, angleTrueNorthDeg: 0, vibratoryBase: 3 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3.5, maxX: 3.5, minY: -3.5, maxY: 3.5 }
-    const lines = generateTheoreticalLines(template, origin, bounds)
+    const lines = generateTheoreticalLines(template, origin, bounds, '+')
 
     const axisA = lines.filter((l) => l.family === 'axis-a')
     const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
@@ -110,5 +110,19 @@ describe('generateTheoreticalLines', () => {
     // -0 === 0 in JS, so a negative multiple must also be exercised — not just k=0/k=3.
     expect(kMinusThree.reinforced).toBe(true) // k=-3 is a multiple of 3
     expect(kMinusOne.reinforced).toBe(false) // k=-1 is not
+  })
+
+  it('flips the whole alternation when originPolarity is "-" instead of "+"', () => {
+    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
+    const origin = { x: 0, y: 0 }
+    const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
+
+    const lines = generateTheoreticalLines(template, origin, bounds, '-')
+    const axisA = lines.filter((l) => l.family === 'axis-a')
+    const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
+    const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)! // k=1
+
+    expect(central.polarity).toBe('-') // k=0 now takes the anchor's polarity
+    expect(nextOver.polarity).toBe('+') // k=1 is the opposite
   })
 })

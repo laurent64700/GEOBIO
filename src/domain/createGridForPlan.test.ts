@@ -32,7 +32,7 @@ describe('createGridForPlan', () => {
       )
     )
 
-    const result = await createGridForPlan('p1', hartmann, { x: 0, y: 0 })
+    const result = await createGridForPlan('p1', hartmann, { x: 0, y: 0 }, '+')
 
     expect(gridInstancesRepo.createGridInstance).toHaveBeenCalledWith({
       planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0,
@@ -63,7 +63,7 @@ describe('createGridForPlan', () => {
     })
     vi.mocked(gridLinesRepo.createGridLines).mockResolvedValue([])
 
-    await createGridForPlan('p1', offsetTemplate, { x: 0, y: 0 })
+    await createGridForPlan('p1', offsetTemplate, { x: 0, y: 0 }, '+')
 
     // Clicked (0,0) + offset (5,-3) = final origin (5,-3) — this is what must
     // reach createGridInstance, per generateTheoreticalLines' documented

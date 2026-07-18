@@ -55,11 +55,12 @@ export function clipLineToBounds(
 export interface GeneratedLine {
   family: GridLineFamily
   /**
-   * Alternates by grid index (even = '+', odd = '-') — this is the network's
-   * deterministic theoretical polarity pattern (confirmed for this family of
-   * rectangular networks: a fixed checkerboard alternation), not something
-   * measured in the field. Laurent's felt-line adjustment (§6.2) can still
-   * override it per line once GridLine editing (Chunk 6) exists.
+   * Alternates by grid index (checkerboard: k=0 takes `originPolarity`, odd k
+   * the opposite). The alternation pattern itself is deterministic, but which
+   * polarity the k=0 anchor line takes is NOT a universal constant — it's
+   * `originPolarity`, sensed per-mission in the field, not hardcoded here.
+   * Laurent's felt-line adjustment (§6.2) can still override it per line once
+   * GridLine editing (Chunk 6) exists.
    */
   polarity: '+' | '-'
   /** True for every vibratoryBase-th line in its family (a reinforced/doubled harmonic line). */
@@ -97,11 +98,24 @@ function maxOffsetIndexNeeded(
 export function generateTheoreticalLines(
   template: Pick<GridTemplate, 'spacingXM' | 'spacingYM' | 'angleTrueNorthDeg' | 'vibratoryBase'>,
   origin: Point,
-  bounds: BoundingBox
+  bounds: BoundingBox,
+  /**
+   * The polarity Laurent actually sensed on the k=0 (central/origin) line in the
+   * field — NOT a universal constant. Every other line's polarity is extrapolated
+   * from this single anchor by alternation (§6.2's "j'indique la polarité d'une
+   * ligne et le logiciel extrapole les autres").
+   */
+  originPolarity: '+' | '-'
 ): GeneratedLine[] {
   const primaryDir = bearingUnitVector(template.angleTrueNorthDeg)
   const perpDir = bearingUnitVector(template.angleTrueNorthDeg + 90)
   const lines: GeneratedLine[] = []
+
+  function polarityForIndex(k: number): '+' | '-' {
+    const isEvenK = k % 2 === 0
+    if (isEvenK) return originPolarity
+    return originPolarity === '+' ? '-' : '+'
+  }
 
   const offsetA = maxOffsetIndexNeeded(origin, template.spacingYM, bounds)
   for (let k = -offsetA; k <= offsetA; k++) {
@@ -113,7 +127,7 @@ export function generateTheoreticalLines(
     if (clipped) {
       lines.push({
         family: 'axis-a',
-        polarity: k % 2 === 0 ? '+' : '-',
+        polarity: polarityForIndex(k),
         reinforced: k % template.vibratoryBase === 0,
         points: clipped,
       })
@@ -130,7 +144,7 @@ export function generateTheoreticalLines(
     if (clipped) {
       lines.push({
         family: 'axis-b',
-        polarity: k % 2 === 0 ? '+' : '-',
+        polarity: polarityForIndex(k),
         reinforced: k % template.vibratoryBase === 0,
         points: clipped,
       })

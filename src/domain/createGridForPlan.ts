@@ -15,6 +15,7 @@ export async function createGridForPlan(
   planId: string,
   template: GridTemplate,
   originClicked: Point,
+  originPolarity: '+' | '-',
   radiusM: number = DEFAULT_GRID_RADIUS_M
 ) {
   // generateTheoreticalLines (Chunk 2) documents that it expects the FINAL,
@@ -33,7 +34,7 @@ export async function createGridForPlan(
     minY: origin.y - radiusM,
     maxY: origin.y + radiusM,
   }
-  const generated = generateTheoreticalLines(template, origin, bounds)
+  const generated = generateTheoreticalLines(template, origin, bounds, originPolarity)
 
   const instance = await createGridInstance({
     planId,
