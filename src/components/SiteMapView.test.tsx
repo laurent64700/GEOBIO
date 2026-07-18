@@ -158,6 +158,20 @@ describe('SiteMapView', () => {
     expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
   })
 
+  it('does not arm a bearing when "Valider" is clicked with an empty custom-angle input', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    // input starts empty; Number('') is 0 (not NaN), so the guard must also
+    // check for the empty string explicitly rather than relying on NaN alone
+    fireEvent.click(screen.getByRole('button', { name: 'Valider' }))
+
+    expect(screen.getByRole('button', { name: /placer/i })).toBeDisabled()
+  })
+
   it('stops forwarding map clicks to the guide line after one placement, until "placer" is pressed again', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])

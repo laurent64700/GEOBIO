@@ -67,8 +67,8 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   }
 
   function handleClearGuideLine() {
-    // Reset the whole tool, not just the placed anchor, so Laurent starts
-    // clean rather than keeping a stale bearing selected with no line shown.
+    // Reset the whole tool, not just the placed anchor, so the practitioner
+    // starts clean rather than keeping a stale bearing selected with no line shown.
     setGuideLineAnchor(null)
     setGuideLineBearing(null)
     setPlacingGuideLine(false)
@@ -132,10 +132,38 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           the visible area instead of overlaying it. Top-left keeps it clear
           of LayerPanel's top-right checkboxes. */}
       <div style={GUIDE_LINE_CONTROLS_STYLE}>
-        <button onClick={() => setGuideLineBearing(0)}>N/S</button>
-        <button onClick={() => setGuideLineBearing(90)}>E/O</button>
-        <button onClick={() => setGuideLineBearing(45)}>45°</button>
-        <button onClick={() => setGuideLineBearing(135)}>135°</button>
+        <button
+          onClick={() => {
+            setGuideLineBearing(0)
+            setCustomBearingInput('')
+          }}
+        >
+          N/S
+        </button>
+        <button
+          onClick={() => {
+            setGuideLineBearing(90)
+            setCustomBearingInput('')
+          }}
+        >
+          E/O
+        </button>
+        <button
+          onClick={() => {
+            setGuideLineBearing(45)
+            setCustomBearingInput('')
+          }}
+        >
+          45°
+        </button>
+        <button
+          onClick={() => {
+            setGuideLineBearing(135)
+            setCustomBearingInput('')
+          }}
+        >
+          135°
+        </button>
         <input
           type="number"
           step="1"
