@@ -4,6 +4,7 @@ import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
+import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
 vi.mock('../data/gridInstancesRepo')
 vi.mock('../data/gridLinesRepo')
@@ -264,7 +265,7 @@ describe('SiteMapView', () => {
     expect(vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length).toBe(updateCallsBeforeIgnore)
   })
 
-  it('straightens the line and dismisses the panel when "Redresser" is clicked', async () => {
+  it('straightens the line and persists the correctly-computed suggested points when "Redresser" is clicked', async () => {
     await renderWithLineChangedOnce()
     await screen.findByTestId('orthogonality-preview')
     const updateCallsBeforeAccept = vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length
@@ -272,7 +273,28 @@ describe('SiteMapView', () => {
     fireEvent.click(screen.getByRole('button', { name: /redresser/i }))
 
     expect(screen.queryByTestId('orthogonality-preview')).not.toBeInTheDocument()
-    // Accepting goes through handleLineChanged, which persists via updateAdjustedPoints
-    expect(vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length).toBeGreaterThan(updateCallsBeforeAccept)
+    // Accepting goes through handleLineChanged, which persists via updateAdjustedPoints —
+    // and it must persist the actual straightened coordinates, not just "some" update.
+    // The dragged line ([{x:0,y:-10},{x:1,y:10}], axis-a, angleTrueNorthDeg 0) should be
+    // straightened to both endpoints at x≈0.5 (deviation split evenly, line made vertical).
+    const { suggestedPoints } = getOrthogonalitySuggestion(
+      [{ x: 0, y: -10 }, { x: 1, y: 10 }],
+      'axis-a',
+      { angleTrueNorthDeg: 0 }
+    )
+    const calls = vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls
+    expect(calls.length).toBeGreaterThan(updateCallsBeforeAccept)
+    const [persistedLineId, persistedPoints] = calls[calls.length - 1]
+    expect(persistedLineId).toBe('gl1')
+    expect(persistedPoints).toHaveLength(2)
+    expect(persistedPoints[0].x).toBeCloseTo(suggestedPoints[0].x)
+    expect(persistedPoints[0].y).toBeCloseTo(suggestedPoints[0].y)
+    expect(persistedPoints[1].x).toBeCloseTo(suggestedPoints[1].x)
+    expect(persistedPoints[1].y).toBeCloseTo(suggestedPoints[1].y)
+    // Sanity-check against the reviewer's hand-computed expectation directly,
+    // so this test doesn't just check "matches whatever the function returns"
+    // but that the function's own output is the mathematically correct one.
+    expect(persistedPoints[0].x).toBeCloseTo(0.5)
+    expect(persistedPoints[1].x).toBeCloseTo(0.5)
   })
 })
