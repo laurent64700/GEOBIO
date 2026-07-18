@@ -40,6 +40,8 @@ export interface GridTemplate {
   angleTrueNorthDeg: number
   originOffsetX: number
   originOffsetY: number
+  /** Single color for the whole network — polarity is shown via line style (solid/dashed), not a second color. */
+  color: string
 }
 
 export interface GridInstance {
@@ -52,10 +54,13 @@ export interface GridInstance {
 
 export type GridLineFamily = 'axis-a' | 'axis-b'
 
+export type GridLinePolarity = '+' | '-'
+
 export interface GridLine {
   id: string
   gridInstanceId: string
   family: GridLineFamily
+  polarity: GridLinePolarity
   theoreticalPoints: Point[]
   adjustedPoints: Point[]
 }

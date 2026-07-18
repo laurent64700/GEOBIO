@@ -1,9 +1,10 @@
 import { supabase } from '../lib/supabaseClient'
-import type { GridLine, GridLineFamily, Point } from '../domain/types'
+import type { GridLine, GridLineFamily, GridLinePolarity, Point } from '../domain/types'
 
 export interface CreateGridLineInput {
   gridInstanceId: string
   family: GridLineFamily
+  polarity: GridLinePolarity
   theoreticalPoints: Point[]
 }
 
@@ -11,6 +12,7 @@ interface GridLineRow {
   id: string
   grid_instance_id: string
   family: GridLineFamily
+  polarity: GridLinePolarity
   theoretical_points: Point[]
   adjusted_points: Point[]
 }
@@ -20,6 +22,7 @@ function mapRowToGridLine(row: GridLineRow): GridLine {
     id: row.id,
     gridInstanceId: row.grid_instance_id,
     family: row.family,
+    polarity: row.polarity,
     theoreticalPoints: row.theoretical_points,
     adjustedPoints: row.adjusted_points,
   }
@@ -32,6 +35,7 @@ export async function createGridLines(inputs: CreateGridLineInput[]): Promise<Gr
       inputs.map((i) => ({
         grid_instance_id: i.gridInstanceId,
         family: i.family,
+        polarity: i.polarity,
         theoretical_points: i.theoreticalPoints,
         adjusted_points: i.theoreticalPoints,
       }))

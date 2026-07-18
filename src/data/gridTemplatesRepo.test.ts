@@ -12,7 +12,7 @@ describe('gridTemplatesRepo', () => {
     const { from, chain } = createSupabaseChainMock({
       data: {
         id: 't1', name: 'Curry', spacing_x_m: 2, spacing_y_m: 2,
-        angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0,
+        angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0, color: '#52a675',
       },
       error: null,
     })
@@ -20,13 +20,13 @@ describe('gridTemplatesRepo', () => {
 
     const template = await createGridTemplate({
       name: 'Curry', spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45,
-      originOffsetX: 0, originOffsetY: 0,
+      originOffsetX: 0, originOffsetY: 0, color: '#52a675',
     })
 
     expect(from).toHaveBeenCalledWith('grid_template')
     expect(chain.insert).toHaveBeenCalledWith({
       name: 'Curry', spacing_x_m: 2, spacing_y_m: 2,
-      angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0,
+      angle_true_north_deg: 45, origin_offset_x: 0, origin_offset_y: 0, color: '#52a675',
     })
     expect(template.name).toBe('Curry')
   })
@@ -34,7 +34,7 @@ describe('gridTemplatesRepo', () => {
   it('lists all grid templates', async () => {
     const { from } = createSupabaseChainMock({
       data: [
-        { id: 't0', name: 'Hartmann', spacing_x_m: 2, spacing_y_m: 2.5, angle_true_north_deg: 0, origin_offset_x: 0, origin_offset_y: 0 },
+        { id: 't0', name: 'Hartmann', spacing_x_m: 2, spacing_y_m: 2.5, angle_true_north_deg: 0, origin_offset_x: 0, origin_offset_y: 0, color: '#d32f2f' },
       ],
       error: null,
     })
@@ -50,7 +50,7 @@ describe('gridTemplatesRepo', () => {
     vi.mocked(supabase).from = from
 
     await expect(
-      createGridTemplate({ name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0 })
+      createGridTemplate({ name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f' })
     ).rejects.toThrow('Impossible de créer le gabarit de grille : duplicate key value')
   })
 })

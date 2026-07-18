@@ -12,6 +12,7 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
   const [spacingXM, setSpacingXM] = useState('')
   const [spacingYM, setSpacingYM] = useState('')
   const [angleTrueNorthDeg, setAngleTrueNorthDeg] = useState('')
+  const [color, setColor] = useState('#888888')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
         angleTrueNorthDeg: Number(angleTrueNorthDeg),
         originOffsetX: 0,
         originOffsetY: 0,
+        color,
       })
       onSelected(template)
     } catch (err) {
@@ -78,6 +80,10 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
             type="number" step="0.1" value={angleTrueNorthDeg}
             onChange={(e) => setAngleTrueNorthDeg(e.target.value)} required
           />
+        </label>
+        <label>
+          Couleur
+          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
         </label>
         <button type="submit">Créer le gabarit</button>
       </form>

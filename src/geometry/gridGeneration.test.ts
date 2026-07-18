@@ -77,4 +77,17 @@ describe('generateTheoreticalLines', () => {
     expect(Math.abs(central!.points[0].y)).toBeCloseTo(3)
     expect(central!.points[0].x).toBeCloseTo(central!.points[0].y)
   })
+
+  it('assigns alternating polarity by grid line index (theoretical convention, not a field measurement)', () => {
+    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0 }
+    const origin = { x: 0, y: 0 }
+    const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
+    const lines = generateTheoreticalLines(template, origin, bounds)
+
+    const axisA = lines.filter((l) => l.family === 'axis-a')
+    const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)!
+    const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)!
+    expect(central.polarity).toBe('+')
+    expect(nextOver.polarity).toBe('-')
+  })
 })

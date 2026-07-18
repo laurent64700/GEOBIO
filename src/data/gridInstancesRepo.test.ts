@@ -7,7 +7,7 @@ vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 
 const hartmann = {
   id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
-  angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0,
+  angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f',
 }
 
 describe('gridInstancesRepo', () => {

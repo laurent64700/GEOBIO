@@ -45,6 +45,7 @@ export async function createGridForPlan(
     generated.map((l) => ({
       gridInstanceId: instance.id,
       family: l.family,
+      polarity: l.polarity,
       theoreticalPoints: l.points,
     }))
   )

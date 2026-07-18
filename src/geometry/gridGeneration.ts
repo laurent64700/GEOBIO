@@ -54,6 +54,14 @@ export function clipLineToBounds(
 
 export interface GeneratedLine {
   family: GridLineFamily
+  /**
+   * Alternates by grid index (even = '+', odd = '-') — this is the network's
+   * deterministic theoretical polarity pattern (confirmed for this family of
+   * rectangular networks: a fixed checkerboard alternation), not something
+   * measured in the field. Laurent's felt-line adjustment (§6.2) can still
+   * override it per line once GridLine editing (Chunk 6) exists.
+   */
+  polarity: '+' | '-'
   points: [Point, Point]
 }
 
@@ -100,7 +108,7 @@ export function generateTheoreticalLines(
       y: origin.y + k * template.spacingYM * perpDir.y,
     }
     const clipped = clipLineToBounds(linePoint, primaryDir, bounds)
-    if (clipped) lines.push({ family: 'axis-a', points: clipped })
+    if (clipped) lines.push({ family: 'axis-a', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
   }
 
   const offsetB = maxOffsetIndexNeeded(origin, template.spacingXM, bounds)
@@ -110,7 +118,7 @@ export function generateTheoreticalLines(
       y: origin.y + k * template.spacingXM * primaryDir.y,
     }
     const clipped = clipLineToBounds(linePoint, perpDir, bounds)
-    if (clipped) lines.push({ family: 'axis-b', points: clipped })
+    if (clipped) lines.push({ family: 'axis-b', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
   }
 
   return lines

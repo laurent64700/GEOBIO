@@ -8,6 +8,7 @@ export interface CreateGridTemplateInput {
   angleTrueNorthDeg: number
   originOffsetX: number
   originOffsetY: number
+  color: string
 }
 
 interface GridTemplateRow {
@@ -18,6 +19,7 @@ interface GridTemplateRow {
   angle_true_north_deg: number
   origin_offset_x: number
   origin_offset_y: number
+  color: string
 }
 
 function mapRowToGridTemplate(row: GridTemplateRow): GridTemplate {
@@ -29,6 +31,7 @@ function mapRowToGridTemplate(row: GridTemplateRow): GridTemplate {
     angleTrueNorthDeg: row.angle_true_north_deg,
     originOffsetX: row.origin_offset_x,
     originOffsetY: row.origin_offset_y,
+    color: row.color,
   }
 }
 
@@ -42,6 +45,7 @@ export async function createGridTemplate(input: CreateGridTemplateInput): Promis
       angle_true_north_deg: input.angleTrueNorthDeg,
       origin_offset_x: input.originOffsetX,
       origin_offset_y: input.originOffsetY,
+      color: input.color,
     })
     .select()
     .single()
