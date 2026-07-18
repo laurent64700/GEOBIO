@@ -2,12 +2,13 @@
 import { useState } from 'react'
 import { MissionForm } from '../components/MissionForm'
 import { MapView } from '../components/MapView'
+import { SiteMapView } from '../components/SiteMapView'
 import { PlanCalibrationTool } from '../components/PlanCalibrationTool'
 import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
-import type { AffineTransform, Mission } from '../domain/types'
+import type { AffineTransform, Mission, Plan } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
 
 // Rough center of metropolitan France — a placeholder until a mission's address
@@ -26,10 +27,10 @@ const MAP_WRAPPER_STYLE = { height: 400 }
 type WorkspacePhase =
   | { name: 'creating-mission' }
   | { name: 'creating-exterior-plan'; mission: Mission }
-  | { name: 'global-assessment'; mission: Mission }
-  | { name: 'setting-origin'; mission: Mission }
-  | { name: 'ready-no-interior'; mission: Mission }
-  | { name: 'calibrating-interior'; mission: Mission; imageUrl: string }
+  | { name: 'global-assessment'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'setting-origin'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'ready-no-interior'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'calibrating-interior'; mission: Mission; exteriorPlan: Plan; imageUrl: string }
   | { name: 'error'; message: string }
 
 function messageOf(err: unknown): string {
@@ -42,8 +43,8 @@ export function MissionWorkspace() {
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })
     try {
-      await createPlan({ missionId: mission.id, kind: 'exterieur' })
-      setPhase({ name: 'global-assessment', mission })
+      const exteriorPlan = await createPlan({ missionId: mission.id, kind: 'exterieur' })
+      setPhase({ name: 'global-assessment', mission, exteriorPlan })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -53,7 +54,7 @@ export function MissionWorkspace() {
     if (phase.name !== 'global-assessment') return
     try {
       const updated = await setGlobalAssessment(phase.mission.id, input)
-      setPhase({ name: 'setting-origin', mission: updated })
+      setPhase({ name: 'setting-origin', mission: updated, exteriorPlan: phase.exteriorPlan })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -63,7 +64,7 @@ export function MissionWorkspace() {
     if (phase.name !== 'setting-origin') return
     try {
       const updated = await setMissionOrigin(phase.mission.id, latlng)
-      setPhase({ name: 'ready-no-interior', mission: updated })
+      setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -73,7 +74,12 @@ export function MissionWorkspace() {
     if (phase.name !== 'ready-no-interior') return
     try {
       const url = await uploadPlanImage(phase.mission.id, file)
-      setPhase({ name: 'calibrating-interior', mission: phase.mission, imageUrl: url })
+      setPhase({
+        name: 'calibrating-interior',
+        mission: phase.mission,
+        exteriorPlan: phase.exteriorPlan,
+        imageUrl: url,
+      })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -90,7 +96,7 @@ export function MissionWorkspace() {
       })
       // Back to the map view — Plan 1 doesn't yet render the calibrated
       // overlay visually (see this task's scope note).
-      setPhase({ name: 'ready-no-interior', mission: phase.mission })
+      setPhase({ name: 'ready-no-interior', mission: phase.mission, exteriorPlan: phase.exteriorPlan })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -125,7 +131,10 @@ export function MissionWorkspace() {
       return (
         <div>
           <div style={MAP_WRAPPER_STYLE}>
-            <MapView center={[originLat!, originLng!]} />
+            <SiteMapView
+              planId={phase.exteriorPlan.id}
+              missionOrigin={{ lat: originLat!, lng: originLng! }}
+            />
           </div>
           <label>
             Importer un plan intérieur (optionnel)

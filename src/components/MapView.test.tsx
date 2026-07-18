@@ -27,4 +27,13 @@ describe('MapView', () => {
     expect(Number.isFinite(lat)).toBe(true)
     expect(Number.isFinite(lng)).toBe(true)
   })
+
+  it('renders children inside the map container', () => {
+    render(
+      <MapView center={[48.8566, 2.3522]}>
+        <div data-testid="child-layer" />
+      </MapView>
+    )
+    expect(screen.getByTestId('child-layer')).toBeInTheDocument()
+  })
 })

@@ -38,6 +38,10 @@ vi.mock('../components/MapView', () => ({
   ),
 }))
 
+vi.mock('../components/SiteMapView', () => ({
+  SiteMapView: () => <div data-testid="site-map-view" />,
+}))
+
 vi.mock('../components/PlanCalibrationTool', () => ({
   PlanCalibrationTool: ({ onCalibrated }: { onCalibrated: (c: unknown) => void }) => (
     <button onClick={() => onCalibrated({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })}>
@@ -125,7 +129,7 @@ describe('MissionWorkspace', () => {
     await waitFor(() =>
       expect(missionsRepo.setMissionOrigin).toHaveBeenCalledWith('m1', { lat: 48.8566, lng: 2.3522 })
     )
-    expect(await screen.findByTestId('map-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('site-map-view')).toBeInTheDocument()
     expect(screen.getByLabelText(/importer un plan intérieur/i)).toBeInTheDocument()
   })
 
@@ -174,7 +178,7 @@ describe('MissionWorkspace', () => {
         calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
       })
     )
-    expect(await screen.findByTestId('map-view')).toBeInTheDocument()
+    expect(await screen.findByTestId('site-map-view')).toBeInTheDocument()
   })
 
   it('shows the global assessment form after the exterior plan, then proceeds to origin-setting', async () => {

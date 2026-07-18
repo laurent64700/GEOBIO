@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -25,13 +26,15 @@ export interface MapViewProps {
   center: [number, number]
   zoom?: number
   onMapClick?: (latlng: { lat: number; lng: number }) => void
+  children?: ReactNode
 }
 
-export function MapView({ center, zoom = 18, onMapClick }: MapViewProps) {
+export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProps) {
   return (
     <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
       <TileLayer url={IGN_ORTHOPHOTO_WMTS_URL} attribution="&copy; IGN-F/Géoportail" maxZoom={20} />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}
+      {children}
     </MapContainer>
   )
 }
