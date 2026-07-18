@@ -6,10 +6,12 @@ import { FeltPointsLayer } from './FeltPointsLayer'
 import { GuideLineLayer } from './GuideLineLayer'
 import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
 import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
+import { GridCreationPanel } from './GridCreationPanel'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
-import type { GridInstance, GridLine, FeltPoint, Point } from '../domain/types'
+import { createGridForPlan } from '../domain/createGridForPlan'
+import type { GridInstance, GridLine, FeltPoint, Point, GridTemplate, GridLinePolarity } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
@@ -61,6 +63,40 @@ const ORTHOGONALITY_PANEL_STYLE = {
   borderRadius: 4,
 }
 
+// Task 33 (GridCreationPanel) needs a corner too, but all four are already
+// spoken for (LayerPanel top-right, guide-line controls top-left, edit-mode
+// controls bottom-left, orthogonality panel bottom-right). Rather than invent
+// a fifth ad hoc position or render it unpositioned (which would repeat the
+// flow-collapse bug this file has hit before — see LayerPanel's PANEL_STYLE
+// comment), GridCreationPanel is stacked into the existing top-right corner
+// underneath LayerPanel: the two are not needed at the same instant in the
+// field workflow (toggling layer visibility vs. creating a new grid), and
+// this single absolutely-positioned flex column lets each card be whatever
+// height its own content needs — LayerPanel grows with the number of grid
+// layers, GridCreationPanel grows as it steps through
+// collapsed/picking-template/awaiting-origin/awaiting-polarity — without
+// either one having to guess the other's height via hardcoded offsets.
+const TOP_RIGHT_STACK_STYLE = {
+  position: 'absolute' as const,
+  top: 8,
+  right: 8,
+  zIndex: 1000,
+  display: 'flex' as const,
+  flexDirection: 'column' as const,
+  gap: 8,
+  alignItems: 'flex-end' as const,
+}
+
+// GridCreationPanel (unlike LayerPanel) renders bare buttons/paragraphs with
+// no chrome of its own, since GridCreationPanel.tsx is shared with its own
+// unit tests that don't care about styling. This wrapper gives it the same
+// white-card look as every other overlay panel in this file.
+const GRID_CREATION_WRAPPER_STYLE = {
+  background: 'white',
+  padding: 8,
+  borderRadius: 4,
+}
+
 export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
@@ -85,6 +121,12 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   // knows which line to preview/offer straightening for. Cleared on accept
   // or dismiss.
   const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
+  // Grid-origin placement (Task 33): mutually exclusive with placingGuideLine
+  // below, since both modes want MapView's single onMapClick slot. See
+  // handleGridOriginRequested, the "Placer ici" button, and handleMapClick
+  // for how that exclusivity is actively enforced rather than assumed.
+  const [pendingGridOrigin, setPendingGridOrigin] = useState<Point | null>(null)
+  const [awaitingGridOrigin, setAwaitingGridOrigin] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -111,6 +153,45 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   function handleGuideLineMapClick(latlng: { lat: number; lng: number }) {
     setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
     setPlacingGuideLine(false)
+  }
+
+  // Starting one map-click mode must actively cancel the other — leaving the
+  // opposite flag untouched would let both end up true at once, and a stale
+  // flag could silently consume a later, unrelated click. Both directions are
+  // explicit: this cancels placingGuideLine, and the "Placer ici" button
+  // below cancels awaitingGridOrigin.
+  function handleGridOriginRequested() {
+    setAwaitingGridOrigin(true)
+    setPendingGridOrigin(null)
+    setPlacingGuideLine(false)
+  }
+
+  async function handleGenerateGrid(template: GridTemplate, origin: Point, polarity: GridLinePolarity) {
+    try {
+      const { instance, lines } = await createGridForPlan(planId, template, origin, polarity)
+      setInstances((prev) => [...prev, instance])
+      setLinesByInstance((prev) => ({ ...prev, [instance.id]: lines }))
+      setAwaitingGridOrigin(false)
+      setPendingGridOrigin(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Single MapView onMapClick dispatcher: dispatches by whichever mode is
+  // active. Because both "start" handlers (handleGridOriginRequested above,
+  // and the "Placer ici" button below) clear the other flag,
+  // awaitingGridOrigin and placingGuideLine are genuinely mutually exclusive
+  // at every point in time, not just in the common case.
+  function handleMapClick(latlng: { lat: number; lng: number }) {
+    if (awaitingGridOrigin) {
+      setPendingGridOrigin(latLngToLocal(latlng, missionOrigin))
+      setAwaitingGridOrigin(false)
+      return
+    }
+    if (placingGuideLine) {
+      handleGuideLineMapClick(latlng)
+    }
   }
 
   function handleClearGuideLine() {
@@ -210,7 +291,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MapView
         center={[missionOrigin.lat, missionOrigin.lng]}
-        onMapClick={placingGuideLine ? handleGuideLineMapClick : undefined}
+        onMapClick={awaitingGridOrigin || placingGuideLine ? handleMapClick : undefined}
       >
         <FeltPointsLayer
           points={feltPoints}
@@ -252,7 +333,19 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           />
         )}
       </MapView>
-      <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
+      {/* Top-right (absolute) — see TOP_RIGHT_STACK_STYLE above for why
+          LayerPanel and GridCreationPanel share this corner instead of each
+          claiming one of their own. */}
+      <div style={TOP_RIGHT_STACK_STYLE}>
+        <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
+        <div style={GRID_CREATION_WRAPPER_STYLE}>
+          <GridCreationPanel
+            pendingOrigin={pendingGridOrigin}
+            onOriginRequested={handleGridOriginRequested}
+            onGenerate={handleGenerateGrid}
+          />
+        </div>
+      </div>
       {/* Positioned top-left (absolute), mirroring LayerPanel's top-right
           treatment, for the same reason documented on LayerPanel's
           PANEL_STYLE: SiteMapView's wrapping div is position: relative with a
@@ -301,7 +394,13 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           onChange={(e) => setCustomBearingInput(e.target.value)}
         />
         <button onClick={handleValidateCustomBearing}>Valider</button>
-        <button onClick={() => setPlacingGuideLine(true)} disabled={guideLineBearing === null}>
+        <button
+          onClick={() => {
+            setPlacingGuideLine(true)
+            setAwaitingGridOrigin(false)
+          }}
+          disabled={guideLineBearing === null}
+        >
           Placer ici
         </button>
         <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>

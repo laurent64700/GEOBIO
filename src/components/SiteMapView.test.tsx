@@ -4,6 +4,7 @@ import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
+import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
 vi.mock('../data/gridInstancesRepo')
@@ -39,6 +40,31 @@ vi.mock('./EditableNetworkLine', () => ({
     <button onClick={() => onChanged({ ...line, adjustedPoints: [{ x: 0, y: -10 }, { x: 1, y: 10 }] })}>
       simulate-line-change-{line.id}
     </button>
+  ),
+}))
+
+// vi.mock(...) calls are hoisted above every import AND above the file's own
+// top-level `const hartmannInstance = {...}` below — a factory that closes
+// over `hartmannInstance` directly would throw "Cannot access
+// 'hartmannInstance' before initialization" the moment this file loads.
+// vi.hoisted(...) exists exactly for this: it runs its callback at the same
+// hoisted position as vi.mock, so the value is safe to reference inside the
+// factory below.
+const { mockHartmannInstance } = vi.hoisted(() => ({
+  mockHartmannInstance: {
+    id: 'gi1', planId: 'p1',
+    templateSnapshot: {
+      id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0,
+      originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7,
+    },
+    originX: 0, originY: 0,
+  },
+}))
+
+vi.mock('../domain/createGridForPlan')
+vi.mock('./GridTemplatePicker', () => ({
+  GridTemplatePicker: ({ onSelected }: { onSelected: (t: unknown) => void }) => (
+    <button onClick={() => onSelected(mockHartmannInstance.templateSnapshot)}>simulate-select-hartmann</button>
   ),
 }))
 
@@ -296,5 +322,74 @@ describe('SiteMapView', () => {
     // but that the function's own output is the mathematically correct one.
     expect(persistedPoints[0].x).toBeCloseTo(0.5)
     expect(persistedPoints[1].x).toBeCloseTo(0.5)
+  })
+
+  it('creates a grid end-to-end: pick template, click origin, set polarity, generate', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({
+      instance: mockHartmannInstance,
+      lines: [],
+    })
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    fireEvent.click(await screen.findByRole('button', { name: '+' }))
+    fireEvent.click(screen.getByRole('button', { name: /générer/i }))
+
+    await waitFor(() =>
+      expect(createGridForPlan).toHaveBeenCalledWith(
+        'p1',
+        mockHartmannInstance.templateSnapshot,
+        expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+        '+'
+      )
+    )
+  })
+
+  it('does not let an in-progress guide-line placement leak into a grid-origin click, or vice versa', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({
+      instance: mockHartmannInstance,
+      lines: [],
+    })
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    // Arm the guide-line tool (bearing selected, "Placer ici" pressed) —
+    // onMapClick is now wired up for the guide-line mode.
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+
+    // Starting grid-origin placement must cancel the guide-line mode instead
+    // of letting both flags be true — this is exactly the race the plan
+    // calls out (handleGridOriginRequested clearing placingGuideLine).
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    // The click should have been consumed as the grid origin (polarity toggle
+    // appears), not as a guide-line placement (no guide-line layer rendered).
+    expect(await screen.findByRole('button', { name: '+' })).toBeInTheDocument()
+    expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
+
+    // Symmetrically: re-arming the guide-line tool after a grid origin is
+    // pending must cancel the grid-origin wait, so a subsequent click is
+    // consumed as the guide-line anchor, not silently mis-set as an origin.
+    fireEvent.click(screen.getByRole('button', { name: '+' }))
+    fireEvent.click(screen.getByRole('button', { name: /générer/i }))
+    await waitFor(() => expect(createGridForPlan).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
   })
 })

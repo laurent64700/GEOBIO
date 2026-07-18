@@ -12,18 +12,17 @@ export interface LayerPanelProps {
   onToggle: (id: string) => void
 }
 
-// Positioned absolutely so this panel overlays SiteMapView's map (which has
-// position: relative and a fixed-height wrapper) instead of flowing below it
-// in normal document flow — the map box doesn't grow to fit its siblings, so
-// an unpositioned panel would spill out of the visible map area and overlap
-// whatever renders after SiteMapView in the parent (e.g. MissionWorkspace's
-// "Importer un plan intérieur" label). zIndex 1000 matches Leaflet's own
-// control convention as a reasonable default for "above the map."
+// This card no longer positions itself (no position/top/right/zIndex): as of
+// Task 33, SiteMapView stacks it in a flex column together with
+// GridCreationPanel in the shared top-right corner (see TOP_RIGHT_STACK_STYLE
+// in SiteMapView.tsx). Positioning both cards absolutely and independently
+// would either overlap (if their offsets don't account for each other's
+// dynamic height — this panel grows with the number of grid layers) or
+// require fragile hardcoded pixel math. Letting the shared flex container
+// handle placement means the two cards simply stack, however tall either
+// gets. Background/padding/radius stay here since they're this card's own
+// visual chrome regardless of who positions it.
 const PANEL_STYLE = {
-  position: 'absolute' as const,
-  top: 8,
-  right: 8,
-  zIndex: 1000,
   background: 'white',
   padding: 8,
   borderRadius: 4,
