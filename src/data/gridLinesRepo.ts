@@ -55,3 +55,15 @@ export async function listGridLinesForInstance(gridInstanceId: string): Promise<
   if (error) throw new Error(`Impossible de charger les lignes de grille : ${error.message}`)
   return (data as GridLineRow[]).map(mapRowToGridLine)
 }
+
+export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point[]): Promise<GridLine> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .update({ adjusted_points: adjustedPoints })
+    .eq('id', lineId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de mettre à jour la ligne : ${error.message}`)
+  return mapRowToGridLine(data as GridLineRow)
+}
