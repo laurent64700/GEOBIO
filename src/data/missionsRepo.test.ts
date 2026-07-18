@@ -1,6 +1,6 @@
 // src/data/missionsRepo.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMission, listMissions, setMissionOrigin, setGlobalAssessment } from './missionsRepo'
+import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels } from './missionsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -26,6 +26,7 @@ describe('missionsRepo', () => {
         cause_paranormale: null,
         cause_autres: null,
         bovis_rate: null,
+        parcel_refs: [],
       },
       error: null,
     })
@@ -56,6 +57,7 @@ describe('missionsRepo', () => {
       causeParanormale: null,
       causeAutres: null,
       bovisRate: null,
+      parcelRefs: [],
     })
   })
 
@@ -71,8 +73,8 @@ describe('missionsRepo', () => {
   it('lists missions ordered by most recent date first', async () => {
     const { from, chain } = createSupabaseChainMock({
       data: [
-        { id: 'm2', address: 'B', mission_date: '2026-07-21', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null },
-        { id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null },
+        { id: 'm2', address: 'B', mission_date: '2026-07-21', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [] },
+        { id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [] },
       ],
       error: null,
     })
@@ -100,6 +102,7 @@ describe('missionsRepo', () => {
         cause_paranormale: null,
         cause_autres: null,
         bovis_rate: null,
+        parcel_refs: [],
       },
       error: null,
     })
@@ -119,7 +122,7 @@ describe('missionsRepo', () => {
         id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null,
         origin_lat: null, origin_lng: null,
         cause_architectural: 3, cause_electromagnetique: 6, cause_geobiologique: 8,
-        cause_paranormale: 1, cause_autres: 0, bovis_rate: 9500,
+        cause_paranormale: 1, cause_autres: 0, bovis_rate: 9500, parcel_refs: [],
       },
       error: null,
     })
@@ -154,5 +157,35 @@ describe('missionsRepo', () => {
         causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
       })
     ).rejects.toThrow("Impossible d'enregistrer les mesures globales : network down")
+  })
+
+  it('sets the selected parcels and maps them back', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null,
+        origin_lat: null, origin_lng: null,
+        cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null,
+        cause_paranormale: null, cause_autres: null, bovis_rate: null,
+        parcel_refs: ['AB1167', 'AB1168'],
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const mission = await setSelectedParcels('m1', ['AB1167', 'AB1168'])
+
+    expect(from).toHaveBeenCalledWith('mission')
+    expect(chain.update).toHaveBeenCalledWith({ parcel_refs: ['AB1167', 'AB1168'] })
+    expect(chain.eq).toHaveBeenCalledWith('id', 'm1')
+    expect(mission.parcelRefs).toEqual(['AB1167', 'AB1168'])
+  })
+
+  it('throws a descriptive French error when setting selected parcels fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(setSelectedParcels('m1', ['AB1167'])).rejects.toThrow(
+      "Impossible d'enregistrer les parcelles sélectionnées : network down"
+    )
   })
 })

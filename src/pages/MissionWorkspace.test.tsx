@@ -20,6 +20,7 @@ vi.mock('../components/MissionForm', async () => {
           originLat: null, originLng: null,
           causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
           causeParanormale: null, causeAutres: null, bovisRate: null,
+          parcelRefs: [],
         })
       }, [onCreated])
       return null
@@ -65,6 +66,7 @@ const missionWithOrigin = {
   originLat: 48.8566, originLng: 2.3522,
   causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
   causeParanormale: null, causeAutres: null, bovisRate: null,
+  parcelRefs: [],
 }
 
 // The mission as returned by setGlobalAssessment: causes/Bovis populated,
@@ -74,6 +76,7 @@ const missionAfterGlobalAssessment = {
   originLat: null, originLng: null,
   causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
   causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+  parcelRefs: [],
 }
 
 // Common setup shared by every test whose flow needs to get past the

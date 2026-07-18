@@ -21,6 +21,7 @@ interface MissionRow {
   cause_paranormale: number | null
   cause_autres: number | null
   bovis_rate: number | null
+  parcel_refs: string[]
 }
 
 function mapRowToMission(row: MissionRow): Mission {
@@ -37,6 +38,7 @@ function mapRowToMission(row: MissionRow): Mission {
     causeParanormale: row.cause_paranormale,
     causeAutres: row.cause_autres,
     bovisRate: row.bovis_rate,
+    parcelRefs: row.parcel_refs,
   }
 }
 
@@ -108,5 +110,17 @@ export async function setGlobalAssessment(
     .single()
 
   if (error) throw new Error(`Impossible d'enregistrer les mesures globales : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+
+export async function setSelectedParcels(missionId: string, parcelRefs: string[]): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({ parcel_refs: parcelRefs })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer les parcelles sélectionnées : ${error.message}`)
   return mapRowToMission(data as MissionRow)
 }

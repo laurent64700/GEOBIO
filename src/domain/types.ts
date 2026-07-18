@@ -26,6 +26,7 @@ export interface Mission {
   causeParanormale: number | null
   causeAutres: number | null
   bovisRate: number | null
+  parcelRefs: string[]
 }
 
 export type PlanKind = 'exterieur' | 'interieur'
