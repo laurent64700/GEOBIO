@@ -10,6 +10,7 @@ vi.mock('../data/gridLinesRepo')
 const hartmann = {
   id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
   angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f',
+  vibratoryBase: 7,
 }
 
 describe('createGridForPlan', () => {
@@ -24,6 +25,7 @@ describe('createGridForPlan', () => {
           gridInstanceId: i.gridInstanceId,
           family: i.family,
           polarity: i.polarity,
+          reinforced: i.reinforced,
           theoreticalPoints: i.theoreticalPoints,
           adjustedPoints: i.theoreticalPoints,
         })

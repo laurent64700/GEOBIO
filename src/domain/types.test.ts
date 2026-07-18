@@ -14,6 +14,7 @@ describe('domain types', () => {
       gridInstanceId: '1',
       family: 'axis-a',
       polarity: '+',
+      reinforced: false,
       theoreticalPoints: [{ x: 0, y: 0 }, { x: 10, y: 0 }],
       adjustedPoints: [{ x: 0, y: 0 }, { x: 10, y: 0.3 }],
     }
@@ -30,6 +31,7 @@ describe('domain types', () => {
       originOffsetX: 0,
       originOffsetY: 0,
       color: '#d32f2f',
+      vibratoryBase: 7,
     }
     expect(template.spacingXM).toBe(2)
   })

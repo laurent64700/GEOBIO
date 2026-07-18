@@ -11,7 +11,7 @@ describe('gridLinesRepo', () => {
   it('bulk-creates grid lines with adjustedPoints initialized to theoreticalPoints', async () => {
     const rows = [
       {
-        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+',
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
         theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
         adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
       },
@@ -20,13 +20,13 @@ describe('gridLinesRepo', () => {
     vi.mocked(supabase).from = from
 
     const lines = await createGridLines([
-      { gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
+      { gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: true, theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
     ])
 
     expect(from).toHaveBeenCalledWith('grid_line')
     expect(chain.insert).toHaveBeenCalledWith([
       {
-        grid_instance_id: 'gi1', family: 'axis-a', polarity: '+',
+        grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
         theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
         adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
       },

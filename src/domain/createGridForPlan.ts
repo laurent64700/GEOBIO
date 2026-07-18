@@ -46,6 +46,7 @@ export async function createGridForPlan(
       gridInstanceId: instance.id,
       family: l.family,
       polarity: l.polarity,
+      reinforced: l.reinforced,
       theoreticalPoints: l.points,
     }))
   )

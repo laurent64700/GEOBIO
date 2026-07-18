@@ -13,6 +13,7 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
   const [spacingYM, setSpacingYM] = useState('')
   const [angleTrueNorthDeg, setAngleTrueNorthDeg] = useState('')
   const [color, setColor] = useState('#888888')
+  const [vibratoryBase, setVibratoryBase] = useState('7')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
         originOffsetX: 0,
         originOffsetY: 0,
         color,
+        vibratoryBase: Number(vibratoryBase),
       })
       onSelected(template)
     } catch (err) {
@@ -84,6 +86,13 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
         <label>
           Couleur
           <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+        </label>
+        <label>
+          Base vibratoire
+          <input
+            type="number" step="1" min="1" value={vibratoryBase}
+            onChange={(e) => setVibratoryBase(e.target.value)} required
+          />
         </label>
         <button type="submit">Créer le gabarit</button>
       </form>

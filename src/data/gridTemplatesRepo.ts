@@ -9,6 +9,7 @@ export interface CreateGridTemplateInput {
   originOffsetX: number
   originOffsetY: number
   color: string
+  vibratoryBase: number
 }
 
 interface GridTemplateRow {
@@ -20,6 +21,7 @@ interface GridTemplateRow {
   origin_offset_x: number
   origin_offset_y: number
   color: string
+  vibratory_base: number
 }
 
 function mapRowToGridTemplate(row: GridTemplateRow): GridTemplate {
@@ -32,6 +34,7 @@ function mapRowToGridTemplate(row: GridTemplateRow): GridTemplate {
     originOffsetX: row.origin_offset_x,
     originOffsetY: row.origin_offset_y,
     color: row.color,
+    vibratoryBase: row.vibratory_base,
   }
 }
 
@@ -46,6 +49,7 @@ export async function createGridTemplate(input: CreateGridTemplateInput): Promis
       origin_offset_x: input.originOffsetX,
       origin_offset_y: input.originOffsetY,
       color: input.color,
+      vibratory_base: input.vibratoryBase,
     })
     .select()
     .single()

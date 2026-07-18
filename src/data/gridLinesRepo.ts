@@ -5,6 +5,7 @@ export interface CreateGridLineInput {
   gridInstanceId: string
   family: GridLineFamily
   polarity: GridLinePolarity
+  reinforced: boolean
   theoreticalPoints: Point[]
 }
 
@@ -13,6 +14,7 @@ interface GridLineRow {
   grid_instance_id: string
   family: GridLineFamily
   polarity: GridLinePolarity
+  reinforced: boolean
   theoretical_points: Point[]
   adjusted_points: Point[]
 }
@@ -23,6 +25,7 @@ function mapRowToGridLine(row: GridLineRow): GridLine {
     gridInstanceId: row.grid_instance_id,
     family: row.family,
     polarity: row.polarity,
+    reinforced: row.reinforced,
     theoreticalPoints: row.theoretical_points,
     adjustedPoints: row.adjusted_points,
   }
@@ -36,6 +39,7 @@ export async function createGridLines(inputs: CreateGridLineInput[]): Promise<Gr
         grid_instance_id: i.gridInstanceId,
         family: i.family,
         polarity: i.polarity,
+        reinforced: i.reinforced,
         theoretical_points: i.theoreticalPoints,
         adjusted_points: i.theoreticalPoints,
       }))

@@ -37,7 +37,7 @@ describe('clipLineToBounds', () => {
 
 describe('generateTheoreticalLines', () => {
   it('generates axis-a and axis-b line families covering the bounds', () => {
-    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0 }
+    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
 
@@ -55,7 +55,7 @@ describe('generateTheoreticalLines', () => {
   })
 
   it('rotates both families together when angleTrueNorthDeg is set (Curry-style 45°)', () => {
-    const template = { spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45 }
+    const template = { spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45, vibratoryBase: 7 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
 
@@ -79,7 +79,7 @@ describe('generateTheoreticalLines', () => {
   })
 
   it('assigns alternating polarity by grid line index (theoretical convention, not a field measurement)', () => {
-    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0 }
+    const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
     const lines = generateTheoreticalLines(template, origin, bounds)
@@ -89,5 +89,21 @@ describe('generateTheoreticalLines', () => {
     const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)!
     expect(central.polarity).toBe('+')
     expect(nextOver.polarity).toBe('-')
+  })
+
+  it('marks every vibratoryBase-th line as reinforced, starting from the central (k=0) line', () => {
+    const template = { spacingXM: 2, spacingYM: 1, angleTrueNorthDeg: 0, vibratoryBase: 3 }
+    const origin = { x: 0, y: 0 }
+    const bounds = { minX: -3.5, maxX: 3.5, minY: -3.5, maxY: 3.5 }
+    const lines = generateTheoreticalLines(template, origin, bounds)
+
+    const axisA = lines.filter((l) => l.family === 'axis-a')
+    const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
+    const kThree = axisA.find((l) => Math.abs(l.points[0].x - 3) < 1e-9)! // k=3, spacingYM=1
+    const kOne = axisA.find((l) => Math.abs(l.points[0].x - 1) < 1e-9)! // k=1
+
+    expect(central.reinforced).toBe(true) // k=0 is a multiple of 3
+    expect(kThree.reinforced).toBe(true) // k=3 is a multiple of 3
+    expect(kOne.reinforced).toBe(false) // k=1 is not
   })
 })

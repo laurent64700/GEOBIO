@@ -8,6 +8,7 @@ vi.mock('../data/gridTemplatesRepo')
 const hartmann = {
   id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
   angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f',
+  vibratoryBase: 7,
 }
 
 describe('GridTemplatePicker', () => {
@@ -29,6 +30,7 @@ describe('GridTemplatePicker', () => {
     const curry = {
       id: 't1', name: 'Curry', spacingXM: 2, spacingYM: 2,
       angleTrueNorthDeg: 45, originOffsetX: 0, originOffsetY: 0, color: '#52a675',
+      vibratoryBase: 5,
     }
     vi.mocked(gridTemplatesRepo.createGridTemplate).mockResolvedValue(curry)
     const onSelected = vi.fn()
@@ -41,12 +43,13 @@ describe('GridTemplatePicker', () => {
     fireEvent.change(screen.getByLabelText(/espacement y/i), { target: { value: '2' } })
     fireEvent.change(screen.getByLabelText(/angle/i), { target: { value: '45' } })
     fireEvent.change(screen.getByLabelText('Couleur'), { target: { value: '#52a675' } })
+    fireEvent.change(screen.getByLabelText(/base vibratoire/i), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('button', { name: /créer le gabarit/i }))
 
     await waitFor(() =>
       expect(gridTemplatesRepo.createGridTemplate).toHaveBeenCalledWith({
         name: 'Curry', spacingXM: 2, spacingYM: 2, angleTrueNorthDeg: 45,
-        originOffsetX: 0, originOffsetY: 0, color: '#52a675',
+        originOffsetX: 0, originOffsetY: 0, color: '#52a675', vibratoryBase: 5,
       })
     )
     expect(onSelected).toHaveBeenCalledWith(curry)

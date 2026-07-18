@@ -62,6 +62,8 @@ export interface GeneratedLine {
    * override it per line once GridLine editing (Chunk 6) exists.
    */
   polarity: '+' | '-'
+  /** True for every vibratoryBase-th line in its family (a reinforced/doubled harmonic line). */
+  reinforced: boolean
   points: [Point, Point]
 }
 
@@ -93,7 +95,7 @@ function maxOffsetIndexNeeded(
  * function's, since this module has no knowledge of `GridInstance`.
  */
 export function generateTheoreticalLines(
-  template: Pick<GridTemplate, 'spacingXM' | 'spacingYM' | 'angleTrueNorthDeg'>,
+  template: Pick<GridTemplate, 'spacingXM' | 'spacingYM' | 'angleTrueNorthDeg' | 'vibratoryBase'>,
   origin: Point,
   bounds: BoundingBox
 ): GeneratedLine[] {
@@ -108,7 +110,14 @@ export function generateTheoreticalLines(
       y: origin.y + k * template.spacingYM * perpDir.y,
     }
     const clipped = clipLineToBounds(linePoint, primaryDir, bounds)
-    if (clipped) lines.push({ family: 'axis-a', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
+    if (clipped) {
+      lines.push({
+        family: 'axis-a',
+        polarity: k % 2 === 0 ? '+' : '-',
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
   }
 
   const offsetB = maxOffsetIndexNeeded(origin, template.spacingXM, bounds)
@@ -118,7 +127,14 @@ export function generateTheoreticalLines(
       y: origin.y + k * template.spacingXM * primaryDir.y,
     }
     const clipped = clipLineToBounds(linePoint, perpDir, bounds)
-    if (clipped) lines.push({ family: 'axis-b', polarity: k % 2 === 0 ? '+' : '-', points: clipped })
+    if (clipped) {
+      lines.push({
+        family: 'axis-b',
+        polarity: k % 2 === 0 ? '+' : '-',
+        reinforced: k % template.vibratoryBase === 0,
+        points: clipped,
+      })
+    }
   }
 
   return lines

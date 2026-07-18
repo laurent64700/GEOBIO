@@ -61,6 +61,8 @@ export interface GridTemplate {
   originOffsetY: number
   /** Single color for the whole network — polarity is shown via line style (solid/dashed), not a second color. */
   color: string
+  /** Every Nth line in a family is a reinforced/doubled "harmonic" line — N is this value ("base vibratoire"). */
+  vibratoryBase: number
 }
 
 export interface GridInstance {
@@ -80,6 +82,8 @@ export interface GridLine {
   gridInstanceId: string
   family: GridLineFamily
   polarity: GridLinePolarity
+  /** True for every vibratoryBase-th line in its family (a reinforced/doubled harmonic line). */
+  reinforced: boolean
   theoreticalPoints: Point[]
   adjustedPoints: Point[]
 }
