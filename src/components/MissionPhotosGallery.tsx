@@ -18,6 +18,7 @@ export function MissionPhotosGallery({ missionId }: MissionPhotosGalleryProps) {
   }, [missionId])
 
   async function handleFileChosen(file: File) {
+    setError(null)
     try {
       const photo = await addMissionPhoto(missionId, file)
       setPhotos((prev) => [...prev, photo])
@@ -34,12 +35,25 @@ export function MissionPhotosGallery({ missionId }: MissionPhotosGalleryProps) {
         <input
           type="file"
           accept="image/*"
-          onChange={(e) => e.target.files?.[0] && handleFileChosen(e.target.files[0])}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            // Reset the input so re-selecting the same file (e.g. retrying
+            // after a failed upload on a flaky field connection) still fires
+            // a change event — browsers don't fire one for an unchanged value.
+            e.target.value = ''
+            if (file) handleFileChosen(file)
+          }}
         />
       </label>
       <div>
         {photos.map((photo) => (
-          <img key={photo.id} src={photo.imageUrl} alt="Photo aérienne de la mission" style={{ maxWidth: 200 }} />
+          <img
+            key={photo.id}
+            src={photo.imageUrl}
+            alt="Photo aérienne de la mission"
+            loading="lazy"
+            style={{ maxWidth: 200 }}
+          />
         ))}
       </div>
     </div>
