@@ -35,7 +35,25 @@ export interface Plan {
 export interface GridTemplate {
   id: string
   name: string
+  /**
+   * Spacing (meters) between consecutive 'axis-b' lines — the line family
+   * running *perpendicular* to `angleTrueNorthDeg` — stepped along the
+   * bearing direction. See `generateTheoreticalLines` in
+   * src/geometry/gridGeneration.ts, which is the sole consumer.
+   */
   spacingXM: number
+  /**
+   * Spacing (meters) between consecutive 'axis-a' lines — the line family
+   * running *parallel* to `angleTrueNorthDeg` — stepped perpendicular to the
+   * bearing direction. See `generateTheoreticalLines` in
+   * src/geometry/gridGeneration.ts, which is the sole consumer.
+   *
+   * Neither field is a raw cartesian X/Y spacing: both line families are
+   * generated in a frame rotated by `angleTrueNorthDeg`. Which figure from
+   * the physical reference manual should feed spacingXM vs spacingYM is
+   * unverified for asymmetric networks (Hartmann, Palm, Peyré) — see
+   * supabase/migrations/0005_seed_confirmed_networks.sql for details.
+   */
   spacingYM: number
   angleTrueNorthDeg: number
   originOffsetX: number

@@ -45,6 +45,11 @@ describe('createGridForPlan', () => {
     const axisACount = linesArg.filter((l) => l.family === 'axis-a').length
     expect(axisACount).toBeGreaterThan((2 * DEFAULT_GRID_RADIUS_M) / hartmann.spacingYM - 5)
 
+    // Sanity-check that '-' polarity actually reaches the persisted lines
+    // array, not just '+' — catches a generator/mapping bug that always
+    // stamps the default polarity.
+    expect(linesArg.some((l) => l.polarity === '-')).toBe(true)
+
     expect(result.instance.id).toBe('gi1')
     expect(result.lines).toHaveLength(linesArg.length)
   })
