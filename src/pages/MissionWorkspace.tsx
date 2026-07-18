@@ -3,8 +3,9 @@ import { useState } from 'react'
 import { MissionForm } from '../components/MissionForm'
 import { MapView } from '../components/MapView'
 import { PlanCalibrationTool } from '../components/PlanCalibrationTool'
+import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
 import { createPlan } from '../data/plansRepo'
-import { setMissionOrigin } from '../data/missionsRepo'
+import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
 import type { AffineTransform, Mission } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
@@ -25,6 +26,7 @@ const MAP_WRAPPER_STYLE = { height: 400 }
 type WorkspacePhase =
   | { name: 'creating-mission' }
   | { name: 'creating-exterior-plan'; mission: Mission }
+  | { name: 'global-assessment'; mission: Mission }
   | { name: 'setting-origin'; mission: Mission }
   | { name: 'ready-no-interior'; mission: Mission }
   | { name: 'calibrating-interior'; mission: Mission; imageUrl: string }
@@ -41,7 +43,17 @@ export function MissionWorkspace() {
     setPhase({ name: 'creating-exterior-plan', mission })
     try {
       await createPlan({ missionId: mission.id, kind: 'exterieur' })
-      setPhase({ name: 'setting-origin', mission })
+      setPhase({ name: 'global-assessment', mission })
+    } catch (err) {
+      setPhase({ name: 'error', message: messageOf(err) })
+    }
+  }
+
+  async function handleGlobalAssessmentSaved(input: GlobalAssessmentInput) {
+    if (phase.name !== 'global-assessment') return
+    try {
+      const updated = await setGlobalAssessment(phase.mission.id, input)
+      setPhase({ name: 'setting-origin', mission: updated })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -90,6 +102,9 @@ export function MissionWorkspace() {
 
     case 'creating-exterior-plan':
       return <p>Préparation du plan extérieur…</p>
+
+    case 'global-assessment':
+      return <GlobalAssessmentForm onSaved={handleGlobalAssessmentSaved} />
 
     case 'setting-origin':
       return (

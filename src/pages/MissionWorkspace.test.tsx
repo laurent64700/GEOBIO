@@ -45,6 +45,21 @@ vi.mock('../components/PlanCalibrationTool', () => ({
   ),
 }))
 
+vi.mock('../components/GlobalAssessmentForm', () => ({
+  GlobalAssessmentForm: ({ onSaved }: { onSaved: (i: unknown) => void }) => (
+    <button
+      onClick={() =>
+        onSaved({
+          causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+          causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+        })
+      }
+    >
+      simulate-global-assessment
+    </button>
+  ),
+}))
+
 const missionWithOrigin = {
   id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null,
   originLat: 48.8566, originLng: 2.3522,
@@ -52,10 +67,28 @@ const missionWithOrigin = {
   causeParanormale: null, causeAutres: null, bovisRate: null,
 }
 
+// The mission as returned by setGlobalAssessment: causes/Bovis populated,
+// origin still unset (origin-setting is the next phase).
+const missionAfterGlobalAssessment = {
+  id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null,
+  originLat: null, originLng: null,
+  causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+  causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+}
+
+// Common setup shared by every test whose flow needs to get past the
+// global-assessment phase to reach origin-setting.
+async function advanceToOriginSetting() {
+  vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
+  fireEvent.click(await screen.findByText('simulate-global-assessment'))
+  await waitFor(() => expect(missionsRepo.setGlobalAssessment).toHaveBeenCalled())
+  await screen.findByText(/cliquez sur la carte/i)
+}
+
 describe('MissionWorkspace', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('creates an exterior plan once a mission is created, then prompts for the origin', async () => {
+  it('creates an exterior plan once a mission is created, then shows the global assessment form', async () => {
     vi.mocked(plansRepo.createPlan).mockResolvedValue({
       id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
     })
@@ -65,7 +98,7 @@ describe('MissionWorkspace', () => {
     await waitFor(() =>
       expect(plansRepo.createPlan).toHaveBeenCalledWith({ missionId: 'm1', kind: 'exterieur' })
     )
-    expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+    expect(await screen.findByText('simulate-global-assessment')).toBeInTheDocument()
   })
 
   it('shows an error if exterior plan creation fails', async () => {
@@ -83,7 +116,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
 
     render(<MissionWorkspace />)
-    await screen.findByText(/cliquez sur la carte/i)
+    await advanceToOriginSetting()
     fireEvent.click(screen.getByText('simulate-map-click'))
 
     await waitFor(() =>
@@ -101,7 +134,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
 
     render(<MissionWorkspace />)
-    await screen.findByText(/cliquez sur la carte/i)
+    await advanceToOriginSetting()
     fireEvent.click(screen.getByText('simulate-map-click'))
     await screen.findByLabelText(/importer un plan intérieur/i)
 
@@ -123,7 +156,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
 
     render(<MissionWorkspace />)
-    await screen.findByText(/cliquez sur la carte/i)
+    await advanceToOriginSetting()
     fireEvent.click(screen.getByText('simulate-map-click'))
     await screen.findByLabelText(/importer un plan intérieur/i)
     const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
@@ -139,5 +172,28 @@ describe('MissionWorkspace', () => {
       })
     )
     expect(await screen.findByTestId('map-view')).toBeInTheDocument()
+  })
+
+  it('shows the global assessment form after the exterior plan, then proceeds to origin-setting', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue({
+      ...missionWithOrigin, originLat: null, originLng: null,
+      causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+      causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+    })
+
+    render(<MissionWorkspace />)
+
+    fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+    await waitFor(() =>
+      expect(missionsRepo.setGlobalAssessment).toHaveBeenCalledWith('m1', {
+        causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+        causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+      })
+    )
+    expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
   })
 })
