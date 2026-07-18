@@ -52,4 +52,29 @@ describe('SiteMapView', () => {
 
     await waitFor(() => expect(screen.getByTestId('lines-Hartmann')).toBeInTheDocument())
   })
+
+  it('toggling "Ressenti terrain" off hides the felt points that were visible by default', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+
+    await screen.findByTestId('felt-points')
+    fireEvent.click(await screen.findByLabelText('Ressenti terrain'))
+
+    await waitFor(() => expect(screen.queryByTestId('felt-points')).not.toBeInTheDocument())
+  })
+
+  it('shows an error message when loading grid instances fails', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockRejectedValue(
+      new Error('Impossible de charger les instances de grille : network down')
+    )
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
+  })
 })

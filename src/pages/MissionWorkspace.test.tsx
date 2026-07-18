@@ -39,7 +39,9 @@ vi.mock('../components/MapView', () => ({
 }))
 
 vi.mock('../components/SiteMapView', () => ({
-  SiteMapView: () => <div data-testid="site-map-view" />,
+  SiteMapView: ({ planId }: { planId: string }) => (
+    <div data-testid="site-map-view" data-plan-id={planId} />
+  ),
 }))
 
 vi.mock('../components/PlanCalibrationTool', () => ({
@@ -129,7 +131,12 @@ describe('MissionWorkspace', () => {
     await waitFor(() =>
       expect(missionsRepo.setMissionOrigin).toHaveBeenCalledWith('m1', { lat: 48.8566, lng: 2.3522 })
     )
-    expect(await screen.findByTestId('site-map-view')).toBeInTheDocument()
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toBeInTheDocument()
+    // SiteMapView must be scoped to the exterior Plan's id ('p1'), not the
+    // Mission's id ('m1') — this is the exact distinction the mid-task
+    // exteriorPlan-threading correction exists to get right.
+    expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
     expect(screen.getByLabelText(/importer un plan intérieur/i)).toBeInTheDocument()
   })
 
@@ -178,7 +185,12 @@ describe('MissionWorkspace', () => {
         calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
       })
     )
-    expect(await screen.findByTestId('site-map-view')).toBeInTheDocument()
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toBeInTheDocument()
+    // Back in ready-no-interior after calibration: must still be scoped to
+    // the original exterior Plan ('p1'), not the newly-created interior Plan
+    // ('p2') or the Mission's own id ('m1').
+    expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
   })
 
   it('shows the global assessment form after the exterior plan, then proceeds to origin-setting', async () => {
