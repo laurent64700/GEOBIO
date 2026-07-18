@@ -1,8 +1,19 @@
 import { useEffect, useRef } from 'react'
 import { Polyline, useMap } from 'react-leaflet'
 import type { Polyline as LeafletPolyline } from 'leaflet'
+// Side-effect imports: leaflet-geoman attaches its `.pm` property to Leaflet
+// layers (and augments the global `L` namespace) as an import-time effect —
+// it must be imported somewhere that runs before any Polyline mounts, or
+// `layer.pm` stays undefined forever and the enable/disable calls below
+// silently no-op. Colocated here (rather than in MapView.tsx) because this
+// is the one component that actually depends on `.pm` existing, so it owns
+// the responsibility rather than relying on a sibling file always running
+// first (e.g. in a test that mounts this component under a bare
+// `MapContainer` without going through the app's `MapView`).
+import '@geoman-io/leaflet-geoman-free'
+import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'
 import { localToLatLng, latLngToLocal, type LatLng } from '../geometry/localCoordinates'
-import { applyVertexDrag } from '../geometry/lineEditing'
+import { applyAllVertices } from '../geometry/lineEditing'
 import type { GridLine } from '../domain/types'
 
 export interface EditableNetworkLineProps {
@@ -17,7 +28,7 @@ export interface EditableNetworkLineProps {
  * ⚠️ The `pm.enable()` call and `pm:markerdragend` event name below are a
  * best-effort guess at leaflet-geoman-free's actual API — VERIFY against
  * https://github.com/geoman-io/leaflet-geoman before relying on this. If the
- * event/method names are wrong, the surrounding logic (applyVertexDrag,
+ * event/method names are wrong, the surrounding logic (applyAllVertices,
  * onChanged, the repo update, undo) is unaffected — only this glue needs
  * correcting.
  */
@@ -40,11 +51,14 @@ export function EditableNetworkLine({ line, color, missionOrigin, editable, onCh
     if (!layer) return
 
     function handleDragEnd(e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) {
+      // Fold every vertex from this one drag gesture into a single updated
+      // GridLine, and call onChanged exactly once. getLatLngs() returns ALL
+      // vertices (not just the one dragged) on every call — looping and
+      // calling onChanged per-vertex would fire multiple stale updates that
+      // race each other (see applyAllVertices' doc comment for why).
       const latlngs = e.target.getLatLngs()
-      latlngs.forEach((latlng, index) => {
-        const point = latLngToLocal(latlng, missionOrigin)
-        onChanged(applyVertexDrag(line, index, point))
-      })
+      const points = latlngs.map((latlng) => latLngToLocal(latlng, missionOrigin))
+      onChanged(applyAllVertices(line, points))
     }
 
     layer.on('pm:markerdragend', handleDragEnd)

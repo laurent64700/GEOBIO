@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyVertexDrag, resetToTheoretical } from './lineEditing'
+import { applyVertexDrag, applyAllVertices, resetToTheoretical } from './lineEditing'
 import type { GridLine } from '../domain/types'
 
 const baseLine: GridLine = {
@@ -12,6 +12,15 @@ describe('applyVertexDrag', () => {
   it('replaces only the dragged point, leaving other points and all other fields untouched', () => {
     const updated = applyVertexDrag(baseLine, 0, { x: 0.4, y: -3 })
     expect(updated.adjustedPoints).toEqual([{ x: 0.4, y: -3 }, { x: 0, y: 3 }])
+    expect(updated.theoreticalPoints).toBe(baseLine.theoreticalPoints) // untouched reference
+    expect(updated.id).toBe(baseLine.id)
+  })
+})
+
+describe('applyAllVertices', () => {
+  it('replaces the whole adjustedPoints array in one update, leaving other fields untouched', () => {
+    const updated = applyAllVertices(baseLine, [{ x: 0.4, y: -3 }, { x: 0.1, y: 3 }])
+    expect(updated.adjustedPoints).toEqual([{ x: 0.4, y: -3 }, { x: 0.1, y: 3 }])
     expect(updated.theoreticalPoints).toBe(baseLine.theoreticalPoints) // untouched reference
     expect(updated.id).toBe(baseLine.id)
   })

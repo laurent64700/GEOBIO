@@ -271,13 +271,18 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
         </label>
         <button
           onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
-          disabled={!lastChangedLine || (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0}
+          disabled={
+            !editMode ||
+            !lastChangedLine ||
+            !(visibility[lastChangedLine.instanceId] ?? false) ||
+            (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
+          }
         >
           Annuler
         </button>
         <button
           onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
-          disabled={!lastChangedLine}
+          disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}
         >
           Réinitialiser
         </button>
