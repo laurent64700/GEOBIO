@@ -32,7 +32,7 @@ describe('createGridForPlan', () => {
       )
     )
 
-    const result = await createGridForPlan('p1', hartmann, { x: 0, y: 0 }, '+')
+    const result = await createGridForPlan('p1', hartmann, { x: 0, y: 0 }, '-')
 
     expect(gridInstancesRepo.createGridInstance).toHaveBeenCalledWith({
       planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0,
@@ -47,10 +47,25 @@ describe('createGridForPlan', () => {
     const axisACount = linesArg.filter((l) => l.family === 'axis-a').length
     expect(axisACount).toBeGreaterThan((2 * DEFAULT_GRID_RADIUS_M) / hartmann.spacingYM - 5)
 
-    // Sanity-check that '-' polarity actually reaches the persisted lines
-    // array, not just '+' — catches a generator/mapping bug that always
-    // stamps the default polarity.
-    expect(linesArg.some((l) => l.polarity === '-')).toBe(true)
+    // Sanity-check that '+' polarity actually reaches the persisted lines
+    // array too, not just '-' — catches a generator/mapping bug that always
+    // stamps a single polarity.
+    expect(linesArg.some((l) => l.polarity === '+')).toBe(true)
+
+    // Proves originPolarity actually flows through createGridForPlan into the
+    // persisted lines, not just that some '+' happens to survive: the central
+    // (origin) line's own theoreticalPoints midpoint is the grid origin
+    // (0, 0) itself, so it's identifiable independent of polarity.
+    const central = linesArg.find(
+      (l) =>
+        l.family === 'axis-a' &&
+        Math.hypot(
+          (l.theoreticalPoints[0].x + l.theoreticalPoints[1].x) / 2,
+          (l.theoreticalPoints[0].y + l.theoreticalPoints[1].y) / 2
+        ) < 1e-6
+    )
+    expect(central).toBeDefined()
+    expect(central!.polarity).toBe('-')
 
     expect(result.instance.id).toBe('gi1')
     expect(result.lines).toHaveLength(linesArg.length)

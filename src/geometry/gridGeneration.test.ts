@@ -78,7 +78,7 @@ describe('generateTheoreticalLines', () => {
     expect(central!.points[0].x).toBeCloseTo(central!.points[0].y)
   })
 
-  it('assigns alternating polarity by grid line index (theoretical convention, not a field measurement)', () => {
+  it('assigns alternating polarity by grid line index, anchored on the default "+" origin polarity', () => {
     const template = { spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, vibratoryBase: 7 }
     const origin = { x: 0, y: 0 }
     const bounds = { minX: -3, maxX: 3, minY: -3, maxY: 3 }
@@ -121,8 +121,11 @@ describe('generateTheoreticalLines', () => {
     const axisA = lines.filter((l) => l.family === 'axis-a')
     const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
     const nextOver = axisA.find((l) => Math.abs(l.points[0].x - 2.5) < 1e-9)! // k=1
+    // -0 === 0 in JS, so a negative odd k must also be exercised — not just k=0/k=1.
+    const negativeOver = axisA.find((l) => Math.abs(l.points[0].x - -2.5) < 1e-9)! // k=-1
 
     expect(central.polarity).toBe('-') // k=0 now takes the anchor's polarity
     expect(nextOver.polarity).toBe('+') // k=1 is the opposite
+    expect(negativeOver.polarity).toBe('+') // k=-1 is odd, so also the opposite
   })
 })
