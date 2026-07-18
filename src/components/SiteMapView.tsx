@@ -37,6 +37,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   const [guideLineBearing, setGuideLineBearing] = useState<number | null>(null)
   const [guideLineAnchor, setGuideLineAnchor] = useState<Point | null>(null)
   const [placingGuideLine, setPlacingGuideLine] = useState(false)
+  const [customBearingInput, setCustomBearingInput] = useState('')
 
   useEffect(() => {
     async function load() {
@@ -63,6 +64,22 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   function handleGuideLineMapClick(latlng: { lat: number; lng: number }) {
     setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
     setPlacingGuideLine(false)
+  }
+
+  function handleClearGuideLine() {
+    // Reset the whole tool, not just the placed anchor, so Laurent starts
+    // clean rather than keeping a stale bearing selected with no line shown.
+    setGuideLineAnchor(null)
+    setGuideLineBearing(null)
+    setPlacingGuideLine(false)
+    setCustomBearingInput('')
+  }
+
+  function handleValidateCustomBearing() {
+    const parsed = Number(customBearingInput)
+    if (customBearingInput.trim() !== '' && !Number.isNaN(parsed)) {
+      setGuideLineBearing(parsed)
+    }
   }
 
   function toggleLayer(id: string) {
@@ -118,8 +135,20 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
         <button onClick={() => setGuideLineBearing(0)}>N/S</button>
         <button onClick={() => setGuideLineBearing(90)}>E/O</button>
         <button onClick={() => setGuideLineBearing(45)}>45°</button>
+        <button onClick={() => setGuideLineBearing(135)}>135°</button>
+        <input
+          type="number"
+          step="1"
+          aria-label="Angle personnalisé"
+          value={customBearingInput}
+          onChange={(e) => setCustomBearingInput(e.target.value)}
+        />
+        <button onClick={handleValidateCustomBearing}>Valider</button>
         <button onClick={() => setPlacingGuideLine(true)} disabled={guideLineBearing === null}>
           Placer ici
+        </button>
+        <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
+          Effacer
         </button>
       </div>
     </div>

@@ -114,4 +114,87 @@ describe('SiteMapView', () => {
     // no "Placer" click this time — onMapClick shouldn't even be wired up
     expect(screen.queryByText('simulate-map-click')).not.toBeInTheDocument()
   })
+
+  it('also places a guide line using the E/O preset (not just N/S)', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByRole('button', { name: 'E/O' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+  })
+
+  it('places a guide line using the 135° preset', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByRole('button', { name: '135°' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+  })
+
+  it('places a guide line using a custom bearing entered via the numeric input', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.change(screen.getByLabelText('Angle personnalisé'), { target: { value: '27' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Valider' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+  })
+
+  it('stops forwarding map clicks to the guide line after one placement, until "placer" is pressed again', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+    // placingGuideLine should have reset to false after the first placement,
+    // so onMapClick is no longer wired up and the simulate button disappears
+    expect(screen.queryByText('simulate-map-click')).not.toBeInTheDocument()
+  })
+
+  it('clears the guide line and resets the tool state when "Effacer" is clicked', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    // "Effacer" is disabled until a guide line has been placed
+    expect(screen.getByRole('button', { name: 'Effacer' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Effacer' }))
+
+    expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
+    // resetting the whole tool means "Placer ici" is disabled again (no bearing selected)
+    expect(screen.getByRole('button', { name: /placer/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Effacer' })).toBeDisabled()
+  })
 })
