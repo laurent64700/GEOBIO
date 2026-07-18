@@ -101,9 +101,14 @@ describe('generateTheoreticalLines', () => {
     const central = axisA.find((l) => Math.abs(l.points[0].x) < 1e-9)! // k=0
     const kThree = axisA.find((l) => Math.abs(l.points[0].x - 3) < 1e-9)! // k=3, spacingYM=1
     const kOne = axisA.find((l) => Math.abs(l.points[0].x - 1) < 1e-9)! // k=1
+    const kMinusThree = axisA.find((l) => Math.abs(l.points[0].x - -3) < 1e-9)! // k=-3
+    const kMinusOne = axisA.find((l) => Math.abs(l.points[0].x - -1) < 1e-9)! // k=-1
 
     expect(central.reinforced).toBe(true) // k=0 is a multiple of 3
     expect(kThree.reinforced).toBe(true) // k=3 is a multiple of 3
     expect(kOne.reinforced).toBe(false) // k=1 is not
+    // -0 === 0 in JS, so a negative multiple must also be exercised — not just k=0/k=3.
+    expect(kMinusThree.reinforced).toBe(true) // k=-3 is a multiple of 3
+    expect(kMinusOne.reinforced).toBe(false) // k=-1 is not
   })
 })

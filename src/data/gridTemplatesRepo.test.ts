@@ -36,7 +36,7 @@ describe('gridTemplatesRepo', () => {
   it('lists all grid templates', async () => {
     const { from } = createSupabaseChainMock({
       data: [
-        { id: 't0', name: 'Hartmann', spacing_x_m: 2, spacing_y_m: 2.5, angle_true_north_deg: 0, origin_offset_x: 0, origin_offset_y: 0, color: '#d32f2f', vibratory_base: 5 },
+        { id: 't0', name: 'Hartmann', spacing_x_m: 2, spacing_y_m: 2.5, angle_true_north_deg: 0, origin_offset_x: 0, origin_offset_y: 0, color: '#d32f2f', vibratory_base: 7 },
       ],
       error: null,
     })
