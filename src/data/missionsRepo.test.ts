@@ -131,8 +131,28 @@ describe('missionsRepo', () => {
     })
 
     expect(from).toHaveBeenCalledWith('mission')
+    expect(chain.update).toHaveBeenCalledWith({
+      cause_architectural: 3,
+      cause_electromagnetique: 6,
+      cause_geobiologique: 8,
+      cause_paranormale: 1,
+      cause_autres: 0,
+      bovis_rate: 9500,
+    })
     expect(chain.eq).toHaveBeenCalledWith('id', 'm1')
     expect(mission.bovisRate).toBe(9500)
     expect(mission.causeGeobiologique).toBe(8)
+  })
+
+  it('throws a descriptive French error when the global assessment update fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(
+      setGlobalAssessment('m1', {
+        causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
+        causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
+      })
+    ).rejects.toThrow("Impossible d'enregistrer les mesures globales : network down")
   })
 })
