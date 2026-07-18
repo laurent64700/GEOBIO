@@ -30,6 +30,16 @@ vi.mock('./GuideLineLayer', () => ({
   GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
     anchor !== null && bearingDeg !== null ? <div data-testid="guide-line" /> : null,
 }))
+vi.mock('./OrthogonalitySuggestion', () => ({
+  OrthogonalitySuggestion: () => <div data-testid="orthogonality-preview" />,
+}))
+vi.mock('./EditableNetworkLine', () => ({
+  EditableNetworkLine: ({ line, onChanged }: { line: { id: string; adjustedPoints: { x: number; y: number }[] }; onChanged: (l: unknown) => void }) => (
+    <button onClick={() => onChanged({ ...line, adjustedPoints: [{ x: 0, y: -10 }, { x: 1, y: 10 }] })}>
+      simulate-line-change-{line.id}
+    </button>
+  ),
+}))
 
 const hartmannInstance = {
   id: 'gi1', planId: 'p1',
@@ -210,5 +220,59 @@ describe('SiteMapView', () => {
     // resetting the whole tool means "Placer ici" is disabled again (no bearing selected)
     expect(screen.getByRole('button', { name: /placer/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Effacer' })).toBeDisabled()
+  })
+
+  const hartmannLine = {
+    id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a' as const, polarity: '-' as const, reinforced: false,
+    theoreticalPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+    adjustedPoints: [{ x: 0, y: -10 }, { x: 0, y: 10 }],
+  }
+
+  async function renderWithLineChangedOnce() {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([hartmannLine])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(gridLinesRepo.updateAdjustedPoints).mockResolvedValue(hartmannLine)
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    // Enter edit mode and show the Hartmann layer so EditableNetworkLine (mocked
+    // above) renders its "simulate-line-change" trigger button.
+    fireEvent.click(screen.getByLabelText(/mode édition/i))
+    fireEvent.click(screen.getByLabelText('Hartmann'))
+    fireEvent.click(await screen.findByText('simulate-line-change-gl1'))
+  }
+
+  it('shows the orthogonality-assist panel and preview after a line is adjusted', async () => {
+    await renderWithLineChangedOnce()
+
+    expect(await screen.findByTestId('orthogonality-preview')).toBeInTheDocument()
+    expect(screen.getByText(/écart à l'orthogonal théorique/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /redresser/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ignorer/i })).toBeInTheDocument()
+  })
+
+  it('dismisses the orthogonality panel without further changes when "Ignorer" is clicked', async () => {
+    await renderWithLineChangedOnce()
+    await screen.findByTestId('orthogonality-preview')
+    const updateCallsBeforeIgnore = vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: /ignorer/i }))
+
+    expect(screen.queryByTestId('orthogonality-preview')).not.toBeInTheDocument()
+    expect(vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length).toBe(updateCallsBeforeIgnore)
+  })
+
+  it('straightens the line and dismisses the panel when "Redresser" is clicked', async () => {
+    await renderWithLineChangedOnce()
+    await screen.findByTestId('orthogonality-preview')
+    const updateCallsBeforeAccept = vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: /redresser/i }))
+
+    expect(screen.queryByTestId('orthogonality-preview')).not.toBeInTheDocument()
+    // Accepting goes through handleLineChanged, which persists via updateAdjustedPoints
+    expect(vi.mocked(gridLinesRepo.updateAdjustedPoints).mock.calls.length).toBeGreaterThan(updateCallsBeforeAccept)
   })
 })

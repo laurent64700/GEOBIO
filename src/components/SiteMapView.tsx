@@ -4,6 +4,7 @@ import { NetworkLinesLayer } from './NetworkLinesLayer'
 import { EditableNetworkLine } from './EditableNetworkLine'
 import { FeltPointsLayer } from './FeltPointsLayer'
 import { GuideLineLayer } from './GuideLineLayer'
+import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
 import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
@@ -11,6 +12,7 @@ import { listFeltPointsForPlan } from '../data/feltPointsRepo'
 import type { GridInstance, GridLine, FeltPoint, Point } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
+import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
 export interface SiteMapViewProps {
   planId: string
@@ -44,6 +46,21 @@ const EDIT_CONTROLS_STYLE = {
   borderRadius: 4,
 }
 
+// Fourth and last free corner (bottom-right) — LayerPanel has top-right,
+// the guide-line controls top-left, the edit-mode controls bottom-left. See
+// OrthogonalitySuggestion.tsx's doc comment for why the deviation
+// text/buttons live here instead of inside the Leaflet tree alongside the
+// Polyline preview it renders.
+const ORTHOGONALITY_PANEL_STYLE = {
+  position: 'absolute' as const,
+  bottom: 8,
+  right: 8,
+  zIndex: 1000,
+  background: 'white',
+  padding: 8,
+  borderRadius: 4,
+}
+
 export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
@@ -63,6 +80,11 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   // "Annuler"/"Réinitialiser" panel knows which instance/line to act on
   // without a per-line picker UI (not specified by the plan; kept minimal).
   const [lastChangedLine, setLastChangedLine] = useState<{ instanceId: string; lineId: string } | null>(null)
+  // Set to a GridLine id right after it's adjusted (drag or reset), so the
+  // orthogonality-assist panel (bottom-right, see ORTHOGONALITY_PANEL_STYLE)
+  // knows which line to preview/offer straightening for. Cleared on accept
+  // or dismiss.
+  const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -120,6 +142,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
       setError(err instanceof Error ? err.message : String(err))
     )
     setLastChangedLine({ instanceId, lineId: updated.id })
+    setAwaitingOrthogonalityReview(updated.id)
   }
 
   function handleUndo(instanceId: string) {
@@ -152,7 +175,30 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
     return match?.templateSnapshot.color ?? '#888888'
   }
 
+  // The GridLine + owning GridInstance currently up for orthogonality review
+  // (set by handleLineChanged after every drag/reset), found by scanning
+  // linesByInstance since awaitingOrthogonalityReview only tracks the line id.
+  function findAwaitingOrthogonalityReview(): { instance: GridInstance; line: GridLine } | null {
+    if (awaitingOrthogonalityReview === null) return null
+    for (const instance of instances) {
+      const line = linesByInstance[instance.id]?.find((l) => l.id === awaitingOrthogonalityReview)
+      if (line) return { instance, line }
+    }
+    return null
+  }
+
   if (error) return <p role="alert">{error}</p>
+
+  const reviewTarget = findAwaitingOrthogonalityReview()
+  // Computed once here (rather than inside OrthogonalitySuggestion) so both
+  // the map-layer preview and this bottom-right panel's text/buttons use the
+  // same deviationDeg/suggestedPoints — see OrthogonalitySuggestion.tsx's
+  // doc comment for why the two are split apart.
+  const reviewSuggestion = reviewTarget
+    ? getOrthogonalitySuggestion(reviewTarget.line.adjustedPoints, reviewTarget.line.family, {
+        angleTrueNorthDeg: reviewTarget.instance.templateSnapshot.angleTrueNorthDeg,
+      })
+    : null
 
   const gridLayers: LayerEntry[] = instances.map((instance) => ({
     id: instance.id,
@@ -197,6 +243,14 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           )
         )}
         <GuideLineLayer anchor={guideLineAnchor} bearingDeg={guideLineBearing} missionOrigin={missionOrigin} />
+        {reviewTarget && (
+          <OrthogonalitySuggestion
+            linePoints={reviewTarget.line.adjustedPoints}
+            family={reviewTarget.line.family}
+            template={{ angleTrueNorthDeg: reviewTarget.instance.templateSnapshot.angleTrueNorthDeg }}
+            missionOrigin={missionOrigin}
+          />
+        )}
       </MapView>
       <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
       {/* Positioned top-left (absolute), mirroring LayerPanel's top-right
@@ -287,6 +341,33 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           Réinitialiser
         </button>
       </div>
+      {/* Bottom-right (absolute), the fourth and last free corner — see
+          ORTHOGONALITY_PANEL_STYLE above for why this needs position:
+          absolute at all, why this corner was chosen, and why the text and
+          buttons are rendered here rather than alongside the <Polyline>
+          preview (OrthogonalitySuggestion, rendered inside <MapView> above).
+          Shown after every line adjustment (handleLineChanged sets
+          awaitingOrthogonalityReview); "Redresser" replaces the line's
+          adjustedPoints with the suggested straightened points (going
+          through handleLineChanged itself, so it's undoable/persisted the
+          same way a drag or reset is); "Ignorer" just dismisses the panel. */}
+      {reviewTarget && reviewSuggestion && (
+        <div style={ORTHOGONALITY_PANEL_STYLE}>
+          <p>Écart à l'orthogonal théorique : {reviewSuggestion.deviationDeg.toFixed(1)}°</p>
+          <button
+            onClick={() => {
+              handleLineChanged(reviewTarget.instance.id, {
+                ...reviewTarget.line,
+                adjustedPoints: reviewSuggestion.suggestedPoints,
+              })
+              setAwaitingOrthogonalityReview(null)
+            }}
+          >
+            Redresser
+          </button>
+          <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
+        </div>
+      )}
     </div>
   )
 }
