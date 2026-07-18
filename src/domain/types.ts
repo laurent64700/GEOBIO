@@ -114,3 +114,15 @@ export interface FeltPoint {
   y: number
   createdAt: string
 }
+
+/**
+ * A mission-level aerial photo (storage/display only — no rod detection in
+ * Plan 1; that's a separate future project involving ArUco markers). Attached
+ * to the mission as a whole, not to a specific grid/network.
+ */
+export interface MissionPhoto {
+  id: string
+  missionId: string
+  imageUrl: string
+  createdAt: string
+}

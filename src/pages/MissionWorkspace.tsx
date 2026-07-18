@@ -5,6 +5,7 @@ import { MapView } from '../components/MapView'
 import { SiteMapView } from '../components/SiteMapView'
 import { PlanCalibrationTool } from '../components/PlanCalibrationTool'
 import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
+import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
@@ -144,6 +145,7 @@ export function MissionWorkspace() {
               onChange={(e) => e.target.files?.[0] && handleInteriorFileChosen(e.target.files[0])}
             />
           </label>
+          <MissionPhotosGallery missionId={phase.mission.id} />
         </div>
       )
     }

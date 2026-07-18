@@ -44,6 +44,12 @@ vi.mock('../components/SiteMapView', () => ({
   ),
 }))
 
+vi.mock('../components/MissionPhotosGallery', () => ({
+  MissionPhotosGallery: ({ missionId }: { missionId: string }) => (
+    <div data-testid="mission-photos-gallery" data-mission-id={missionId} />
+  ),
+}))
+
 vi.mock('../components/PlanCalibrationTool', () => ({
   PlanCalibrationTool: ({ onCalibrated }: { onCalibrated: (c: unknown) => void }) => (
     <button onClick={() => onCalibrated({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 })}>
