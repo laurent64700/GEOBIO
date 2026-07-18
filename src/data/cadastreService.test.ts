@@ -50,4 +50,16 @@ describe('fetchParcelsInBounds', () => {
       fetchParcelsInBounds({ minLat: 0, maxLat: 1, minLng: 0, maxLng: 1 })
     ).rejects.toThrow('Impossible de charger les parcelles cadastrales : 500')
   })
+
+  it('forwards an AbortSignal to fetch when one is passed', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleGeoJson),
+    } as Response)
+    const controller = new AbortController()
+
+    await fetchParcelsInBounds({ minLat: 48.85, maxLat: 48.86, minLng: 2.35, maxLng: 2.36 }, controller.signal)
+
+    expect(fetch).toHaveBeenCalledWith(expect.any(String), { signal: controller.signal })
+  })
 })

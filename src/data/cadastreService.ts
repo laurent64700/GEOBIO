@@ -35,13 +35,16 @@ function parseParcelFeature(feature: {
   }
 }
 
-export async function fetchParcelsInBounds(bounds: LatLngBounds): Promise<CadastralParcel[]> {
+export async function fetchParcelsInBounds(
+  bounds: LatLngBounds,
+  signal?: AbortSignal
+): Promise<CadastralParcel[]> {
   const bbox = `${bounds.minLng},${bounds.minLat},${bounds.maxLng},${bounds.maxLat},EPSG:4326`
   const url =
     `${CADASTRE_WFS_URL}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature` +
     `&TYPENAME=${PARCEL_TYPE_NAME}&OUTPUTFORMAT=application/json&BBOX=${bbox}`
 
-  const response = await fetch(url)
+  const response = await fetch(url, { signal })
   if (!response.ok) {
     throw new Error(`Impossible de charger les parcelles cadastrales : ${response.status}`)
   }
