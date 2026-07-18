@@ -392,4 +392,66 @@ describe('SiteMapView', () => {
 
     expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
   })
+
+  it('resets GridCreationPanel back to collapsed after a successful "Générer", so a second grid can be created', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({
+      instance: mockHartmannInstance,
+      lines: [],
+    })
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    fireEvent.click(await screen.findByRole('button', { name: '+' }))
+    fireEvent.click(screen.getByRole('button', { name: /générer/i }))
+
+    await waitFor(() => expect(createGridForPlan).toHaveBeenCalled())
+
+    // Without a reset mechanism, GridCreationPanel's own expanded/template
+    // state would survive the generate and its derived step would fall back
+    // to "awaiting-origin" forever (pendingGridOrigin/awaitingGridOrigin were
+    // cleared, but the panel never learns that) — permanently showing
+    // "cliquez l'origine" with nothing listening for a click, and no way to
+    // get back to "Ajouter une grille" for a second grid.
+    expect(await screen.findByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
+    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /générer/i })).not.toBeInTheDocument()
+  })
+
+  it('routes a map click to the guide-line tool, not grid-origin placement, when "Placer ici" cancels a pending grid-origin request', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    await screen.findByTestId('map-view')
+
+    // Start grid creation and pick a template — this sets awaitingGridOrigin
+    // and shows "Cliquez l'origine sur la carte", but deliberately don't
+    // click the map yet.
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+    expect(screen.getByText(/cliquez l'origine sur la carte/i)).toBeInTheDocument()
+
+    // Arm the guide-line tool instead and press "Placer ici" — this must
+    // cancel the pending grid-origin request AND reset GridCreationPanel so
+    // it doesn't keep showing a stale "cliquez l'origine" prompt for a click
+    // that will actually place a guide-line anchor.
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+
+    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    // The click must land on the guide-line tool, not be silently swallowed
+    // as a grid origin (which would show the polarity toggle instead).
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+' })).not.toBeInTheDocument()
+  })
 })

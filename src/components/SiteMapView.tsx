@@ -76,6 +76,14 @@ const ORTHOGONALITY_PANEL_STYLE = {
 // layers, GridCreationPanel grows as it steps through
 // collapsed/picking-template/awaiting-origin/awaiting-polarity — without
 // either one having to guess the other's height via hardcoded offsets.
+// maxHeight/overflowY guard against a real overflow risk: the picking-template
+// step renders GridTemplatePicker, which includes a 6-field creation form
+// below the template list — tall. Stacked under LayerPanel (which itself
+// grows per grid layer) inside a fixed-height map wrapper, with nothing
+// capping this stack's height, it could extend past the map's visible
+// bottom edge and (being zIndex: 1000) steal clicks from whatever renders
+// below the map. maxWidth keeps a long template list from also growing wide
+// enough to crowd out the map underneath it.
 const TOP_RIGHT_STACK_STYLE = {
   position: 'absolute' as const,
   top: 8,
@@ -85,6 +93,9 @@ const TOP_RIGHT_STACK_STYLE = {
   flexDirection: 'column' as const,
   gap: 8,
   alignItems: 'flex-end' as const,
+  maxHeight: 'calc(100% - 16px)',
+  maxWidth: 320,
+  overflowY: 'auto' as const,
 }
 
 // GridCreationPanel (unlike LayerPanel) renders bare buttons/paragraphs with
@@ -127,6 +138,16 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   // for how that exclusivity is actively enforced rather than assumed.
   const [pendingGridOrigin, setPendingGridOrigin] = useState<Point | null>(null)
   const [awaitingGridOrigin, setAwaitingGridOrigin] = useState(false)
+  // Bumped (via the GridCreationPanel `key` prop below) whenever the panel's
+  // own internal step-machine state (expanded/template/polarity) needs to be
+  // force-reset from outside: after a successful "Générer" (so a second grid
+  // can be created — otherwise the panel's derived step falls back to
+  // "awaiting-origin" forever, since pendingGridOrigin/awaitingGridOrigin are
+  // reset but the panel's own `expanded`/`template` aren't), and when
+  // "Placer ici" cancels a pending grid-origin request (otherwise the panel
+  // keeps showing a stale "cliquez l'origine" prompt for a click that will
+  // actually place a guide-line anchor instead).
+  const [gridCreationKey, setGridCreationKey] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -173,6 +194,11 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
       setLinesByInstance((prev) => ({ ...prev, [instance.id]: lines }))
       setAwaitingGridOrigin(false)
       setPendingGridOrigin(null)
+      // Force-remount GridCreationPanel so its own expanded/template state
+      // resets to "collapsed" — otherwise the panel's derived step would fall
+      // back to "awaiting-origin" and permanently show a stale prompt (see
+      // gridCreationKey's doc comment above).
+      setGridCreationKey((k) => k + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -340,6 +366,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
         <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
         <div style={GRID_CREATION_WRAPPER_STYLE}>
           <GridCreationPanel
+            key={gridCreationKey}
             pendingOrigin={pendingGridOrigin}
             onOriginRequested={handleGridOriginRequested}
             onGenerate={handleGenerateGrid}
@@ -397,7 +424,15 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
         <button
           onClick={() => {
             setPlacingGuideLine(true)
-            setAwaitingGridOrigin(false)
+            if (awaitingGridOrigin) {
+              setAwaitingGridOrigin(false)
+              // GridCreationPanel was mid-flow (showing "cliquez l'origine")
+              // when this cancelled its pending request out from under it —
+              // force-remount it back to collapsed so it doesn't keep
+              // showing a stale prompt for a click that will now go to the
+              // guide-line tool instead.
+              setGridCreationKey((k) => k + 1)
+            }
           }}
           disabled={guideLineBearing === null}
         >
