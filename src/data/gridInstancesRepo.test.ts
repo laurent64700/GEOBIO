@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createGridInstance } from './gridInstancesRepo'
+import { createGridInstance, listGridInstancesForPlan } from './gridInstancesRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -30,5 +30,18 @@ describe('gridInstancesRepo', () => {
       plan_id: 'p1', template_snapshot: hartmann, origin_x: 1.5, origin_y: -2,
     })
     expect(instance.templateSnapshot).toEqual(hartmann)
+  })
+
+  it('lists grid instances scoped to a plan', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [{ id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 }],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const instances = await listGridInstancesForPlan('p1')
+
+    expect(chain.eq).toHaveBeenCalledWith('plan_id', 'p1')
+    expect(instances).toHaveLength(1)
   })
 })

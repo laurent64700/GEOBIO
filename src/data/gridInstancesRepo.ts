@@ -41,3 +41,9 @@ export async function createGridInstance(input: CreateGridInstanceInput): Promis
   if (error) throw new Error(`Impossible de créer l'instance de grille : ${error.message}`)
   return mapRowToGridInstance(data as GridInstanceRow)
 }
+
+export async function listGridInstancesForPlan(planId: string): Promise<GridInstance[]> {
+  const { data, error } = await supabase.from('grid_instance').select().eq('plan_id', planId)
+  if (error) throw new Error(`Impossible de charger les instances de grille : ${error.message}`)
+  return (data as GridInstanceRow[]).map(mapRowToGridInstance)
+}

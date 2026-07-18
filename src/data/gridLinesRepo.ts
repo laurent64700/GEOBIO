@@ -49,3 +49,9 @@ export async function createGridLines(inputs: CreateGridLineInput[]): Promise<Gr
   if (error) throw new Error(`Impossible de créer les lignes de grille : ${error.message}`)
   return (data as GridLineRow[]).map(mapRowToGridLine)
 }
+
+export async function listGridLinesForInstance(gridInstanceId: string): Promise<GridLine[]> {
+  const { data, error } = await supabase.from('grid_line').select().eq('grid_instance_id', gridInstanceId)
+  if (error) throw new Error(`Impossible de charger les lignes de grille : ${error.message}`)
+  return (data as GridLineRow[]).map(mapRowToGridLine)
+}

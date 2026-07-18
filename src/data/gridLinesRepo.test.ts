@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createGridLines } from './gridLinesRepo'
+import { createGridLines, listGridLinesForInstance } from './gridLinesRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -32,5 +32,24 @@ describe('gridLinesRepo', () => {
       },
     ])
     expect(lines[0].adjustedPoints).toEqual(lines[0].theoreticalPoints)
+  })
+
+  it('lists grid lines scoped to a grid instance', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: [
+        {
+          id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
+          theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+          adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        },
+      ],
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const lines = await listGridLinesForInstance('gi1')
+
+    expect(chain.eq).toHaveBeenCalledWith('grid_instance_id', 'gi1')
+    expect(lines).toHaveLength(1)
   })
 })
