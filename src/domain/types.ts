@@ -20,6 +20,12 @@ export interface Mission {
   declinationDeg: number | null
   originLat: number | null
   originLng: number | null
+  causeArchitectural: number | null
+  causeElectromagnetique: number | null
+  causeGeobiologique: number | null
+  causeParanormale: number | null
+  causeAutres: number | null
+  bovisRate: number | null
 }
 
 export type PlanKind = 'exterieur' | 'interieur'

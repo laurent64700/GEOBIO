@@ -18,6 +18,8 @@ vi.mock('../components/MissionForm', async () => {
         onCreated({
           id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null,
           originLat: null, originLng: null,
+          causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
+          causeParanormale: null, causeAutres: null, bovisRate: null,
         })
       }, [onCreated])
       return null
@@ -46,6 +48,8 @@ vi.mock('../components/PlanCalibrationTool', () => ({
 const missionWithOrigin = {
   id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null,
   originLat: 48.8566, originLng: 2.3522,
+  causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
+  causeParanormale: null, causeAutres: null, bovisRate: null,
 }
 
 describe('MissionWorkspace', () => {

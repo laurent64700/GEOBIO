@@ -15,6 +15,12 @@ interface MissionRow {
   declination_deg: number | null
   origin_lat: number | null
   origin_lng: number | null
+  cause_architectural: number | null
+  cause_electromagnetique: number | null
+  cause_geobiologique: number | null
+  cause_paranormale: number | null
+  cause_autres: number | null
+  bovis_rate: number | null
 }
 
 function mapRowToMission(row: MissionRow): Mission {
@@ -25,6 +31,12 @@ function mapRowToMission(row: MissionRow): Mission {
     declinationDeg: row.declination_deg,
     originLat: row.origin_lat,
     originLng: row.origin_lng,
+    causeArchitectural: row.cause_architectural,
+    causeElectromagnetique: row.cause_electromagnetique,
+    causeGeobiologique: row.cause_geobiologique,
+    causeParanormale: row.cause_paranormale,
+    causeAutres: row.cause_autres,
+    bovisRate: row.bovis_rate,
   }
 }
 
@@ -65,5 +77,36 @@ export async function setMissionOrigin(
     .single()
 
   if (error) throw new Error(`Impossible d'enregistrer l'origine de la mission : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+
+export interface GlobalAssessmentInput {
+  causeArchitectural: number
+  causeElectromagnetique: number
+  causeGeobiologique: number
+  causeParanormale: number
+  causeAutres: number
+  bovisRate: number
+}
+
+export async function setGlobalAssessment(
+  missionId: string,
+  input: GlobalAssessmentInput
+): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({
+      cause_architectural: input.causeArchitectural,
+      cause_electromagnetique: input.causeElectromagnetique,
+      cause_geobiologique: input.causeGeobiologique,
+      cause_paranormale: input.causeParanormale,
+      cause_autres: input.causeAutres,
+      bovis_rate: input.bovisRate,
+    })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer les mesures globales : ${error.message}`)
   return mapRowToMission(data as MissionRow)
 }
