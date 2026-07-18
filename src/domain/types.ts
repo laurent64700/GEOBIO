@@ -49,10 +49,11 @@ export interface GridTemplate {
    * src/geometry/gridGeneration.ts, which is the sole consumer.
    *
    * Neither field is a raw cartesian X/Y spacing: both line families are
-   * generated in a frame rotated by `angleTrueNorthDeg`. Which figure from
-   * the physical reference manual should feed spacingXM vs spacingYM is
-   * unverified for asymmetric networks (Hartmann, Palm, Peyré) — see
-   * supabase/migrations/0005_seed_confirmed_networks.sql for details.
+   * generated in a frame rotated by `angleTrueNorthDeg`. For asymmetric
+   * networks (Hartmann, Palm, Peyré), spacingXM takes the manual's N-S
+   * figure and spacingYM takes its E-W figure — confirmed against a manual
+   * diagram on 2026-07-18, see supabase/migrations/0005_seed_confirmed_networks.sql
+   * for details.
    */
   spacingYM: number
   angleTrueNorthDeg: number
