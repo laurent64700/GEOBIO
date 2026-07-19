@@ -7,6 +7,7 @@ import { GuideLineLayer } from './GuideLineLayer'
 import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
 import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
+import { OverlayPanel } from './OverlayPanel'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
@@ -21,88 +22,24 @@ export interface SiteMapViewProps {
   missionOrigin: LatLng
 }
 
-// Mirrors LayerPanel's PANEL_STYLE (top-right) but anchored top-left, so the
-// two absolutely positioned overlays don't collide. See the usage site below
-// for why this needs position: absolute at all.
-const GUIDE_LINE_CONTROLS_STYLE = {
-  position: 'absolute' as const,
-  top: 8,
-  left: 8,
-  zIndex: 1000,
-  background: 'white',
-  padding: 8,
-  borderRadius: 4,
-}
-
-// Third corner (bottom-left), same absolute-overlay treatment as LayerPanel
-// (top-right) and the guide-line controls (top-left) — see those for why
-// position: absolute + zIndex: 1000 is required here at all. Bottom-left
-// keeps this clear of both existing panels.
-const EDIT_CONTROLS_STYLE = {
-  position: 'absolute' as const,
-  bottom: 8,
-  left: 8,
-  zIndex: 1000,
-  background: 'white',
-  padding: 8,
-  borderRadius: 4,
-}
-
-// Fourth and last free corner (bottom-right) — LayerPanel has top-right,
-// the guide-line controls top-left, the edit-mode controls bottom-left. See
-// OrthogonalitySuggestion.tsx's doc comment for why the deviation
-// text/buttons live here instead of inside the Leaflet tree alongside the
-// Polyline preview it renders.
-const ORTHOGONALITY_PANEL_STYLE = {
-  position: 'absolute' as const,
-  bottom: 8,
-  right: 8,
-  zIndex: 1000,
-  background: 'white',
-  padding: 8,
-  borderRadius: 4,
-}
-
-// Task 33 (GridCreationPanel) needs a corner too, but all four are already
-// spoken for (LayerPanel top-right, guide-line controls top-left, edit-mode
-// controls bottom-left, orthogonality panel bottom-right). Rather than invent
-// a fifth ad hoc position or render it unpositioned (which would repeat the
-// flow-collapse bug this file has hit before — see LayerPanel's PANEL_STYLE
-// comment), GridCreationPanel is stacked into the existing top-right corner
-// underneath LayerPanel: the two are not needed at the same instant in the
-// field workflow (toggling layer visibility vs. creating a new grid), and
-// this single absolutely-positioned flex column lets each card be whatever
-// height its own content needs — LayerPanel grows with the number of grid
-// layers, GridCreationPanel grows as it steps through
-// collapsed/picking-template/awaiting-origin/awaiting-polarity — without
-// either one having to guess the other's height via hardcoded offsets.
-// maxHeight/overflowY guard against a real overflow risk: the picking-template
-// step renders GridTemplatePicker, which includes a 6-field creation form
-// below the template list — tall. Stacked under LayerPanel (which itself
-// grows per grid layer) inside a fixed-height map wrapper, with nothing
-// capping this stack's height, it could extend past the map's visible
-// bottom edge and (being zIndex: 1000) steal clicks from whatever renders
-// below the map. maxWidth keeps a long template list from also growing wide
-// enough to crowd out the map underneath it.
-const TOP_RIGHT_STACK_STYLE = {
-  position: 'absolute' as const,
-  top: 8,
-  right: 8,
-  zIndex: 1000,
-  display: 'flex' as const,
-  flexDirection: 'column' as const,
-  gap: 8,
-  alignItems: 'flex-end' as const,
-  maxHeight: 'calc(100% - 16px)',
-  maxWidth: 320,
-  overflowY: 'auto' as const,
-}
-
 // GridCreationPanel (unlike LayerPanel) renders bare buttons/paragraphs with
 // no chrome of its own, since GridCreationPanel.tsx is shared with its own
 // unit tests that don't care about styling. This wrapper gives it the same
 // white-card look as every other overlay panel in this file.
 const GRID_CREATION_WRAPPER_STYLE = {
+  background: 'white',
+  padding: 8,
+  borderRadius: 4,
+}
+
+// OverlayPanel (see OverlayPanel.tsx) only positions/stacks a corner — it
+// doesn't give its children a white-card look, matching LayerPanel's own
+// PANEL_STYLE and GRID_CREATION_WRAPPER_STYLE above, both of which supply
+// their own chrome. The guide-line controls, edit-mode controls, and
+// orthogonality-review panel below have no chrome of their own (they used to
+// get it "for free" from the *_STYLE constants this task removed), so each
+// needs this same wrapper.
+const CARD_CHROME_STYLE = {
   background: 'white',
   padding: 8,
   borderRadius: 4,
@@ -120,7 +57,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   const [customBearingInput, setCustomBearingInput] = useState('')
   // Single global edit-mode toggle (not per-layer) — Laurent works on one
   // network at a time in the field, so whichever grid layer is currently
-  // visible becomes editable; see EDIT_CONTROLS_STYLE usage below.
+  // visible becomes editable; see the bottom-left OverlayPanel usage below.
   const [editMode, setEditMode] = useState(false)
   const [undoStack, setUndoStack] = useState<Record<string, GridLine[]>>({}) // per gridInstanceId
   // Tracks the line most recently touched by a drag/reset, so the single
@@ -128,7 +65,7 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   // without a per-line picker UI (not specified by the plan; kept minimal).
   const [lastChangedLine, setLastChangedLine] = useState<{ instanceId: string; lineId: string } | null>(null)
   // Set to a GridLine id right after it's adjusted (drag or reset), so the
-  // orthogonality-assist panel (bottom-right, see ORTHOGONALITY_PANEL_STYLE)
+  // orthogonality-assist panel (bottom-right OverlayPanel, below)
   // knows which line to preview/offer straightening for. Cleared on accept
   // or dismiss.
   const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
@@ -359,10 +296,10 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           />
         )}
       </MapView>
-      {/* Top-right (absolute) — see TOP_RIGHT_STACK_STYLE above for why
-          LayerPanel and GridCreationPanel share this corner instead of each
-          claiming one of their own. */}
-      <div style={TOP_RIGHT_STACK_STYLE}>
+      {/* Top-right — LayerPanel and GridCreationPanel share this corner
+          instead of each claiming one of their own; see OverlayPanel.tsx for
+          why the stacking/overflow treatment is needed. */}
+      <OverlayPanel corner="top-right">
         <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
         <div style={GRID_CREATION_WRAPPER_STYLE}>
           <GridCreationPanel
@@ -372,112 +309,107 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
             onGenerate={handleGenerateGrid}
           />
         </div>
-      </div>
-      {/* Positioned top-left (absolute), mirroring LayerPanel's top-right
-          treatment, for the same reason documented on LayerPanel's
-          PANEL_STYLE: SiteMapView's wrapping div is position: relative with a
-          fixed-height parent (MissionWorkspace's MAP_WRAPPER_STYLE), so an
-          unpositioned sibling would flow below the map box and spill outside
-          the visible area instead of overlaying it. Top-left keeps it clear
-          of LayerPanel's top-right checkboxes. */}
-      <div style={GUIDE_LINE_CONTROLS_STYLE}>
-        <button
-          onClick={() => {
-            setGuideLineBearing(0)
-            setCustomBearingInput('')
-          }}
-        >
-          N/S
-        </button>
-        <button
-          onClick={() => {
-            setGuideLineBearing(90)
-            setCustomBearingInput('')
-          }}
-        >
-          E/O
-        </button>
-        <button
-          onClick={() => {
-            setGuideLineBearing(45)
-            setCustomBearingInput('')
-          }}
-        >
-          45°
-        </button>
-        <button
-          onClick={() => {
-            setGuideLineBearing(135)
-            setCustomBearingInput('')
-          }}
-        >
-          135°
-        </button>
-        <input
-          type="number"
-          step="1"
-          aria-label="Angle personnalisé"
-          value={customBearingInput}
-          onChange={(e) => setCustomBearingInput(e.target.value)}
-        />
-        <button onClick={handleValidateCustomBearing}>Valider</button>
-        <button
-          onClick={() => {
-            setPlacingGuideLine(true)
-            if (awaitingGridOrigin) {
-              setAwaitingGridOrigin(false)
-              // GridCreationPanel was mid-flow (showing "cliquez l'origine")
-              // when this cancelled its pending request out from under it —
-              // force-remount it back to collapsed so it doesn't keep
-              // showing a stale prompt for a click that will now go to the
-              // guide-line tool instead.
-              setGridCreationKey((k) => k + 1)
+      </OverlayPanel>
+      {/* Top-left — kept clear of LayerPanel's top-right checkboxes. */}
+      <OverlayPanel corner="top-left">
+        <div style={CARD_CHROME_STYLE}>
+          <button
+            onClick={() => {
+              setGuideLineBearing(0)
+              setCustomBearingInput('')
+            }}
+          >
+            N/S
+          </button>
+          <button
+            onClick={() => {
+              setGuideLineBearing(90)
+              setCustomBearingInput('')
+            }}
+          >
+            E/O
+          </button>
+          <button
+            onClick={() => {
+              setGuideLineBearing(45)
+              setCustomBearingInput('')
+            }}
+          >
+            45°
+          </button>
+          <button
+            onClick={() => {
+              setGuideLineBearing(135)
+              setCustomBearingInput('')
+            }}
+          >
+            135°
+          </button>
+          <input
+            type="number"
+            step="1"
+            aria-label="Angle personnalisé"
+            value={customBearingInput}
+            onChange={(e) => setCustomBearingInput(e.target.value)}
+          />
+          <button onClick={handleValidateCustomBearing}>Valider</button>
+          <button
+            onClick={() => {
+              setPlacingGuideLine(true)
+              if (awaitingGridOrigin) {
+                setAwaitingGridOrigin(false)
+                // GridCreationPanel was mid-flow (showing "cliquez l'origine")
+                // when this cancelled its pending request out from under it —
+                // force-remount it back to collapsed so it doesn't keep
+                // showing a stale prompt for a click that will now go to the
+                // guide-line tool instead.
+                setGridCreationKey((k) => k + 1)
+              }
+            }}
+            disabled={guideLineBearing === null}
+          >
+            Placer ici
+          </button>
+          <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
+            Effacer
+          </button>
+        </div>
+      </OverlayPanel>
+      {/* Bottom-left, the third corner — clear of LayerPanel top-right and
+          the guide-line controls top-left. A single global "Mode édition"
+          toggle, not a per-layer one: Laurent edits one visible network at a
+          time in the field, so whichever grid layer is currently toggled
+          visible becomes draggable while this is on. "Annuler"/"Réinitialiser"
+          act on the line most recently dragged or reset (lastChangedLine)
+          rather than through a per-line picker, since that line is always
+          the one Laurent just touched. */}
+      <OverlayPanel corner="bottom-left">
+        <div style={CARD_CHROME_STYLE}>
+          <label>
+            <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
+            Mode édition (caler sur le ressenti)
+          </label>
+          <button
+            onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
+            disabled={
+              !editMode ||
+              !lastChangedLine ||
+              !(visibility[lastChangedLine.instanceId] ?? false) ||
+              (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
             }
-          }}
-          disabled={guideLineBearing === null}
-        >
-          Placer ici
-        </button>
-        <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
-          Effacer
-        </button>
-      </div>
-      {/* Bottom-left (absolute), the third corner — see EDIT_CONTROLS_STYLE
-          above for why this needs position: absolute at all, and why this
-          corner was chosen (clear of LayerPanel top-right and the guide-line
-          controls top-left). A single global "Mode édition" toggle, not a
-          per-layer one: Laurent edits one visible network at a time in the
-          field, so whichever grid layer is currently toggled visible becomes
-          draggable while this is on. "Annuler"/"Réinitialiser" act on the
-          line most recently dragged or reset (lastChangedLine) rather than
-          through a per-line picker, since that line is always the one
-          Laurent just touched. */}
-      <div style={EDIT_CONTROLS_STYLE}>
-        <label>
-          <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
-          Mode édition (caler sur le ressenti)
-        </label>
-        <button
-          onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
-          disabled={
-            !editMode ||
-            !lastChangedLine ||
-            !(visibility[lastChangedLine.instanceId] ?? false) ||
-            (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
-          }
-        >
-          Annuler
-        </button>
-        <button
-          onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
-          disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}
-        >
-          Réinitialiser
-        </button>
-      </div>
-      {/* Bottom-right (absolute), the fourth and last free corner — see
-          ORTHOGONALITY_PANEL_STYLE above for why this needs position:
-          absolute at all, why this corner was chosen, and why the text and
+          >
+            Annuler
+          </button>
+          <button
+            onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
+            disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}
+          >
+            Réinitialiser
+          </button>
+        </div>
+      </OverlayPanel>
+      {/* Bottom-right, the fourth and last free corner — see
+          OrthogonalitySuggestion.tsx's doc comment for why the text and
           buttons are rendered here rather than alongside the <Polyline>
           preview (OrthogonalitySuggestion, rendered inside <MapView> above).
           Shown after every line adjustment (handleLineChanged sets
@@ -486,21 +418,23 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
           through handleLineChanged itself, so it's undoable/persisted the
           same way a drag or reset is); "Ignorer" just dismisses the panel. */}
       {reviewTarget && reviewSuggestion && (
-        <div style={ORTHOGONALITY_PANEL_STYLE}>
-          <p>Écart à l'orthogonal théorique : {reviewSuggestion.deviationDeg.toFixed(1)}°</p>
-          <button
-            onClick={() => {
-              handleLineChanged(reviewTarget.instance.id, {
-                ...reviewTarget.line,
-                adjustedPoints: reviewSuggestion.suggestedPoints,
-              })
-              setAwaitingOrthogonalityReview(null)
-            }}
-          >
-            Redresser
-          </button>
-          <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
-        </div>
+        <OverlayPanel corner="bottom-right">
+          <div style={CARD_CHROME_STYLE}>
+            <p>Écart à l'orthogonal théorique : {reviewSuggestion.deviationDeg.toFixed(1)}°</p>
+            <button
+              onClick={() => {
+                handleLineChanged(reviewTarget.instance.id, {
+                  ...reviewTarget.line,
+                  adjustedPoints: reviewSuggestion.suggestedPoints,
+                })
+                setAwaitingOrthogonalityReview(null)
+              }}
+            >
+              Redresser
+            </button>
+            <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
+          </div>
+        </OverlayPanel>
       )}
     </div>
   )
