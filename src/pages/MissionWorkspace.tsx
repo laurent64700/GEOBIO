@@ -134,7 +134,9 @@ export function MissionWorkspace() {
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView
               planId={phase.exteriorPlan.id}
+              missionId={phase.mission.id}
               missionOrigin={{ lat: originLat!, lng: originLng! }}
+              initialBuildingFootprint={phase.mission.buildingFootprint}
             />
           </div>
           <label>

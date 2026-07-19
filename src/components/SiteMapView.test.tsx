@@ -4,12 +4,28 @@ import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
+import * as buildingFootprintService from '../data/buildingFootprintService'
+import * as missionsRepo from '../data/missionsRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
 vi.mock('../data/gridInstancesRepo')
 vi.mock('../data/gridLinesRepo')
 vi.mock('../data/feltPointsRepo')
+vi.mock('../data/buildingFootprintService')
+vi.mock('../data/missionsRepo')
+
+// SiteMapView.test.tsx mocks ./MapView down to a plain <div> — there is no
+// real <MapContainer> anywhere in this test file, so a real, unmocked
+// <Polygon> (which BuildingFootprintPicker renders per candidate) would
+// crash on useLeafletContext() the moment candidates is non-empty. Mock it
+// the same way NetworkLinesLayer/FeltPointsLayer/GuideLineLayer already are
+// in this file — a stub that exposes just enough to drive the interaction
+// under test.
+vi.mock('./BuildingFootprintPicker', () => ({
+  BuildingFootprintPicker: ({ candidates, onChoose }: { candidates: unknown[]; onChoose: (i: number) => void }) =>
+    candidates.length > 0 ? <button onClick={() => onChoose(0)}>simulate-choose-building</button> : null,
+}))
 
 vi.mock('./MapView', () => ({
   MapView: ({ children, onMapClick }: { children?: React.ReactNode; onMapClick?: (l: { lat: number; lng: number }) => void }) => (
@@ -75,14 +91,26 @@ const hartmannInstance = {
 }
 
 describe('SiteMapView', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Deviation from the plan's literal snippet: vi.mock('../data/buildingFootprintService')
+    // above applies file-wide, so every pre-existing test in this file (not
+    // just the 3 new ones added for Task 8) now triggers SiteMapView's
+    // building-footprint useEffect. Without a default resolved value here,
+    // the auto-mocked fetchBuildingsInBounds returns undefined, `found.length`
+    // throws, and setError fires — breaking every pre-existing test with an
+    // unrelated "error" state. Default to "no buildings found nearby" so
+    // existing tests are unaffected; individual tests below override this
+    // with mockResolvedValue/mockRejectedValue as needed.
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([])
+  })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     expect(await screen.findByTestId('felt-points')).toBeInTheDocument()
     expect(screen.queryByTestId('lines-Hartmann')).not.toBeInTheDocument()
@@ -93,7 +121,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     await screen.findByTestId('felt-points')
     fireEvent.click(await screen.findByLabelText('Hartmann'))
@@ -106,7 +134,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     await screen.findByTestId('felt-points')
     fireEvent.click(await screen.findByLabelText('Ressenti terrain'))
@@ -121,7 +149,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
@@ -130,7 +158,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -144,7 +172,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -156,7 +184,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'E/O' }))
@@ -170,7 +198,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: '135°' }))
@@ -184,7 +212,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.change(screen.getByLabelText('Angle personnalisé'), { target: { value: '27' } })
@@ -199,7 +227,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     // input starts empty; Number('') is 0 (not NaN), so the guard must also
@@ -213,7 +241,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -230,7 +258,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     // "Effacer" is disabled until a guide line has been placed
@@ -261,7 +289,7 @@ describe('SiteMapView', () => {
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(gridLinesRepo.updateAdjustedPoints).mockResolvedValue(hartmannLine)
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     // Enter edit mode and show the Hartmann layer so EditableNetworkLine (mocked
@@ -332,7 +360,7 @@ describe('SiteMapView', () => {
       lines: [],
     })
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
@@ -359,7 +387,7 @@ describe('SiteMapView', () => {
       lines: [],
     })
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     // Arm the guide-line tool (bearing selected, "Placer ici" pressed) —
@@ -401,7 +429,7 @@ describe('SiteMapView', () => {
       lines: [],
     })
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
@@ -427,7 +455,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
     await screen.findByTestId('map-view')
 
     // Start grid creation and pick a template — this sets awaitingGridOrigin
@@ -453,5 +481,58 @@ describe('SiteMapView', () => {
     // as a grid origin (which would show the polarity toggle instead).
     expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '+' })).not.toBeInTheDocument()
+  })
+
+  it('shows the building footprint picker when none is stored yet, and confirms one into place', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
+      { ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }, { lat: 48.8567, lng: 2.3522 }, { lat: 48.8567, lng: 2.3523 }]] },
+    ])
+    // No shared Mission fixture exists in this test file today (grep it
+    // first to confirm before assuming otherwise) — construct one inline,
+    // matching every field on src/domain/types.ts's Mission interface.
+    vi.mocked(missionsRepo.setBuildingFootprint).mockResolvedValue({
+      id: 'm1', address: 'A', missionDate: '2026-07-20', declinationDeg: null,
+      originLat: 48.8566, originLng: 2.3522,
+      causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
+      causeParanormale: null, causeAutres: null, bovisRate: null, parcelRefs: [],
+      buildingFootprint: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
+    })
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+
+    fireEvent.click(await screen.findByText('simulate-choose-building'))
+
+    await waitFor(() => expect(missionsRepo.setBuildingFootprint).toHaveBeenCalled())
+  })
+
+  it('shows a clear message when no building is found even after widening the search', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([]) // both calls return empty
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+
+    expect(await screen.findByText(/aucun bâtiment détecté/i)).toBeInTheDocument()
+    expect(buildingFootprintService.fetchBuildingsInBounds).toHaveBeenCalledTimes(2) // 100m then 300m
+  })
+
+  it('surfaces a French error message when fetching buildings fails', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockRejectedValue(
+      new Error('Impossible de charger les bâtiments : 500')
+    )
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
   })
 })

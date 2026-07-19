@@ -8,10 +8,13 @@ import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
 import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
+import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
+import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
+import { setBuildingFootprint } from '../data/missionsRepo'
 import type { GridInstance, GridLine, FeltPoint, Point, GridTemplate, GridLinePolarity } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
@@ -19,7 +22,28 @@ import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
 export interface SiteMapViewProps {
   planId: string
+  missionId: string
   missionOrigin: LatLng
+  initialBuildingFootprint: Point[] | null
+}
+
+// Fixed search radius around the mission origin, mirroring
+// DEFAULT_GRID_RADIUS_M's role in createGridForPlan.ts — see spec §4/§7 for
+// why bounds come from the origin rather than "selected parcels" (no
+// parcel-picker UI exists).
+const BUILDING_SEARCH_RADIUS_M = 100
+const BUILDING_SEARCH_WIDENED_RADIUS_M = 300
+const METERS_PER_DEG_LAT = 111_320
+
+function boundsAround(origin: LatLng, radiusM: number) {
+  const degLat = radiusM / METERS_PER_DEG_LAT
+  const degLng = radiusM / (METERS_PER_DEG_LAT * Math.cos((origin.lat * Math.PI) / 180))
+  return {
+    minLat: origin.lat - degLat,
+    maxLat: origin.lat + degLat,
+    minLng: origin.lng - degLng,
+    maxLng: origin.lng + degLng,
+  }
 }
 
 // GridCreationPanel (unlike LayerPanel) renders bare buttons/paragraphs with
@@ -45,7 +69,7 @@ const CARD_CHROME_STYLE = {
   borderRadius: 4,
 }
 
-export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
+export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
@@ -85,6 +109,9 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
   // keeps showing a stale "cliquez l'origine" prompt for a click that will
   // actually place a guide-line anchor instead).
   const [gridCreationKey, setGridCreationKey] = useState(0)
+  const [buildingFootprint, setBuildingFootprintState] = useState<Point[] | null>(initialBuildingFootprint)
+  const [buildingCandidates, setBuildingCandidates] = useState<BuildingFootprint[]>([])
+  const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -107,6 +134,53 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
     }
     load()
   }, [planId])
+
+  // Depend on missionOrigin.lat/lng (primitives), NOT the missionOrigin object
+  // itself. MissionWorkspace.tsx's ready-no-interior case constructs
+  // `missionOrigin={{ lat: originLat!, lng: originLng! }}` as a fresh object
+  // literal on every render (confirmed: no memoization) — SiteMapView
+  // re-renders whenever its parent does, so a `[missionOrigin, ...]`
+  // dependency would re-fire this effect (and re-hit the IGN WFS endpoint,
+  // twice per widen-once pass) on every unrelated parent re-render for as
+  // long as buildingFootprint stays null, not just when the origin actually
+  // changes.
+  useEffect(() => {
+    if (buildingFootprint !== null) return // already confirmed, nothing to fetch
+    async function loadBuildings() {
+      try {
+        let found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_RADIUS_M))
+        if (found.length === 0) {
+          found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_WIDENED_RADIUS_M))
+        }
+        setBuildingCandidates(found)
+        setBuildingSearchExhausted(found.length === 0)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+    }
+    loadBuildings()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- missionOrigin.lat/lng
+    // are the real dependency; the missionOrigin object itself is deliberately
+    // excluded (see comment above) since it's a fresh reference every render.
+  }, [missionOrigin.lat, missionOrigin.lng, buildingFootprint])
+
+  async function handleChooseBuilding(index: number) {
+    try {
+      const footprint = buildingCandidates[index].ringsLatLng[0].map((latlng) => latLngToLocal(latlng, missionOrigin))
+      const updated = await setBuildingFootprint(missionId, footprint)
+      setBuildingFootprintState(updated.buildingFootprint)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  function handleChangeBuilding() {
+    setBuildingFootprintState(null)
+    setBuildingCandidates([])
+    setBuildingSearchExhausted(false)
+    // The useEffect above re-fires automatically once buildingFootprint becomes
+    // null again (it's in the dependency array), re-running the fetch.
+  }
 
   function handleGuideLineMapClick(latlng: { lat: number; lng: number }) {
     setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
@@ -295,6 +369,14 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
             missionOrigin={missionOrigin}
           />
         )}
+        {buildingFootprint === null && (
+          <BuildingFootprintPicker
+            candidates={buildingCandidates}
+            confirmedIndex={null}
+            missionOrigin={missionOrigin}
+            onChoose={handleChooseBuilding}
+          />
+        )}
       </MapView>
       {/* Top-right — LayerPanel and GridCreationPanel share this corner
           instead of each claiming one of their own; see OverlayPanel.tsx for
@@ -374,6 +456,21 @@ export function SiteMapView({ planId, missionOrigin }: SiteMapViewProps) {
             Effacer
           </button>
         </div>
+        {/* Stacked as a second card in the same top-left corner (see
+            OverlayPanel.tsx for why a corner can hold more than one item) —
+            only shown once there's something to say about the building
+            footprint: either it's confirmed (offer "Changer de bâtiment")
+            or the search came up empty even after widening. */}
+        {(buildingFootprint !== null || buildingSearchExhausted) && (
+          <div style={CARD_CHROME_STYLE}>
+            {buildingFootprint !== null && (
+              <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
+            )}
+            {buildingSearchExhausted && buildingFootprint === null && (
+              <p>Aucun bâtiment détecté à proximité de l'origine.</p>
+            )}
+          </div>
+        )}
       </OverlayPanel>
       {/* Bottom-left, the third corner — clear of LayerPanel top-right and
           the guide-line controls top-left. A single global "Mode édition"
