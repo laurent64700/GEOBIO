@@ -1,6 +1,6 @@
 // src/data/missionsRepo.ts
 import { supabase } from '../lib/supabaseClient'
-import type { Mission } from '../domain/types'
+import type { Mission, Point } from '../domain/types'
 
 export interface CreateMissionInput {
   address: string
@@ -22,6 +22,7 @@ interface MissionRow {
   cause_autres: number | null
   bovis_rate: number | null
   parcel_refs: string[]
+  building_footprint: Point[] | null
 }
 
 function mapRowToMission(row: MissionRow): Mission {
@@ -39,6 +40,7 @@ function mapRowToMission(row: MissionRow): Mission {
     causeAutres: row.cause_autres,
     bovisRate: row.bovis_rate,
     parcelRefs: row.parcel_refs,
+    buildingFootprint: row.building_footprint,
   }
 }
 
@@ -122,5 +124,17 @@ export async function setSelectedParcels(missionId: string, parcelRefs: string[]
     .single()
 
   if (error) throw new Error(`Impossible d'enregistrer les parcelles sélectionnées : ${error.message}`)
+  return mapRowToMission(data as MissionRow)
+}
+
+export async function setBuildingFootprint(missionId: string, footprint: Point[]): Promise<Mission> {
+  const { data, error } = await supabase
+    .from('mission')
+    .update({ building_footprint: footprint })
+    .eq('id', missionId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer le contour du bâtiment : ${error.message}`)
   return mapRowToMission(data as MissionRow)
 }

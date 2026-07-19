@@ -27,6 +27,9 @@ export interface Mission {
   causeAutres: number | null
   bovisRate: number | null
   parcelRefs: string[]
+  /** Outer ring only (holes/multi-ring buildings not modeled — see spec §6 for the
+   * tradeoff). Null until a building is fetched and confirmed via "Changer de bâtiment". */
+  buildingFootprint: Point[] | null
 }
 
 export type PlanKind = 'exterieur' | 'interieur'

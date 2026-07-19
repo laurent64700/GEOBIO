@@ -13,6 +13,7 @@ describe('MissionForm', () => {
       causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
       causeParanormale: null, causeAutres: null, bovisRate: null,
       parcelRefs: [],
+      buildingFootprint: null,
     }
     vi.mocked(missionsRepo.createMission).mockResolvedValue(mission)
     const onCreated = vi.fn()

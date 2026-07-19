@@ -1,6 +1,6 @@
 // src/data/missionsRepo.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels } from './missionsRepo'
+import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels, setBuildingFootprint } from './missionsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -27,6 +27,7 @@ describe('missionsRepo', () => {
         cause_autres: null,
         bovis_rate: null,
         parcel_refs: [],
+        building_footprint: null,
       },
       error: null,
     })
@@ -58,6 +59,7 @@ describe('missionsRepo', () => {
       causeAutres: null,
       bovisRate: null,
       parcelRefs: [],
+      buildingFootprint: null,
     })
   })
 
@@ -73,8 +75,8 @@ describe('missionsRepo', () => {
   it('lists missions ordered by most recent date first', async () => {
     const { from, chain } = createSupabaseChainMock({
       data: [
-        { id: 'm2', address: 'B', mission_date: '2026-07-21', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [] },
-        { id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [] },
+        { id: 'm2', address: 'B', mission_date: '2026-07-21', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [], building_footprint: null },
+        { id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null, origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [], building_footprint: null },
       ],
       error: null,
     })
@@ -103,6 +105,7 @@ describe('missionsRepo', () => {
         cause_autres: null,
         bovis_rate: null,
         parcel_refs: [],
+        building_footprint: null,
       },
       error: null,
     })
@@ -123,6 +126,7 @@ describe('missionsRepo', () => {
         origin_lat: null, origin_lng: null,
         cause_architectural: 3, cause_electromagnetique: 6, cause_geobiologique: 8,
         cause_paranormale: 1, cause_autres: 0, bovis_rate: 9500, parcel_refs: [],
+        building_footprint: null,
       },
       error: null,
     })
@@ -167,6 +171,7 @@ describe('missionsRepo', () => {
         cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null,
         cause_paranormale: null, cause_autres: null, bovis_rate: null,
         parcel_refs: ['AB1167', 'AB1168'],
+        building_footprint: null,
       },
       error: null,
     })
@@ -186,6 +191,42 @@ describe('missionsRepo', () => {
 
     await expect(setSelectedParcels('m1', ['AB1167'])).rejects.toThrow(
       "Impossible d'enregistrer les parcelles sélectionnées : network down"
+    )
+  })
+
+  it('sets the building footprint and maps it back', async () => {
+    const footprint = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 8 },
+      { x: 0, y: 8 },
+    ]
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'm1', address: 'A', mission_date: '2026-07-20', declination_deg: null,
+        origin_lat: null, origin_lng: null,
+        cause_architectural: null, cause_electromagnetique: null, cause_geobiologique: null,
+        cause_paranormale: null, cause_autres: null, bovis_rate: null, parcel_refs: [],
+        building_footprint: footprint,
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const mission = await setBuildingFootprint('m1', footprint)
+
+    expect(from).toHaveBeenCalledWith('mission')
+    expect(chain.eq).toHaveBeenCalledWith('id', 'm1')
+    expect(chain.update).toHaveBeenCalledWith({ building_footprint: footprint })
+    expect(mission.buildingFootprint).toEqual(footprint)
+  })
+
+  it('throws a descriptive French error when setting the building footprint fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(setBuildingFootprint('m1', [])).rejects.toThrow(
+      "Impossible d'enregistrer le contour du bâtiment : network down"
     )
   })
 })
