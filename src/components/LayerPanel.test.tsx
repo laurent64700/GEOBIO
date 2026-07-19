@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { LayerPanel } from './LayerPanel'
+import { LayerPanel, BAGUA_LAYER_ID } from './LayerPanel'
 
 describe('LayerPanel', () => {
   it('shows "Ressenti terrain" checked by default, grid layers unchecked by default', () => {
@@ -13,6 +13,30 @@ describe('LayerPanel', () => {
     )
     expect(screen.getByLabelText('Ressenti terrain')).toBeChecked()
     expect(screen.getByLabelText('Hartmann')).not.toBeChecked()
+  })
+
+  it('shows the Bagua layer checkbox, unchecked by default (correction-phase tool, not a blind-sensing default)', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/bagua/i)).not.toBeChecked()
+  })
+
+  it('calls onToggle with BAGUA_LAYER_ID when the Bagua checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText(/bagua/i))
+    expect(onToggle).toHaveBeenCalledWith(BAGUA_LAYER_ID)
   })
 
   it('respects explicit visibility overrides', () => {

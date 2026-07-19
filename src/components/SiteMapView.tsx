@@ -5,20 +5,58 @@ import { EditableNetworkLine } from './EditableNetworkLine'
 import { FeltPointsLayer } from './FeltPointsLayer'
 import { GuideLineLayer } from './GuideLineLayer'
 import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
-import { LayerPanel, FELT_POINTS_LAYER_ID, type LayerEntry } from './LayerPanel'
+import { LayerPanel, FELT_POINTS_LAYER_ID, BAGUA_LAYER_ID, type LayerEntry } from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
+import { BaguaLayer } from './BaguaLayer'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
 import { setBuildingFootprint } from '../data/missionsRepo'
+import { baguaCorrespondences } from '../domain/baguaCorrespondences'
+import type { CompassDirection } from '../geometry/bagua'
 import type { GridInstance, GridLine, FeltPoint, Point, GridTemplate, GridLinePolarity } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
+
+// Same order as bagua.ts's own (module-private) COMPASS_ORDER — kept in sync
+// manually since that constant isn't exported; only used here to iterate the
+// legend table in a sensible compass order rather than object-key order.
+const COMPASS_DIRECTIONS: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+
+// Collapsed-by-default legend (spec §6: "repliée par défaut") for the Bagua
+// layer's static object-correspondence table. Kept minimal/local to this file
+// since nothing else reuses it.
+function BaguaLegendCollapsed() {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div>
+      <p>Bagua : 8 secteurs — voir détails</p>
+      <button onClick={() => setExpanded((v) => !v)}>Détails</button>
+      {expanded && (
+        <table>
+          <tbody>
+            {COMPASS_DIRECTIONS.map((direction) => {
+              const correspondence = baguaCorrespondences[direction]
+              return (
+                <tr key={direction}>
+                  <td>{direction}</td>
+                  <td>{correspondence.label}</td>
+                  <td>{correspondence.element}</td>
+                  <td>{correspondence.correctiveObjects.join(', ')}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
 
 export interface SiteMapViewProps {
   planId: string
@@ -377,6 +415,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             onChoose={handleChooseBuilding}
           />
         )}
+        <BaguaLayer
+          footprint={buildingFootprint}
+          missionOrigin={missionOrigin}
+          visible={visibility[BAGUA_LAYER_ID] ?? false}
+        />
       </MapView>
       {/* Top-right — LayerPanel and GridCreationPanel share this corner
           instead of each claiming one of their own; see OverlayPanel.tsx for
@@ -530,6 +573,18 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
               Redresser
             </button>
             <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
+          </div>
+        </OverlayPanel>
+      )}
+      {/* Stacked into bottom-right alongside the orthogonality panel — see
+          OverlayPanel.tsx for why a corner can hold more than one item.
+          bottom-right is the safest pairing: orthogonality review only
+          appears transiently right after a drag, while the Bagua legend is
+          viewed at leisure once the layer is toggled on. */}
+      {(visibility[BAGUA_LAYER_ID] ?? false) && (
+        <OverlayPanel corner="bottom-right">
+          <div style={CARD_CHROME_STYLE}>
+            <BaguaLegendCollapsed />
           </div>
         </OverlayPanel>
       )}

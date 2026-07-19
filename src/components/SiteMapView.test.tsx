@@ -26,6 +26,12 @@ vi.mock('./BuildingFootprintPicker', () => ({
   BuildingFootprintPicker: ({ candidates, onChoose }: { candidates: unknown[]; onChoose: (i: number) => void }) =>
     candidates.length > 0 ? <button onClick={() => onChoose(0)}>simulate-choose-building</button> : null,
 }))
+// Same reasoning as BuildingFootprintPicker above — BaguaLayer renders a real
+// <Polygon> once visible/footprint are truthy, which would crash without a
+// real Leaflet context.
+vi.mock('./BaguaLayer', () => ({
+  BaguaLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="bagua-layer" /> : null),
+}))
 
 vi.mock('./MapView', () => ({
   MapView: ({ children, onMapClick }: { children?: React.ReactNode; onMapClick?: (l: { lat: number; lng: number }) => void }) => (
@@ -534,5 +540,24 @@ describe('SiteMapView', () => {
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
+  })
+
+  it('shows the Bagua legend collapsed by default when the layer is toggled visible, expanding only on "Détails"', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByLabelText(/bagua/i))
+
+    expect(await screen.findByText(/bagua : 8 secteurs/i)).toBeInTheDocument()
+    expect(screen.queryByText('Carrière')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Détails' }))
+
+    expect(screen.getByText('Carrière')).toBeInTheDocument()
   })
 })

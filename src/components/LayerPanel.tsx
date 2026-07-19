@@ -1,4 +1,5 @@
 export const FELT_POINTS_LAYER_ID = 'felt-points'
+export const BAGUA_LAYER_ID = 'bagua'
 
 export interface LayerEntry {
   id: string
@@ -49,6 +50,14 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
           <span style={{ color: layer.color }}>{layer.label}</span>
         </label>
       ))}
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[BAGUA_LAYER_ID] ?? false}
+          onChange={() => onToggle(BAGUA_LAYER_ID)}
+        />
+        Bagua (Pakua)
+      </label>
     </div>
   )
 }
