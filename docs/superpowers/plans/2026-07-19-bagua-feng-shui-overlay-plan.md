@@ -1337,8 +1337,12 @@ implementation time is a reasonable adjustment — not a hard requirement of thi
 
 ```tsx
 // append to src/components/SiteMapView.test.tsx
-// (adapt the exact mock setup to match this file's established conventions —
-// see how gridInstancesRepo/feltPointsRepo are already mocked at the top)
+//
+// Add these two namespace imports at the top of the file, matching the
+// existing convention for gridInstancesRepo/feltPointsRepo (grep the file's
+// current import block for the exact pattern to mirror):
+//   import * as buildingFootprintService from '../data/buildingFootprintService'
+//   import * as missionsRepo from '../data/missionsRepo'
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 
@@ -1360,8 +1364,14 @@ it('shows the building footprint picker when none is stored yet, and confirms on
   vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
     { ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }, { lat: 48.8567, lng: 2.3522 }, { lat: 48.8567, lng: 2.3523 }]] },
   ])
+  // No shared Mission fixture exists in this test file today (grep it
+  // first to confirm before assuming otherwise) — construct one inline,
+  // matching every field on src/domain/types.ts's Mission interface.
   vi.mocked(missionsRepo.setBuildingFootprint).mockResolvedValue({
-    ...someMissionFixture, // reuse whatever Mission fixture this file already has
+    id: 'm1', address: 'A', missionDate: '2026-07-20', declinationDeg: null,
+    originLat: 48.8566, originLng: 2.3522,
+    causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
+    causeParanormale: null, causeAutres: null, bovisRate: null, parcelRefs: [],
     buildingFootprint: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
   })
 
