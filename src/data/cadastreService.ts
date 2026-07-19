@@ -1,5 +1,6 @@
 // src/data/cadastreService.ts
 import type { LatLng } from '../geometry/localCoordinates'
+import { polygonPartsToLatLng, type WfsGeometry } from './wfsGeometry'
 
 export interface CadastralParcel {
   id: string
@@ -22,19 +23,22 @@ export interface LatLngBounds {
 const CADASTRE_WFS_URL = 'https://data.geopf.fr/wfs/ows'
 const PARCEL_TYPE_NAME = 'CADASTRALPARCELS.PARCELLAIRE_EXPRESS:parcelle'
 
+// A MultiPolygon parcel (several disjoint parts) yields one CadastralParcel
+// per part, all sharing the same id/section — see polygonPartsToLatLng's doc
+// comment for why parts become separate entries rather than being flattened
+// into one ringsLatLng (that shape only holds ONE polygon's rings).
+// Non-polygonal geometries are skipped instead of silently parsing into NaN
+// coordinates.
 function parseParcelFeature(feature: {
   properties?: Record<string, unknown>
-  geometry: { coordinates: number[][][] }
-}): CadastralParcel {
+  geometry: WfsGeometry
+}): CadastralParcel[] {
   const props = feature.properties ?? {}
-  const ringsLatLng: LatLng[][] = feature.geometry.coordinates.map((ring) =>
-    ring.map(([lng, lat]) => ({ lat, lng }))
-  )
-  return {
+  return polygonPartsToLatLng(feature.geometry).map((ringsLatLng) => ({
     id: String(props.numero ?? 'inconnu'),
     section: String(props.section ?? ''),
     ringsLatLng,
-  }
+  }))
 }
 
 export async function fetchParcelsInBounds(
@@ -54,7 +58,7 @@ export async function fetchParcelsInBounds(
     throw new Error(`Impossible de charger les parcelles cadastrales : ${response.status}`)
   }
   const geojson = (await response.json()) as {
-    features: Array<{ properties?: Record<string, unknown>; geometry: { coordinates: number[][][] } }>
+    features: Array<{ properties?: Record<string, unknown>; geometry: WfsGeometry }>
   }
-  return geojson.features.map(parseParcelFeature)
+  return geojson.features.flatMap(parseParcelFeature)
 }

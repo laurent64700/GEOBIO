@@ -55,6 +55,62 @@ describe('fetchParcelsInBounds', () => {
     expect(calledUrl).toContain('BBOX=48.85,2.35,48.86,2.36,EPSG:4326')
   })
 
+  it('parses a MultiPolygon parcel into one entry per disjoint part, sharing id/section', async () => {
+    // PARCELLAIRE_EXPRESS can legitimately return MultiPolygon for a parcel
+    // with several disjoint parts; the old Polygon-only parser silently
+    // produced array-valued lat/lng (NaN downstream) on that input.
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { numero: '2042', section: 'ZC' },
+              geometry: {
+                type: 'MultiPolygon',
+                coordinates: [
+                  [
+                    [
+                      [2.35, 48.85],
+                      [2.351, 48.85],
+                      [2.351, 48.851],
+                      [2.35, 48.85],
+                    ],
+                  ],
+                  [
+                    [
+                      [2.36, 48.86],
+                      [2.361, 48.86],
+                      [2.361, 48.861],
+                      [2.36, 48.86],
+                    ],
+                  ],
+                ],
+              },
+            },
+          ],
+        }),
+    } as Response)
+
+    const parcels = await fetchParcelsInBounds({ minLat: 48.85, maxLat: 48.87, minLng: 2.35, maxLng: 2.37 })
+
+    expect(parcels).toHaveLength(2)
+    for (const parcel of parcels) {
+      expect(parcel.id).toBe('2042')
+      expect(parcel.section).toBe('ZC')
+      for (const ring of parcel.ringsLatLng) {
+        for (const { lat, lng } of ring) {
+          expect(Number.isFinite(lat)).toBe(true)
+          expect(Number.isFinite(lng)).toBe(true)
+        }
+      }
+    }
+    expect(parcels[0].ringsLatLng[0][0]).toEqual({ lat: 48.85, lng: 2.35 })
+    expect(parcels[1].ringsLatLng[0][0]).toEqual({ lat: 48.86, lng: 2.36 })
+  })
+
   it('throws a descriptive French error when the request fails', async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as Response)
 

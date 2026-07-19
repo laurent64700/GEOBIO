@@ -45,6 +45,80 @@ describe('fetchBuildingsInBounds', () => {
     expect(calledUrl).toContain('BBOX=48.85,2.35,48.86,2.36,EPSG:4326')
   })
 
+  it('parses a MultiPolygon building into one candidate per disjoint part, with numeric coordinates', async () => {
+    // BDTOPO can legitimately return MultiPolygon for a building with several
+    // disjoint parts. The old Polygon-only parser destructured each part's
+    // ring array as if it were a [lng, lat] position, silently producing
+    // {lat: number[], lng: number[]} → invisible NaN polygons in Leaflet.
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          type: 'FeatureCollection',
+          features: [
+            {
+              type: 'Feature',
+              properties: { id: 'BATIMENT0000005678' },
+              geometry: {
+                type: 'MultiPolygon',
+                coordinates: [
+                  [
+                    [
+                      [2.35, 48.85],
+                      [2.3502, 48.85],
+                      [2.3502, 48.8502],
+                      [2.35, 48.85],
+                    ],
+                  ],
+                  [
+                    [
+                      [2.36, 48.86],
+                      [2.3602, 48.86],
+                      [2.3602, 48.8602],
+                      [2.36, 48.86],
+                    ],
+                  ],
+                ],
+              },
+            },
+          ],
+        }),
+    } as Response)
+
+    const buildings = await fetchBuildingsInBounds({ minLat: 48.85, maxLat: 48.87, minLng: 2.35, maxLng: 2.37 })
+
+    expect(buildings).toHaveLength(2) // one clickable candidate per part
+    expect(buildings[0].ringsLatLng[0][0]).toEqual({ lat: 48.85, lng: 2.35 })
+    expect(buildings[1].ringsLatLng[0][0]).toEqual({ lat: 48.86, lng: 2.36 })
+    for (const building of buildings) {
+      for (const ring of building.ringsLatLng) {
+        for (const { lat, lng } of ring) {
+          expect(Number.isFinite(lat)).toBe(true)
+          expect(Number.isFinite(lng)).toBe(true)
+        }
+      }
+    }
+  })
+
+  it('skips features with non-polygonal geometry instead of producing garbage candidates', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          type: 'FeatureCollection',
+          features: [
+            { type: 'Feature', geometry: { type: 'Point', coordinates: [2.35, 48.85] } },
+            ...sampleGeoJson.features,
+          ],
+        }),
+    } as Response)
+
+    const buildings = await fetchBuildingsInBounds({ minLat: 48.85, maxLat: 48.86, minLng: 2.35, maxLng: 2.36 })
+
+    expect(buildings).toHaveLength(1) // the Point feature is dropped, the Polygon kept
+    expect(buildings[0].ringsLatLng[0][0]).toEqual({ lat: 48.85, lng: 2.35 })
+  })
+
   it('throws a descriptive French error when the request fails', async () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as Response)
 

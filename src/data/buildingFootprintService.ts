@@ -1,5 +1,6 @@
 // src/data/buildingFootprintService.ts
 import type { LatLng } from '../geometry/localCoordinates'
+import { polygonPartsToLatLng, type WfsGeometry } from './wfsGeometry'
 
 export interface BuildingFootprint {
   ringsLatLng: LatLng[][]
@@ -20,11 +21,14 @@ export interface LatLngBounds {
 const CADASTRE_WFS_URL = 'https://data.geopf.fr/wfs/ows'
 const BUILDING_TYPE_NAME = 'BDTOPO_V3:batiment'
 
-function parseBuildingFeature(feature: { geometry: { coordinates: number[][][] } }): BuildingFootprint {
-  const ringsLatLng: LatLng[][] = feature.geometry.coordinates.map((ring) =>
-    ring.map(([lng, lat]) => ({ lat, lng }))
-  )
-  return { ringsLatLng }
+// A MultiPolygon building (several disjoint parts) yields one BuildingFootprint
+// per part — see polygonPartsToLatLng's doc comment for why parts become
+// separate entries rather than being flattened into one ringsLatLng (that
+// shape only holds ONE polygon's rings). Each part is then separately
+// clickable in BuildingFootprintPicker, and non-polygonal geometries are
+// skipped instead of silently parsing into NaN coordinates.
+function parseBuildingFeature(feature: { geometry: WfsGeometry }): BuildingFootprint[] {
+  return polygonPartsToLatLng(feature.geometry).map((ringsLatLng) => ({ ringsLatLng }))
 }
 
 export async function fetchBuildingsInBounds(
@@ -43,7 +47,7 @@ export async function fetchBuildingsInBounds(
     throw new Error(`Impossible de charger les bâtiments : ${response.status}`)
   }
   const geojson = (await response.json()) as {
-    features: Array<{ geometry: { coordinates: number[][][] } }>
+    features: Array<{ geometry: WfsGeometry }>
   }
-  return geojson.features.map(parseBuildingFeature)
+  return geojson.features.flatMap(parseBuildingFeature)
 }
