@@ -15,8 +15,9 @@ export interface LayerPanelProps {
 
 // This card no longer positions itself (no position/top/right/zIndex): as of
 // Task 33, SiteMapView stacks it in a flex column together with
-// GridCreationPanel in the shared top-right corner (see TOP_RIGHT_STACK_STYLE
-// in SiteMapView.tsx). Positioning both cards absolutely and independently
+// GridCreationPanel in the shared top-right corner (the single
+// <OverlayPanel corner="top-right"> in SiteMapView.tsx — see
+// OverlayPanel.tsx). Positioning both cards absolutely and independently
 // would either overlap (if their offsets don't account for each other's
 // dynamic height — this panel grows with the number of grid layers) or
 // require fragile hardcoded pixel math. Letting the shared flex container

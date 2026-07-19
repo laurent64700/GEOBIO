@@ -19,17 +19,17 @@ export interface OrthogonalitySuggestionProps {
  * sibling of this <Polyline> inside the Leaflet tree — the plan itself
  * flagged that as a presentation detail to revisit once wired into the real
  * app shell. It doesn't fit this codebase: every other SiteMapView overlay
- * (LayerPanel, the guide-line controls, the edit-mode controls — see
- * PANEL_STYLE / GUIDE_LINE_CONTROLS_STYLE / EDIT_CONTROLS_STYLE in
- * SiteMapView.tsx) is deliberately rendered as a sibling of <MapView>, inside
- * SiteMapView's own position:relative wrapper, absolutely positioned into a
- * free corner — never nested inside <MapContainer>'s children. A raw <div>
- * placed there instead would sit among Leaflet's own panes/controls, which
- * is exactly the "layout issues" the plan warned about.
+ * (LayerPanel, the guide-line controls, the edit-mode controls) is
+ * deliberately rendered as a sibling of <MapView>, inside SiteMapView's own
+ * position:relative wrapper, absolutely positioned into a corner via
+ * <OverlayPanel> (see OverlayPanel.tsx) — never nested inside
+ * <MapContainer>'s children. A raw <div> placed there instead would sit
+ * among Leaflet's own panes/controls, which is exactly the "layout issues"
+ * the plan warned about.
  *
  * So this component only renders the map layer. The deviation text and
- * buttons live in SiteMapView's own JSX as a bottom-right panel (the last
- * free corner — see ORTHOGONALITY_PANEL_STYLE there), computed from the same
+ * buttons live in SiteMapView's own JSX as a card in the shared bottom-right
+ * <OverlayPanel> there, computed from the same
  * `getOrthogonalitySuggestion` call (cheap and pure, so calling it a second
  * time there costs nothing and needs no prop-drilling back up from here).
  */
