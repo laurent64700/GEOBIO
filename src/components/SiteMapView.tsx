@@ -150,6 +150,20 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [buildingFootprint, setBuildingFootprintState] = useState<Point[] | null>(initialBuildingFootprint)
   const [buildingCandidates, setBuildingCandidates] = useState<BuildingFootprint[]>([])
   const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
+  // Building/Bagua errors are deliberately NOT routed into `error` above:
+  // that state replaces the ENTIRE map with a paragraph, while the building
+  // footprint flow is optional by spec — "le Bagua reste simplement
+  // indisponible pour cette mission, pas de blocage du reste du relevé"
+  // (Bagua design spec §7). An IGN outage or a failed setBuildingFootprint
+  // save must leave grids, felt points and editing fully usable, so these
+  // errors render as a dismissible card in the top-left stack instead.
+  const [buildingError, setBuildingError] = useState<string | null>(null)
+  // Bumped by the error card's "Réessayer" button to re-fire the fetch effect
+  // below — after a failed fetch its other deps are unchanged (origin same,
+  // footprint still null), so without this there'd be no way to retry short
+  // of reloading the page (field networks are flaky; spec §7 makes the flow
+  // optional, not unrecoverable).
+  const [buildingFetchNonce, setBuildingFetchNonce] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -207,9 +221,10 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         if (controller.signal.aborted) return // superseded — a newer run owns the state
         setBuildingCandidates(found)
         setBuildingSearchExhausted(found.length === 0)
+        setBuildingError(null)
       } catch (err) {
         if (controller.signal.aborted) return // AbortError from our own cleanup, not a real failure
-        setError(err instanceof Error ? err.message : String(err))
+        setBuildingError(err instanceof Error ? err.message : String(err))
       }
     }
     loadBuildings()
@@ -217,15 +232,16 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // eslint-disable-next-line react-hooks/exhaustive-deps -- missionOrigin.lat/lng
     // are the real dependency; the missionOrigin object itself is deliberately
     // excluded (see comment above) since it's a fresh reference every render.
-  }, [missionOrigin.lat, missionOrigin.lng, buildingFootprint])
+  }, [missionOrigin.lat, missionOrigin.lng, buildingFootprint, buildingFetchNonce])
 
   async function handleChooseBuilding(index: number) {
     try {
       const footprint = buildingCandidates[index].ringsLatLng[0].map((latlng) => latLngToLocal(latlng, missionOrigin))
       const updated = await setBuildingFootprint(missionId, footprint)
       setBuildingFootprintState(updated.buildingFootprint)
+      setBuildingError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setBuildingError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -233,6 +249,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     setBuildingFootprintState(null)
     setBuildingCandidates([])
     setBuildingSearchExhausted(false)
+    setBuildingError(null)
     // The useEffect above re-fires automatically once buildingFootprint becomes
     // null again (it's in the dependency array), re-running the fetch.
   }
@@ -519,10 +536,27 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         {/* Stacked as a second card in the same top-left corner (see
             OverlayPanel.tsx for why a corner can hold more than one item) —
             only shown once there's something to say about the building
-            footprint: either it's confirmed (offer "Changer de bâtiment")
-            or the search came up empty even after widening. */}
-        {(buildingFootprint !== null || buildingSearchExhausted) && (
+            footprint: it's confirmed (offer "Changer de bâtiment"), the
+            search came up empty even after widening, or the optional
+            building/Bagua flow failed (dismissible, never replacing the map —
+            spec §7's "pas de blocage du reste du relevé"; see buildingError's
+            declaration comment). */}
+        {(buildingFootprint !== null || buildingSearchExhausted || buildingError !== null) && (
           <div style={CARD_CHROME_STYLE}>
+            {buildingError !== null && (
+              <>
+                <p role="alert">{buildingError}</p>
+                <button
+                  onClick={() => {
+                    setBuildingError(null)
+                    setBuildingFetchNonce((n) => n + 1)
+                  }}
+                >
+                  Réessayer
+                </button>
+                <button onClick={() => setBuildingError(null)}>Fermer</button>
+              </>
+            )}
             {buildingFootprint !== null && (
               <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
             )}

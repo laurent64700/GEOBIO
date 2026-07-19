@@ -528,8 +528,9 @@ describe('SiteMapView', () => {
     expect(buildingFootprintService.fetchBuildingsInBounds).toHaveBeenCalledTimes(2) // 100m then 300m
   })
 
-  it('surfaces a French error message when fetching buildings fails', async () => {
-    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  it('surfaces a building-fetch error as a dismissible card without replacing the map (spec §7: non-blocking)', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockRejectedValue(
       new Error('Impossible de charger les bâtiments : 500')
@@ -540,6 +541,64 @@ describe('SiteMapView', () => {
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
+    // The building/Bagua flow is optional (spec §7: "pas de blocage du reste
+    // du relevé") — the map, layer panel and felt points must stay usable,
+    // unlike the full-replacement `error` state for initial grid loads.
+    expect(screen.getByTestId('map-view')).toBeInTheDocument()
+    expect(screen.getByTestId('felt-points')).toBeInTheDocument()
+    expect(screen.getByLabelText('Hartmann')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fermer' }))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('map-view')).toBeInTheDocument()
+  })
+
+  it('re-fires the building fetch when "Réessayer" is clicked after a failure', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    // First attempt fails; the retry succeeds with one candidate.
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds)
+      .mockRejectedValueOnce(new Error('Impossible de charger les bâtiments : 500'))
+      .mockResolvedValue([
+        { ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }, { lat: 48.8567, lng: 2.3522 }, { lat: 48.8567, lng: 2.3523 }]] },
+      ])
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+    await screen.findByRole('alert')
+    const callsBeforeRetry = vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Réessayer' }))
+
+    expect(await screen.findByText('simulate-choose-building')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mock.calls.length
+    ).toBeGreaterThan(callsBeforeRetry)
+  })
+
+  it('surfaces a failed footprint save as a dismissible card without replacing the map', async () => {
+    // The S1.1 production scenario: migration 0012 not pushed →
+    // setBuildingFootprint rejects with a Postgres error. The whole
+    // mission workspace must survive it.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
+      { ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }, { lat: 48.8567, lng: 2.3522 }, { lat: 48.8567, lng: 2.3523 }]] },
+    ])
+    vi.mocked(missionsRepo.setBuildingFootprint).mockRejectedValue(
+      new Error("Impossible d'enregistrer le contour du bâtiment : column does not exist")
+    )
+
+    render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+
+    fireEvent.click(await screen.findByText('simulate-choose-building'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/impossible d'enregistrer le contour/i)
+    expect(screen.getByTestId('map-view')).toBeInTheDocument()
   })
 
   it("drops a superseded building fetch's late result instead of clobbering the newer run's state", async () => {
