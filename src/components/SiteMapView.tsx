@@ -548,44 +548,53 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           </button>
         </div>
       </OverlayPanel>
-      {/* Bottom-right, the fourth and last free corner — see
-          OrthogonalitySuggestion.tsx's doc comment for why the text and
-          buttons are rendered here rather than alongside the <Polyline>
-          preview (OrthogonalitySuggestion, rendered inside <MapView> above).
-          Shown after every line adjustment (handleLineChanged sets
-          awaitingOrthogonalityReview); "Redresser" replaces the line's
-          adjustedPoints with the suggested straightened points (going
-          through handleLineChanged itself, so it's undoable/persisted the
-          same way a drag or reset is); "Ignorer" just dismisses the panel. */}
-      {reviewTarget && reviewSuggestion && (
+      {/* Bottom-right, the fourth and last free corner — ONE OverlayPanel
+          shared by the orthogonality-review card and the Bagua legend,
+          mirroring how top-right stacks LayerPanel + GridCreationPanel in a
+          single panel. Two sibling <OverlayPanel corner="bottom-right">
+          instances would each sit at bottom:8/right:8 independently and
+          overlap whenever both were visible at once (Bagua layer toggled on
+          + a line just adjusted); only children of the SAME panel get
+          flex-column stacking (see OverlayPanel.tsx).
+
+          Orthogonality card: see OrthogonalitySuggestion.tsx's doc comment
+          for why the text and buttons are rendered here rather than
+          alongside the <Polyline> preview (OrthogonalitySuggestion, rendered
+          inside <MapView> above). Shown after every line adjustment
+          (handleLineChanged sets awaitingOrthogonalityReview); "Redresser"
+          replaces the line's adjustedPoints with the suggested straightened
+          points (going through handleLineChanged itself, so it's
+          undoable/persisted the same way a drag or reset is); "Ignorer"
+          just dismisses the card.
+
+          Bagua legend card: bottom-right is the safest pairing — the
+          orthogonality review only appears transiently right after a drag,
+          while the Bagua legend is viewed at leisure once the layer is
+          toggled on. */}
+      {(reviewTarget !== null || (visibility[BAGUA_LAYER_ID] ?? false)) && (
         <OverlayPanel corner="bottom-right">
-          <div style={CARD_CHROME_STYLE}>
-            <p>Écart à l'orthogonal théorique : {reviewSuggestion.deviationDeg.toFixed(1)}°</p>
-            <button
-              onClick={() => {
-                handleLineChanged(reviewTarget.instance.id, {
-                  ...reviewTarget.line,
-                  adjustedPoints: reviewSuggestion.suggestedPoints,
-                })
-                setAwaitingOrthogonalityReview(null)
-              }}
-            >
-              Redresser
-            </button>
-            <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
-          </div>
-        </OverlayPanel>
-      )}
-      {/* Stacked into bottom-right alongside the orthogonality panel — see
-          OverlayPanel.tsx for why a corner can hold more than one item.
-          bottom-right is the safest pairing: orthogonality review only
-          appears transiently right after a drag, while the Bagua legend is
-          viewed at leisure once the layer is toggled on. */}
-      {(visibility[BAGUA_LAYER_ID] ?? false) && (
-        <OverlayPanel corner="bottom-right">
-          <div style={CARD_CHROME_STYLE}>
-            <BaguaLegendCollapsed />
-          </div>
+          {reviewTarget && reviewSuggestion && (
+            <div style={CARD_CHROME_STYLE}>
+              <p>Écart à l'orthogonal théorique : {reviewSuggestion.deviationDeg.toFixed(1)}°</p>
+              <button
+                onClick={() => {
+                  handleLineChanged(reviewTarget.instance.id, {
+                    ...reviewTarget.line,
+                    adjustedPoints: reviewSuggestion.suggestedPoints,
+                  })
+                  setAwaitingOrthogonalityReview(null)
+                }}
+              >
+                Redresser
+              </button>
+              <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
+            </div>
+          )}
+          {(visibility[BAGUA_LAYER_ID] ?? false) && (
+            <div style={CARD_CHROME_STYLE}>
+              <BaguaLegendCollapsed />
+            </div>
+          )}
         </OverlayPanel>
       )}
     </div>

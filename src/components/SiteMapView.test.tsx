@@ -542,6 +542,32 @@ describe('SiteMapView', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
   })
 
+  it('stacks the orthogonality panel and the Bagua legend in a single bottom-right overlay when both are visible', async () => {
+    // Regression test for the two-sibling-<OverlayPanel corner="bottom-right">
+    // bug: each instance is absolutely positioned at bottom:8/right:8, so two
+    // sibling instances overlap instead of stacking. Both cards must live in
+    // ONE bottom-right OverlayPanel (whose flex column stacks its children).
+    await renderWithLineChangedOnce()
+    await screen.findByText(/écart à l'orthogonal théorique/i)
+
+    fireEvent.click(screen.getByLabelText(/bagua/i))
+    await screen.findByText(/bagua : 8 secteurs/i)
+
+    // Both pieces of content are on screen simultaneously...
+    expect(screen.getByText(/écart à l'orthogonal théorique/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /redresser/i })).toBeInTheDocument()
+    // ...inside exactly ONE bottom-right-positioned wrapper, not two
+    // overlapping ones. OverlayPanel is the only thing rendering
+    // absolutely-positioned bottom/right offsets in this tree.
+    const bottomRightWrappers = Array.from(document.querySelectorAll('div')).filter(
+      (div) => div.style.position === 'absolute' && div.style.bottom !== '' && div.style.right !== ''
+    )
+    expect(bottomRightWrappers).toHaveLength(1)
+    // And that single wrapper contains both cards.
+    expect(bottomRightWrappers[0]).toContainElement(screen.getByText(/écart à l'orthogonal théorique/i))
+    expect(bottomRightWrappers[0]).toContainElement(screen.getByText(/bagua : 8 secteurs/i))
+  })
+
   it('shows the Bagua legend collapsed by default when the layer is toggled visible, expanding only on "Détails"', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
