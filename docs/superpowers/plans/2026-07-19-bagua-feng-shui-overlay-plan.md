@@ -621,7 +621,8 @@ export function computeBaguaSectors(center: Point, radiusM: number): BaguaSector
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/geometry/bagua.test.ts`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests — 2 from Task 3's `computeCentroid` plus 3 new: `computeMaxRadius`
+and `computeBaguaSectors`'s two tests)
 
 - [ ] **Step 5: Type-check and commit**
 
@@ -916,6 +917,13 @@ component because `SiteMapView.test.tsx` mocks every layer down to a stub `<div>
 real Leaflet context, so a real `<Polygon>` rendered directly in `SiteMapView`'s JSX would
 crash in that test file.
 
+**Must use `baguaCorrespondences` (Task 5), not render 8 visually-identical wedges** —
+the spec (§6) explicitly calls for `compassDirection` to be the join key into the
+correspondence table so each sector is identifiable on the map, not just in a separate
+legend. Attach each wedge's label via a Leaflet `Tooltip` (shown on hover/click, no extra
+screen space consumed when not interacted with — appropriate for 8 small polygons on an
+already-busy map).
+
 - [ ] **Step 1: Write failing tests for `BaguaLayer`**
 
 ```tsx
@@ -928,7 +936,7 @@ import { BaguaLayer } from './BaguaLayer'
 const missionOrigin = { lat: 48.8566, lng: 2.3522 }
 
 describe('BaguaLayer', () => {
-  it('renders 8 sector polygons when a footprint is provided', () => {
+  it('renders 8 sector polygons, each labeled with its correspondence-table entry', () => {
     const footprint = [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
@@ -941,6 +949,10 @@ describe('BaguaLayer', () => {
       </MapContainer>
     )
     expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(8)
+    // baguaCorrespondences.N.label is 'Carrière' (Task 5) — confirms the
+    // tooltip content is actually sourced from the correspondence table,
+    // not a hardcoded/generic label.
+    expect(container.textContent).toContain('Carrière')
   })
 
   it('renders nothing when footprint is null', () => {
@@ -978,8 +990,9 @@ Expected: FAIL — `Cannot find module './BaguaLayer'`
 
 ```tsx
 // src/components/BaguaLayer.tsx
-import { Polygon } from 'react-leaflet'
+import { Polygon, Tooltip } from 'react-leaflet'
 import { computeCentroid, computeMaxRadius, computeBaguaSectors } from '../geometry/bagua'
+import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
 import type { Point } from '../domain/types'
 
@@ -998,16 +1011,21 @@ export function BaguaLayer({ footprint, missionOrigin, visible }: BaguaLayerProp
 
   return (
     <>
-      {sectors.map((sector) => (
-        <Polygon
-          key={sector.compassDirection}
-          positions={sector.points.map((p) => {
-            const latlng = localToLatLng(p, missionOrigin)
-            return [latlng.lat, latlng.lng] as [number, number]
-          })}
-          pathOptions={{ color: '#7b4fa3', weight: 1, fillOpacity: 0.08 }}
-        />
-      ))}
+      {sectors.map((sector) => {
+        const correspondence = baguaCorrespondences[sector.compassDirection]
+        return (
+          <Polygon
+            key={sector.compassDirection}
+            positions={sector.points.map((p) => {
+              const latlng = localToLatLng(p, missionOrigin)
+              return [latlng.lat, latlng.lng] as [number, number]
+            })}
+            pathOptions={{ color: '#7b4fa3', weight: 1, fillOpacity: 0.08 }}
+          >
+            <Tooltip>{sector.compassDirection} — {correspondence.label}</Tooltip>
+          </Polygon>
+        )
+      })}
     </>
   )
 }
@@ -1038,94 +1056,80 @@ git commit -m "Add BaguaLayer: renders the 8-sector Pakua overlay as Leaflet pol
 
 **Flow (spec §5, steps 1-4):** once the mission has an origin (guaranteed true by the time
 `SiteMapView` renders — see `MissionWorkspace.tsx`'s `ready-no-interior` phase), fetch
-candidate buildings in a radius around it. If none, show nothing extra (feature stays
-unavailable, no error). If one or more, show them as selectable outlines; clicking one
-confirms it, calls `setBuildingFootprint`, and stores the result on `Mission` (passed back
-up via a callback, since `SiteMapView` doesn't own `Mission` itself — check how
-`missionOrigin` is already passed down from `MissionWorkspace` for the existing
-convention to follow).
+candidate buildings in a radius around it. If none, widen the search once; if still none,
+show a clear message (spec §7). If one or more, show them as selectable outlines on the
+map; clicking one confirms it, calls `setBuildingFootprint`, and stores the result on
+`Mission`.
+
+**Correction post-revue : fetch/erreur/état vivent dans `SiteMapView`, pas dans le
+composant enfant.** Every other layer in this codebase (`NetworkLinesLayer`,
+`FeltPointsLayer`, `GuideLineLayer`) is purely presentational — `SiteMapView` owns all
+data-fetching in its own top-level `useEffect` and passes already-loaded data down as
+props. An earlier draft of this task had `BuildingFootprintPicker` do its own fetching
+internally, which broke that convention and — combined with rendering buttons/messages
+as direct Leaflet-tree children — reintroduced a layout anti-pattern already identified
+and fixed once in this codebase (`OrthogonalitySuggestion.tsx`'s doc comment documents
+exactly why control text/buttons were moved out of the `<MapContainer>` tree into an
+`OverlayPanel` sibling). Fixed here: `BuildingFootprintPicker` only renders candidate
+`<Polygon>`s (map layer, inside `<MapView>`); `SiteMapView` owns the fetch, the
+`error`/"no building found" state, and renders the confirm-adjacent UI
+("Changer de bâtiment", the no-result message) via `OverlayPanel`, exactly like
+`OrthogonalitySuggestion`/`ORTHOGONALITY_PANEL_STYLE` was split in Task 32 and this
+plan's own Task 6/9.
 
 - [ ] **Step 1: Write failing tests for `BuildingFootprintPicker`**
 
 ```tsx
 // src/components/BuildingFootprintPicker.test.tsx
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render } from '@testing-library/react'
 import { MapContainer } from 'react-leaflet'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
-import * as buildingFootprintService from '../data/buildingFootprintService'
-
-vi.mock('../data/buildingFootprintService')
 
 const missionOrigin = { lat: 48.8566, lng: 2.3522 }
+const oneCandidate = [
+  {
+    ringsLatLng: [
+      [
+        { lat: 48.8566, lng: 2.3522 },
+        { lat: 48.8567, lng: 2.3522 },
+        { lat: 48.8567, lng: 2.3523 },
+        { lat: 48.8566, lng: 2.3523 },
+      ],
+    ],
+  },
+]
 
 describe('BuildingFootprintPicker', () => {
-  it('fetches candidate buildings around the mission origin and shows nothing extra when none are found', async () => {
-    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([])
-
-    render(
+  it('renders one polygon per candidate', () => {
+    const { container } = render(
       <MapContainer center={[48.8566, 2.3522]} zoom={18}>
-        <BuildingFootprintPicker missionOrigin={missionOrigin} onConfirmed={vi.fn()} />
+        <BuildingFootprintPicker
+          candidates={oneCandidate}
+          confirmedIndex={null}
+          missionOrigin={missionOrigin}
+          onChoose={vi.fn()}
+        />
       </MapContainer>
     )
-
-    await waitFor(() => expect(buildingFootprintService.fetchBuildingsInBounds).toHaveBeenCalled())
-    expect(screen.queryByRole('button', { name: /choisir ce bâtiment/i })).not.toBeInTheDocument()
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(1)
   })
 
-  it('shows candidate buildings and confirms one on click, calling onConfirmed with its local-coordinate footprint', async () => {
-    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
-      {
-        ringsLatLng: [
-          [
-            { lat: 48.8566, lng: 2.3522 },
-            { lat: 48.8567, lng: 2.3522 },
-            { lat: 48.8567, lng: 2.3523 },
-            { lat: 48.8566, lng: 2.3523 },
-          ],
-        ],
-      },
-    ])
-    const onConfirmed = vi.fn()
-
-    render(
+  it('calls onChoose with the clicked candidate index', () => {
+    const onChoose = vi.fn()
+    const { container } = render(
       <MapContainer center={[48.8566, 2.3522]} zoom={18}>
-        <BuildingFootprintPicker missionOrigin={missionOrigin} onConfirmed={onConfirmed} />
+        <BuildingFootprintPicker
+          candidates={oneCandidate}
+          confirmedIndex={null}
+          missionOrigin={missionOrigin}
+          onChoose={onChoose}
+        />
       </MapContainer>
     )
-
-    const chooseButton = await screen.findByRole('button', { name: /choisir ce bâtiment/i })
-    fireEvent.click(chooseButton)
-
-    expect(onConfirmed).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) })])
-    )
-  })
-
-  it('re-fetches when "Changer de bâtiment" is clicked after a confirmation', async () => {
-    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
-      {
-        ringsLatLng: [
-          [
-            { lat: 48.8566, lng: 2.3522 },
-            { lat: 48.8567, lng: 2.3522 },
-            { lat: 48.8567, lng: 2.3523 },
-            { lat: 48.8566, lng: 2.3523 },
-          ],
-        ],
-      },
-    ])
-
-    render(
-      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
-        <BuildingFootprintPicker missionOrigin={missionOrigin} onConfirmed={vi.fn()} />
-      </MapContainer>
-    )
-
-    fireEvent.click(await screen.findByRole('button', { name: /choisir ce bâtiment/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /changer de bâtiment/i }))
-
-    await waitFor(() => expect(buildingFootprintService.fetchBuildingsInBounds).toHaveBeenCalledTimes(2))
+    const path = container.querySelector('path.leaflet-interactive')!
+    path.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(onChoose).toHaveBeenCalledWith(0)
   })
 })
 ```
@@ -1139,23 +1143,75 @@ Expected: FAIL — `Cannot find module './BuildingFootprintPicker'`
 
 ```tsx
 // src/components/BuildingFootprintPicker.tsx
-import { useEffect, useState } from 'react'
 import { Polygon } from 'react-leaflet'
-import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
-import { latLngToLocal, localToLatLng, type LatLng } from '../geometry/localCoordinates'
-import type { Point } from '../domain/types'
+import type { BuildingFootprint } from '../data/buildingFootprintService'
+import type { LatLng } from '../geometry/localCoordinates'
 
 export interface BuildingFootprintPickerProps {
+  candidates: BuildingFootprint[]
+  confirmedIndex: number | null
   missionOrigin: LatLng
-  onConfirmed: (footprint: Point[]) => void
+  onChoose: (index: number) => void
 }
 
+// Purely presentational — SiteMapView owns fetching, error state, and the
+// confirm/"Changer de bâtiment"/no-result UI (rendered via OverlayPanel).
+// See this task's note above for why data-fetching does not live here.
+export function BuildingFootprintPicker({ candidates, confirmedIndex, onChoose }: BuildingFootprintPickerProps) {
+  return (
+    <>
+      {candidates.map((candidate, index) => (
+        <Polygon
+          key={index}
+          positions={candidate.ringsLatLng[0].map((latlng) => [latlng.lat, latlng.lng] as [number, number])}
+          pathOptions={{ color: confirmedIndex === index ? '#2d6a4f' : '#888888', weight: 2 }}
+          eventHandlers={{ click: () => onChoose(index) }}
+        />
+      ))}
+    </>
+  )
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node_modules/.bin/vitest.cmd run src/components/BuildingFootprintPicker.test.tsx`
+Expected: PASS (2 tests)
+
+- [ ] **Step 5: Type-check and commit the picker component**
+
+Run: `node_modules/.bin/tsc.cmd -b --noEmit`
+
+```bash
+git add src/components/BuildingFootprintPicker.tsx src/components/BuildingFootprintPicker.test.tsx
+git commit -m "Add BuildingFootprintPicker: presentational candidate-building layer"
+```
+
+- [ ] **Step 6: Wire fetching, error handling, and the confirm UI into `SiteMapView`**
+
+**Read the current `SiteMapView.tsx` and `SiteMapView.test.tsx` in full before editing**
+— the exact current props signature, the exact `MissionWorkspace.tsx` call site, and the
+exact `SiteMapView.test.tsx` mock setup all need to be threaded through consistently.
+`SiteMapView` takes `planId`/`missionOrigin` today, not a full `Mission`; this task needs
+`missionId` too (to call `setBuildingFootprint`) and the mission's already-stored
+`buildingFootprint` (to skip fetching if one is already confirmed) — thread
+`missionId: string` and `initialBuildingFootprint: Point[] | null` through from
+`MissionWorkspace.tsx` alongside the existing props, following the same pattern
+`missionOrigin` itself already establishes.
+
+```typescript
+// src/components/SiteMapView.tsx — add imports
+import { BuildingFootprintPicker } from './BuildingFootprintPicker'
+import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
+import { setBuildingFootprint } from '../data/missionsRepo'
+
+// ... constants, alongside the existing ones near the top of the file:
 // Fixed search radius around the mission origin, mirroring
 // DEFAULT_GRID_RADIUS_M's role in createGridForPlan.ts — see spec §4/§7 for
 // why bounds come from the origin rather than "selected parcels" (no
 // parcel-picker UI exists).
-const SEARCH_RADIUS_M = 100
-const WIDENED_SEARCH_RADIUS_M = 300
+const BUILDING_SEARCH_RADIUS_M = 100
+const BUILDING_SEARCH_WIDENED_RADIUS_M = 300
 const METERS_PER_DEG_LAT = 111_320
 
 function boundsAround(origin: LatLng, radiusM: number) {
@@ -1169,98 +1225,33 @@ function boundsAround(origin: LatLng, radiusM: number) {
   }
 }
 
-export function BuildingFootprintPicker({ missionOrigin, onConfirmed }: BuildingFootprintPickerProps) {
-  const [candidates, setCandidates] = useState<BuildingFootprint[]>([])
-  const [confirmedIndex, setConfirmedIndex] = useState<number | null>(null)
-
-  useEffect(() => {
-    async function load() {
-      let found = await fetchBuildingsInBounds(boundsAround(missionOrigin, SEARCH_RADIUS_M))
-      if (found.length === 0) {
-        found = await fetchBuildingsInBounds(boundsAround(missionOrigin, WIDENED_SEARCH_RADIUS_M))
-      }
-      setCandidates(found)
-      setConfirmedIndex(null)
-    }
-    load()
-  }, [missionOrigin])
-
-  function handleChoose(index: number) {
-    setConfirmedIndex(index)
-    const footprint = candidates[index].ringsLatLng[0].map((latlng) => latLngToLocal(latlng, missionOrigin))
-    onConfirmed(footprint)
-  }
-
-  function handleChangeBuilding() {
-    setConfirmedIndex(null)
-    fetchBuildingsInBounds(boundsAround(missionOrigin, SEARCH_RADIUS_M)).then(setCandidates)
-  }
-
-  return (
-    <>
-      {candidates.map((candidate, index) => (
-        <Polygon
-          key={index}
-          positions={candidate.ringsLatLng[0].map((latlng) => [latlng.lat, latlng.lng] as [number, number])}
-          pathOptions={{ color: confirmedIndex === index ? '#2d6a4f' : '#888888', weight: 2 }}
-          eventHandlers={{ click: () => handleChoose(index) }}
-        />
-      ))}
-      {candidates.length > 0 && confirmedIndex === null && (
-        <div>
-          {candidates.map((_, index) => (
-            <button key={index} onClick={() => handleChoose(index)}>
-              Choisir ce bâtiment
-            </button>
-          ))}
-        </div>
-      )}
-      {confirmedIndex !== null && (
-        <div>
-          <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
-        </div>
-      )}
-    </>
-  )
-}
-```
-
-**Note for the implementer:** the test file above renders `<button>` elements as
-siblings of `<Polygon>` inside `<MapContainer>` — Leaflet tolerates plain DOM children
-mixed with layer components (established precedent: `OrthogonalitySuggestion.tsx` did
-this before being split apart in Task 32; here, since these buttons are transient
-picker UI rather than a persistent overlay panel, keeping them inline is acceptable, but
-if this causes real layout problems once wired into `SiteMapView` in Step 5 below, lift
-them out via the same `OverlayPanel`-based approach `OrthogonalitySuggestion` now uses —
-this is a judgment call for whoever implements this task, matching the pattern the spec
-itself flagged as unsettled for `OrthogonalitySuggestion.tsx` originally (Task 32).
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `node_modules/.bin/vitest.cmd run src/components/BuildingFootprintPicker.test.tsx`
-Expected: PASS (3 tests)
-
-- [ ] **Step 5: Wire into `SiteMapView`**
-
-```typescript
-// src/components/SiteMapView.tsx — add import, state, and effect
-import { BuildingFootprintPicker } from './BuildingFootprintPicker'
-import { setBuildingFootprint } from '../data/missionsRepo'
-
-// ... inside SiteMapView, add:
-// (SiteMapView takes `planId`/`missionOrigin` today, not a full `Mission` —
-// check the current props signature. This task needs `missionId` too, to
-// call setBuildingFootprint, and needs to know whether a footprint is
-// already stored (skip the picker if so). Thread a `missionId: string` and
-// `initialBuildingFootprint: Point[] | null` prop through from
-// MissionWorkspace.tsx, alongside the existing planId/missionOrigin props —
-// MissionWorkspace already has the full Mission object in its phase state,
-// so this is just passing two more fields down, following the same pattern
-// as missionOrigin itself.)
+// ... inside SiteMapView, add state alongside the existing useState calls:
 const [buildingFootprint, setBuildingFootprintState] = useState<Point[] | null>(initialBuildingFootprint)
+const [buildingCandidates, setBuildingCandidates] = useState<BuildingFootprint[]>([])
+const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
 
-async function handleBuildingFootprintConfirmed(footprint: Point[]) {
+// ... a second useEffect (the existing one loads grid instances/lines/felt
+// points — keep this one separate, it has its own trigger condition):
+useEffect(() => {
+  if (buildingFootprint !== null) return // already confirmed, nothing to fetch
+  async function loadBuildings() {
+    try {
+      let found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_RADIUS_M))
+      if (found.length === 0) {
+        found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_WIDENED_RADIUS_M))
+      }
+      setBuildingCandidates(found)
+      setBuildingSearchExhausted(found.length === 0)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+  loadBuildings()
+}, [missionOrigin, buildingFootprint])
+
+async function handleChooseBuilding(index: number) {
   try {
+    const footprint = buildingCandidates[index].ringsLatLng[0].map((latlng) => latLngToLocal(latlng, missionOrigin))
     const updated = await setBuildingFootprint(missionId, footprint)
     setBuildingFootprintState(updated.buildingFootprint)
   } catch (err) {
@@ -1268,24 +1259,46 @@ async function handleBuildingFootprintConfirmed(footprint: Point[]) {
   }
 }
 
+function handleChangeBuilding() {
+  setBuildingFootprintState(null)
+  setBuildingCandidates([])
+  setBuildingSearchExhausted(false)
+  // The useEffect above re-fires automatically once buildingFootprint becomes
+  // null again (it's in the dependency array), re-running the fetch.
+}
+
 // ... in the JSX, inside <MapView>, alongside the other layers:
 {buildingFootprint === null && (
-  <BuildingFootprintPicker missionOrigin={missionOrigin} onConfirmed={handleBuildingFootprintConfirmed} />
+  <BuildingFootprintPicker
+    candidates={buildingCandidates}
+    confirmedIndex={null}
+    missionOrigin={missionOrigin}
+    onChoose={handleChooseBuilding}
+  />
+)}
+
+// ... a new OverlayPanel, only shown once there's something to say — pick a
+// corner not already doubly-occupied; top-left (guide-line controls) is the
+// least crowded single-item corner today.
+{(buildingFootprint !== null || buildingSearchExhausted) && (
+  <OverlayPanel corner="top-left">
+    {buildingFootprint !== null && (
+      <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
+    )}
+    {buildingSearchExhausted && buildingFootprint === null && (
+      <p>Aucun bâtiment détecté à proximité de l'origine.</p>
+    )}
+  </OverlayPanel>
 )}
 ```
 
-**This step requires reading the current `SiteMapView.tsx` and `SiteMapView.test.tsx`
-in full before editing** — the exact props signature, the exact `MissionWorkspace.tsx`
-call site, and the exact `SiteMapView.test.tsx` mock setup all need to be threaded
-through consistently. Follow the established pattern from `planId`/`missionOrigin`
-already being props today. Update `SiteMapView.test.tsx`'s existing tests to pass
-`missionId="m1"` and `initialBuildingFootprint={null}` (or a real array) wherever
-`<SiteMapView>` is rendered, and mock `../data/missionsRepo`'s `setBuildingFootprint` in
-this test file if not already auto-mocked. Update `MissionWorkspace.tsx`'s
-`<SiteMapView>` call site (in the `ready-no-interior` case) to pass
-`missionId={phase.mission.id}` and `initialBuildingFootprint={phase.mission.buildingFootprint}`.
+**Note:** the guide-line controls also live in `top-left` (per Task 6's `OverlayPanel`
+refactor, that corner now supports stacking multiple items via flex, same as top-right
+already did before this plan). If this ends up visually crowded once both are present
+simultaneously, moving the building-footprint panel to whichever corner is least busy at
+implementation time is a reasonable adjustment — not a hard requirement of this plan.
 
-- [ ] **Step 6: Write an integration test for the wiring**
+- [ ] **Step 7: Write a failing integration test, then make it pass**
 
 ```tsx
 // append to src/components/SiteMapView.test.tsx
@@ -1294,7 +1307,7 @@ this test file if not already auto-mocked. Update `MissionWorkspace.tsx`'s
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 
-it('shows the building footprint picker when no footprint is stored yet, and confirms one into place', async () => {
+it('shows the building footprint picker when none is stored yet, and confirms one into place', async () => {
   vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
   vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
   vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([
@@ -1305,24 +1318,63 @@ it('shows the building footprint picker when no footprint is stored yet, and con
     buildingFootprint: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
   })
 
-  render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+  const { container } = render(
+    <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+  )
 
-  fireEvent.click(await screen.findByRole('button', { name: /choisir ce bâtiment/i }))
+  await waitFor(() => expect(container.querySelectorAll('path.leaflet-interactive').length).toBeGreaterThan(0))
+  const path = container.querySelector('path.leaflet-interactive')!
+  path.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
   await waitFor(() => expect(missionsRepo.setBuildingFootprint).toHaveBeenCalled())
 })
+
+it('shows a clear message when no building is found even after widening the search', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+  vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([]) // both calls return empty
+
+  render(
+    <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+  )
+
+  expect(await screen.findByText(/aucun bâtiment détecté/i)).toBeInTheDocument()
+  expect(buildingFootprintService.fetchBuildingsInBounds).toHaveBeenCalledTimes(2) // 100m then 300m
+})
+
+it('surfaces a French error message when fetching buildings fails', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+  vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockRejectedValue(
+    new Error('Impossible de charger les bâtiments : 500')
+  )
+
+  render(
+    <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+  )
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
+})
 ```
 
-- [ ] **Step 7: Run the full suite and type-check**
+Run: `node_modules/.bin/vitest.cmd run src/components/SiteMapView.test.tsx`
+Expected: FAIL first (nothing wired), then PASS once Step 6 lands.
+
+Also update `MissionWorkspace.tsx`'s `<SiteMapView>` call site (in the `ready-no-interior`
+case) to pass `missionId={phase.mission.id}` and
+`initialBuildingFootprint={phase.mission.buildingFootprint}`, and update
+`MissionWorkspace.test.tsx`'s `SiteMapView` mock stub if it asserts on specific props.
+
+- [ ] **Step 8: Run the full suite and type-check**
 
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, no type errors
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/components/BuildingFootprintPicker.tsx src/components/BuildingFootprintPicker.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
-git commit -m "Wire BuildingFootprintPicker into SiteMapView: detect, confirm, and store a mission's building footprint"
+git add src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "Wire BuildingFootprintPicker into SiteMapView: fetch, confirm, error handling, no-result message"
 ```
 
 ---
