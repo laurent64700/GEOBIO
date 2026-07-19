@@ -1256,13 +1256,14 @@ const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
 // points — keep this one separate, it has its own trigger condition):
 //
 // Depend on missionOrigin.lat/lng (primitives), NOT the missionOrigin object
-// itself. MissionWorkspace.tsx constructs `missionOrigin={{ lat: originLat!,
-// lng: originLng! }}` as a fresh object literal on every render (confirmed:
-// both its call sites do this, with no memoization) — SiteMapView re-renders
-// whenever its parent does, so a `[missionOrigin, ...]` dependency would
-// re-fire this effect (and re-hit the IGN WFS endpoint, twice per widen-once
-// pass) on every unrelated parent re-render for as long as buildingFootprint
-// stays null, not just when the origin actually changes.
+// itself. MissionWorkspace.tsx's ready-no-interior case constructs
+// `missionOrigin={{ lat: originLat!, lng: originLng! }}` as a fresh object
+// literal on every render (confirmed: no memoization) — SiteMapView
+// re-renders whenever its parent does, so a `[missionOrigin, ...]`
+// dependency would re-fire this effect (and re-hit the IGN WFS endpoint,
+// twice per widen-once pass) on every unrelated parent re-render for as
+// long as buildingFootprint stays null, not just when the origin actually
+// changes.
 useEffect(() => {
   if (buildingFootprint !== null) return // already confirmed, nothing to fetch
   async function loadBuildings() {
@@ -1341,6 +1342,18 @@ implementation time is a reasonable adjustment — not a hard requirement of thi
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 
+// SiteMapView.test.tsx mocks ./MapView down to a plain <div> — there is no
+// real <MapContainer> anywhere in this test file, so a real, unmocked
+// <Polygon> (which BuildingFootprintPicker renders per candidate) would
+// crash on useLeafletContext() the moment candidates is non-empty. Mock it
+// the same way NetworkLinesLayer/FeltPointsLayer/GuideLineLayer already are
+// in this file — a stub that exposes just enough to drive the interaction
+// under test.
+vi.mock('./BuildingFootprintPicker', () => ({
+  BuildingFootprintPicker: ({ candidates, onChoose }: { candidates: unknown[]; onChoose: (i: number) => void }) =>
+    candidates.length > 0 ? <button onClick={() => onChoose(0)}>simulate-choose-building</button> : null,
+}))
+
 it('shows the building footprint picker when none is stored yet, and confirms one into place', async () => {
   vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
   vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
@@ -1352,13 +1365,11 @@ it('shows the building footprint picker when none is stored yet, and confirms on
     buildingFootprint: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }],
   })
 
-  const { container } = render(
+  render(
     <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
   )
 
-  await waitFor(() => expect(container.querySelectorAll('path.leaflet-interactive').length).toBeGreaterThan(0))
-  const path = container.querySelector('path.leaflet-interactive')!
-  path.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  fireEvent.click(await screen.findByText('simulate-choose-building'))
 
   await waitFor(() => expect(missionsRepo.setBuildingFootprint).toHaveBeenCalled())
 })
