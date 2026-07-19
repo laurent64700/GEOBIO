@@ -1,7 +1,8 @@
 # Superposition Bagua (Feng Shui classique) — Design
 
 **Date :** 2026-07-19
-**Statut :** Design validé par Laurent — prêt pour plan d'implémentation
+**Statut :** Design validé par Laurent, corrigé et relu (spec-document-reviewer, PASS
+2026-07-19) — prêt pour plan d'implémentation
 **Sous-projet de :** GEOBIO — extension de Plan 1 (moteur réseaux telluriques), sous-projet
 séparé au sens du plan (comme la reconnaissance de tiges par ArUco), pas une tâche greffée
 dans le plan en cours.
