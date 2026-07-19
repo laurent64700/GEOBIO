@@ -936,7 +936,7 @@ import { BaguaLayer } from './BaguaLayer'
 const missionOrigin = { lat: 48.8566, lng: 2.3522 }
 
 describe('BaguaLayer', () => {
-  it('renders 8 sector polygons, each labeled with its correspondence-table entry', () => {
+  it('renders 8 sector polygons', () => {
     const footprint = [
       { x: 0, y: 0 },
       { x: 10, y: 0 },
@@ -949,9 +949,31 @@ describe('BaguaLayer', () => {
       </MapContainer>
     )
     expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(8)
+  })
+
+  it('labels each sector with its correspondence-table entry on hover', () => {
+    // Leaflet's Tooltip (non-permanent, the default) only creates its DOM
+    // content once opened via a mouseover/click listener — it's not present
+    // in the tree on initial render. Simulate the hover Laurent would
+    // actually perform before asserting on the label text.
+    const footprint = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 8 },
+      { x: 0, y: 8 },
+    ]
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <BaguaLayer footprint={footprint} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    const firstPath = container.querySelector('path.leaflet-interactive')!
+    firstPath.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+
     // baguaCorrespondences.N.label is 'Carrière' (Task 5) — confirms the
     // tooltip content is actually sourced from the correspondence table,
-    // not a hardcoded/generic label.
+    // not a hardcoded/generic label. Whichever sector happens to be first
+    // in COMPASS_ORDER (N) is the one under test here.
     expect(container.textContent).toContain('Carrière')
   })
 
@@ -1034,7 +1056,7 @@ export function BaguaLayer({ footprint, missionOrigin, visible }: BaguaLayerProp
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/components/BaguaLayer.test.tsx`
-Expected: PASS (3 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Type-check and commit**
 
@@ -1232,6 +1254,15 @@ const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
 
 // ... a second useEffect (the existing one loads grid instances/lines/felt
 // points — keep this one separate, it has its own trigger condition):
+//
+// Depend on missionOrigin.lat/lng (primitives), NOT the missionOrigin object
+// itself. MissionWorkspace.tsx constructs `missionOrigin={{ lat: originLat!,
+// lng: originLng! }}` as a fresh object literal on every render (confirmed:
+// both its call sites do this, with no memoization) — SiteMapView re-renders
+// whenever its parent does, so a `[missionOrigin, ...]` dependency would
+// re-fire this effect (and re-hit the IGN WFS endpoint, twice per widen-once
+// pass) on every unrelated parent re-render for as long as buildingFootprint
+// stays null, not just when the origin actually changes.
 useEffect(() => {
   if (buildingFootprint !== null) return // already confirmed, nothing to fetch
   async function loadBuildings() {
@@ -1247,7 +1278,10 @@ useEffect(() => {
     }
   }
   loadBuildings()
-}, [missionOrigin, buildingFootprint])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- missionOrigin.lat/lng
+  // are the real dependency; the missionOrigin object itself is deliberately
+  // excluded (see comment above) since it's a fresh reference every render.
+}, [missionOrigin.lat, missionOrigin.lng, buildingFootprint])
 
 async function handleChooseBuilding(index: number) {
   try {
