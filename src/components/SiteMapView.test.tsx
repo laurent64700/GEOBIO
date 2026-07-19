@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
@@ -540,6 +540,51 @@ describe('SiteMapView', () => {
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
+  })
+
+  it("drops a superseded building fetch's late result instead of clobbering the newer run's state", async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    // Run 1's fetch (for the initial origin) stays in flight until we resolve
+    // it by hand; every later call (run 2 for the new origin, incl. its 300m
+    // widening) resolves [] immediately via the beforeEach default.
+    let resolveStaleFetch!: (found: buildingFootprintService.BuildingFootprint[]) => void
+    vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveStaleFetch = resolve })
+    )
+
+    const { rerender } = render(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />
+    )
+    await screen.findByTestId('map-view')
+
+    // Origin changes while run 1's fetch is still in flight — the effect
+    // cleanup must abort run 1, and run 2 fetches for the new origin.
+    rerender(
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 45.0, lng: 5.0 }} initialBuildingFootprint={null} />
+    )
+
+    // Run 2 (the current one) finds nothing even after widening.
+    expect(await screen.findByText(/aucun bâtiment détecté/i)).toBeInTheDocument()
+
+    // Now the SUPERSEDED run 1 resolves late with a candidate for the OLD
+    // origin. Without the AbortController + aborted guards, it would
+    // overwrite buildingCandidates and hide the (correct) empty-state message.
+    await act(async () => {
+      resolveStaleFetch([{ ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }]] }])
+    })
+
+    expect(screen.queryByText('simulate-choose-building')).not.toBeInTheDocument()
+    expect(screen.getByText(/aucun bâtiment détecté/i)).toBeInTheDocument()
+
+    // And the effect actually hands its AbortSignal to the service (both
+    // services accept one) — otherwise nothing in flight can be cancelled.
+    const calls = vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mock.calls
+    expect(calls.length).toBeGreaterThanOrEqual(2)
+    for (const call of calls) {
+      expect(call[1]).toBeInstanceOf(AbortSignal)
+    }
   })
 
   it('stacks the orthogonality panel and the Bagua legend in a single bottom-right overlay when both are visible', async () => {

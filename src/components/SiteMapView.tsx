@@ -184,19 +184,36 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // changes.
   useEffect(() => {
     if (buildingFootprint !== null) return // already confirmed, nothing to fetch
+    // Cancel/staleness guard: without this, a slower fetch from a previous
+    // effect run (older missionOrigin) could resolve AFTER a newer run's
+    // fetch and overwrite buildingCandidates with stale results — same class
+    // of bug as the missionOrigin-identity one documented below. Both WFS
+    // services already accept an AbortSignal; the cleanup aborts the in-flight
+    // request, and the aborted checks below drop any result/error from a
+    // superseded run instead of applying it.
+    const controller = new AbortController()
     async function loadBuildings() {
       try {
-        let found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_RADIUS_M))
-        if (found.length === 0) {
-          found = await fetchBuildingsInBounds(boundsAround(missionOrigin, BUILDING_SEARCH_WIDENED_RADIUS_M))
+        let found = await fetchBuildingsInBounds(
+          boundsAround(missionOrigin, BUILDING_SEARCH_RADIUS_M),
+          controller.signal
+        )
+        if (found.length === 0 && !controller.signal.aborted) {
+          found = await fetchBuildingsInBounds(
+            boundsAround(missionOrigin, BUILDING_SEARCH_WIDENED_RADIUS_M),
+            controller.signal
+          )
         }
+        if (controller.signal.aborted) return // superseded — a newer run owns the state
         setBuildingCandidates(found)
         setBuildingSearchExhausted(found.length === 0)
       } catch (err) {
+        if (controller.signal.aborted) return // AbortError from our own cleanup, not a real failure
         setError(err instanceof Error ? err.message : String(err))
       }
     }
     loadBuildings()
+    return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- missionOrigin.lat/lng
     // are the real dependency; the missionOrigin object itself is deliberately
     // excluded (see comment above) since it's a fresh reference every render.
