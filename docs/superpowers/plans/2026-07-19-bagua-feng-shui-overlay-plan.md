@@ -1,5 +1,8 @@
 # Superposition Bagua (Feng Shui classique) Implementation Plan
 
+**Statut :** Relu et approuvé (plan-document-reviewer, 5 tours, 2026-07-19) — prêt pour
+exécution.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if
 > subagents available) or superpowers:executing-plans to implement this plan. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
