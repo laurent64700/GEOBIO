@@ -143,6 +143,27 @@ describe('SiteMapView', () => {
     expect(await screen.findByTestId('felt-segments')).toBeInTheDocument()
   })
 
+  it('toggling "Tiges (segments ressentis)" off hides the felt segments that were visible by default', async () => {
+    // Regression test: toggleLayer's default-visibility computation used to
+    // only special-case FELT_POINTS_LAYER_ID, so any other default-visible
+    // layer's first click computed currentlyVisible as false (already
+    // matching its rendered-visible state) and set it back to true — a
+    // silent no-op. This would have affected the felt-points checkbox too,
+    // had it ever been exercised this way.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([
+      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z' },
+    ])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    await screen.findByTestId('felt-segments')
+    fireEvent.click(await screen.findByLabelText('Tiges (segments ressentis)'))
+
+    await waitFor(() => expect(screen.queryByTestId('felt-segments')).not.toBeInTheDocument())
+  })
+
   it('fetches grid templates alongside instances/lines/felt points', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
