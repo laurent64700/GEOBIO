@@ -2,10 +2,11 @@
 import { useState } from 'react'
 import { PlanCalibrationTool } from './PlanCalibrationTool'
 import { detectMarkers } from '../vision/arucoDetector'
-import { mapDetectionsToPoints } from '../vision/arucoMapping'
+import { mapDetectionsToPoints, pairIntoSegmentsAndPoints } from '../vision/arucoMapping'
 import { listRodMarkers } from '../data/rodMarkersRepo'
 import { setPhotoCalibration } from '../data/missionPhotosRepo'
 import { createFeltPoint } from '../data/feltPointsRepo'
+import { createFeltSegment } from '../data/feltSegmentsRepo'
 import type { AffineTransform, MissionPhoto } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
 
@@ -60,14 +61,26 @@ export function RodDetectionPanel({
         photo.calibration,
         rodMarkers
       )
+      const { segments, points } = pairIntoSegmentsAndPoints(recognized)
 
-      await Promise.all(
-        recognized.map((point) =>
+      await Promise.all([
+        ...points.map((point) =>
           createFeltPoint({ planId, networkName: point.networkName, x: point.x, y: point.y })
-        )
-      )
+        ),
+        ...segments.map((segment) =>
+          createFeltSegment({
+            planId,
+            networkName: segment.networkName,
+            pointA: segment.pointA,
+            pointB: segment.pointB,
+          })
+        ),
+      ])
 
-      setSummary(`${totalDetected} marqueurs détectés, ${totalRecognized} reconnus.`)
+      setSummary(
+        `${totalDetected} marqueurs détectés, ${totalRecognized} reconnus ` +
+          `(${segments.length} tiges complètes, ${points.length} points isolés).`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
