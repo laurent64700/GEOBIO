@@ -49,11 +49,15 @@ tranchée par sa réponse (H+C reste le socle dans les 3 formulations qu'il a do
 
 **Décision de portée pour CE sous-projet (assumée en l'absence de Laurent, à confirmer) :**
 Construire le socle H×C maintenant (buildable immédiatement, aucune dépendance
-bloquante), avec une architecture explicitement **extensible** pour les aggravants —
-la fonction de calcul accepte en entrée optionnelle une liste de tracés eau/faille et de
-phénomènes ponctuels, mais tant que ces sous-projets ne sont pas construits, ces entrées
-seront simplement vides. Aucun retravail structurel ne sera nécessaire une fois l'eau/les
-phénomènes disponibles — juste les brancher.
+bloquante). **Précision post-revue (corrige une incohérence de la version précédente)** :
+`computeHartmannCurryCrossings` (§4) n'a délibérément **aucun paramètre d'aggravation**
+dans cette première passe — ni `FreeformNetwork`, ni phénomènes n'existent encore comme
+données réelles, un paramètre optionnel vide serait un raccordement fictif. L'extension
+prévue est un ajout **futur et trivial** une fois §7 des sous-projets dépendants
+construits : soit un second paramètre optionnel `(waterPaths?, phenomena?)` calculant un
+champ `aggravatedBy` sur `PathogenicCrossing`, soit une fonction séparée qui prend les
+croisements déjà calculés + les données d'aggravation en entrée — décision à prendre à
+ce moment-là, pas anticipée ici pour éviter de deviner une forme qui ne conviendra pas.
 
 ## 3. Flux utilisateur
 
@@ -74,15 +78,38 @@ phénomènes disponibles — juste les brancher.
 ## 4. Composants & modèle de données
 
 **Géométrie pure**
+
+**Correction post-revue (2026-07-21) — trou géométrique important :** `GridLine.adjustedPoints`
+est un `Point[]` de longueur arbitraire, **pas un segment à 2 points**. Après édition
+terrain (glisser un sommet via `EditableNetworkLine.tsx`/leaflet-geoman,
+`applyAllVertices` persiste tous les sommets), une ligne ajustée au ressenti peut être
+une **polyligne coudée à N points** — c'est même toute la raison d'être de l'assistant
+d'orthogonalité déjà construit (`orthogonality.ts`, écrit explicitement pour des
+polylignes N-points). Une première version de cette spec traitait à tort chaque ligne
+comme un segment `[premier point, dernier point]`, ce qui aurait donné des résultats
+faux précisément sur les lignes corrigées au ressenti — le cas d'usage central de cette
+feature. Corrigé ci-dessous : le calcul itère sur les **segments consécutifs** de
+chaque polyligne, pas sur la ligne entière comme un seul segment.
+
 - `src/geometry/pathogenicCrossings.ts` :
   - `computeSegmentIntersection(a1: Point, a2: Point, b1: Point, b2: Point): Point | null`
     — intersection standard de 2 segments de droite (algèbre linéaire classique,
-    retourne `null` si parallèles ou si l'intersection tombe hors des deux segments)
+    paramètres t,u ∈ [0,1] **inclusifs** — un croisement pile sur une extrémité de
+    segment compte comme une intersection valide, pas ignoré). Retourne `null` si
+    parallèles (déterminant proche de 0 — un seuil epsilon, pas une comparaison
+    d'égalité flottante exacte) ou si l'intersection tombe hors des deux segments.
+    Normalise `-0` en `0` sur le point retourné (convention déjà établie dans ce
+    codebase pour ce type de calcul, voir `gridGeneration.ts`).
   - `computeHartmannCurryCrossings(hartmannLines: GridLine[], curryLines: GridLine[]): PathogenicCrossing[]`
-    — teste chaque paire (ligne Hartmann, ligne Curry) via `computeSegmentIntersection`
-    sur leurs `adjustedPoints`, retourne un point par croisement trouvé
+    — pour chaque paire (ligne Hartmann, ligne Curry), itère sur tous les segments
+    consécutifs de la polyligne Hartmann (`adjustedPoints[i]`→`adjustedPoints[i+1]`)
+    croisés avec tous les segments consécutifs de la polyligne Curry, via
+    `computeSegmentIntersection`. **Une même paire de lignes peut produire plusieurs
+    croisements** (ligne coudée qui traverse l'autre réseau à deux endroits) — c'est
+    normal et attendu, pas une erreur à dédupliquer.
   - `interface PathogenicCrossing { point: Point; hartmannLineId: string; curryLineId: string }`
-    — garde une trace des lignes source, utile pour un futur clic-pour-détail
+    — garde une trace des lignes source, utile pour un futur clic-pour-détail ; une
+    paire de lignes avec 2 croisements produit 2 entrées distinctes avec les mêmes IDs
 - 100% testable sans carte réelle, même approche que `gridGeneration.ts`/`bagua.ts`
 
 **Intégration `SiteMapView`**
@@ -97,6 +124,11 @@ phénomènes disponibles — juste les brancher.
   Hartmann×Curry possibles, ou seulement un Hartmann "actif" contre un Curry
   "actif" ? Je pars sur "toutes les paires" par défaut (plus complet, coût de
   calcul négligeable pour le nombre de lignes en jeu), à corriger si faux.
+- **Matching par nom** (`templateSnapshot.name === 'Hartmann'`/`'Curry'`) : vérifié
+  exact contre les seeds réels (migrations 0003/0005/0007, noms stables, pas de
+  variante de casse/accent). Risque résiduel connu et accepté : un gabarit personnalisé
+  renommé (copie de Hartmann sous un autre nom) ne serait pas détecté par ce matching —
+  cas marginal, pas traité dans cette première passe.
 
 **Rendu**
 - `src/components/PathogenicCrossingsLayer.tsx` — un marqueur (`CircleMarker`,
@@ -111,7 +143,10 @@ phénomènes disponibles — juste les brancher.
   croisements est simplement vide, pas d'erreur, pas de layer à afficher
 - Lignes parallèles (jamais censé arriver entre Hartmann à 0° et Curry à 45°, mais si
   un gabarit personnalisé a le même angle) → `computeSegmentIntersection` retourne
-  `null`, pas de crash
+  `null`, pas de crash. Segments colinéaires superposés (cas dégénéré, infinité
+  d'intersections) sont absorbés par le même chemin "parallèle → null" — décision
+  délibérée, pas un cas à gérer différemment, puisqu'il n'a pas de sens géométrique
+  clair pour deux réseaux à angles distincts (0°/45° pour Hartmann/Curry seedés).
 - Recalcul à chaque render via `useMemo` : coût = O(lignes Hartmann × lignes Curry),
   négligeable pour les tailles de grille réelles (quelques dizaines de lignes par
   réseau sur un rayon de 30m par défaut)
@@ -121,7 +156,9 @@ phénomènes disponibles — juste les brancher.
 - `pathogenicCrossings.ts` : tests unitaires purs — segments qui se croisent, segments
   parallèles, segments qui ne se croisent pas dans leurs bornes (droites sécantes mais
   hors segment), cas Hartmann/Curry réaliste (0°/45°) avec un résultat attendu calculé
-  à la main
+  à la main, **ligne coudée à 3+ points croisant l'autre réseau 0 fois puis 2 fois**
+  (le cas que la version précédente de cette spec aurait mal géré — voir §4), et un
+  cas d'intersection pile sur une extrémité de segment (borne inclusive)
 - `PathogenicCrossingsLayer.tsx` : rendu réel dans un `MapContainer`, comme
   `FeltPointsLayer.test.tsx`
 - Test d'intégration `SiteMapView` : instances Hartmann+Curry mockées, vérifier que le
