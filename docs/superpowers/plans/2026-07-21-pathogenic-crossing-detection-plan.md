@@ -94,14 +94,21 @@ describe('computeSegmentIntersection', () => {
     expect(result).toEqual({ x: 0, y: 0 })
   })
 
-  // No dedicated "-0 normalization" test: verified by exhaustive search (2M random
-  // segment pairs, plus a systematic sweep of literal -0 endpoints) that this
-  // formula's arithmetic cannot actually produce a -0 result — `a1.x + t*d1x`
-  // resolves to +0 under IEEE 754 addition rules in every case tried, including
-  // when a1.x is itself a literal -0. The `x === 0 ? 0 : x` normalization in the
-  // implementation below is kept as cheap defensive code (harmless, matches the
-  // established -0-awareness convention from gridGeneration.test.ts) but isn't
-  // exercised by a test, since no real input reaches that branch.
+  it('normalizes a -0 result to 0', () => {
+    // -0 only arises from this formula in a narrow case: a1 itself is a literal
+    // -0, the crossing lands exactly on a1 (t resolves to exact +0), and d1x is
+    // negative — then t*d1x is -0 and a1.x + t*d1x is -0 + -0 = -0 under IEEE 754.
+    // (An earlier draft of this test used a different, symmetric input that
+    // cannot produce -0 under IEEE addition rules — verified vacuous and
+    // replaced; this exact input was hand-verified to fail without the
+    // `x === 0 ? 0 : x` normalization and pass with it.)
+    const result = computeSegmentIntersection(
+      { x: -0, y: 0 }, { x: -4, y: 4 },
+      { x: 0, y: 0 }, { x: -2, y: 1 }
+    )
+    expect(result).not.toBeNull()
+    expect(Object.is(result!.x, -0)).toBe(false)
+  })
 })
 ```
 
@@ -156,7 +163,7 @@ export function computeSegmentIntersection(a1: Point, a2: Point, b1: Point, b2: 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/geometry/pathogenicCrossings.test.ts`
-Expected: PASS (4 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -301,7 +308,7 @@ export function computeHartmannCurryCrossings(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/geometry/pathogenicCrossings.test.ts`
-Expected: PASS (9 tests)
+Expected: PASS (10 tests)
 
 - [ ] **Step 5: Type-check and commit**
 
