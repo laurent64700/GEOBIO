@@ -96,14 +96,19 @@ import type { Map as LeafletMap, Polyline as LeafletPolyline } from 'leaflet'
         />
       </MapContainer>
     )
-    // Exactly one layer is rendered in this focused test (the EditableNetworkLine's
-    // own Polyline) — grab it via the map's layer registry rather than instanceof,
-    // since there's nothing else to disambiguate against here.
+    // With editable=true, Geoman's layer.pm.enable() adds its own vertex/middle-marker
+    // Marker instances directly to the map as SIBLINGS of the Polyline (not nested
+    // inside it) — map.eachLayer sees ALL of them (verified: 6 layers for a 2-point
+    // line, 1 Polyline + 5 markers), not just the one Polyline this test cares about.
+    // Duck-type on setLatLngs (only Polyline/Polygon-family layers have it; Markers
+    // don't) rather than picking whichever layer eachLayer iterates to last.
     let polyline: LeafletPolyline | null = null
     map?.eachLayer((layer) => {
-      polyline = layer as unknown as LeafletPolyline
+      if (typeof (layer as unknown as { setLatLngs?: unknown }).setLatLngs === 'function') {
+        polyline = layer as unknown as LeafletPolyline
+      }
     })
-    if (!polyline) throw new Error('Expected EditableNetworkLine to have rendered a Leaflet layer')
+    if (!polyline) throw new Error('Expected EditableNetworkLine to have rendered a Leaflet Polyline layer')
     return polyline
   }
 
@@ -154,6 +159,16 @@ additionally fails because nothing listens for that event at all (the first test
 also fail purely on the `toHaveBeenCalledTimes(1)`/`changeKind` assertion since
 `pm:markerdragend` itself already works — that's expected, only the new second
 argument is missing).
+
+**If instead you see `TypeError: polyline.setLatLngs is not a function`:** the
+`renderEditableLine` helper's `eachLayer` callback picked up one of Geoman's own
+marker layers instead of the Polyline — with `editable` true, `layer.pm.enable()` adds
+several `Marker` instances directly to the map as siblings of the Polyline (verified:
+6 layers total for a 2-point line, not 1). The helper above already guards against
+this by duck-typing on `setLatLngs` (only present on Polyline/Polygon-family layers,
+not Markers) — if you're seeing this error anyway, you've likely diverged from the
+helper code above; don't "fix" it by picking `instanceof`-checking a specific marker
+class instead, the duck-type check is the intended, verified fix.
 
 - [ ] **Step 3: Update `EditableNetworkLine`'s `onChanged` signature and event wiring**
 
@@ -227,11 +242,15 @@ Expected: PASS (3 tests)
 - [ ] **Step 5: Type-check and commit**
 
 Run: `node_modules/.bin/tsc.cmd -b --noEmit`
-Expected: this will surface every call site of `EditableNetworkLine`'s `onChanged`
-prop that now needs a second parameter — that's `SiteMapView.tsx`, fixed in Task 2. It
-is expected/fine for `tsc` to report an error there right now; Task 2 fixes it before
-this plan is done. Do not "fix" it here by adding a default parameter — the type error
-is the intended signal to update every real call site.
+Expected: **clean, zero errors — do not expect or wait for a type error here.**
+`SiteMapView.tsx`'s callback at its `EditableNetworkLine` call site
+(`onChanged={(updated) => handleLineChanged(instance.id, updated)}`) is a
+fewer-parameters function literal, which TypeScript considers structurally assignable
+to the new `(updated: GridLine, changeKind: ...) => void` prop type (a callback that
+ignores extra arguments is always a valid substitute) — so this mismatch is real but
+invisible to `tsc` until `handleLineChanged`'s own signature changes in Task 2.
+`SiteMapView.tsx` genuinely still needs Task 2's edits — just don't rely on the
+type-checker to remind you before you get there.
 
 ```bash
 git add src/components/EditableNetworkLine.tsx src/components/EditableNetworkLine.test.tsx
