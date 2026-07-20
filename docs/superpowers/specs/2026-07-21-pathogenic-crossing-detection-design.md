@@ -1,8 +1,9 @@
 # Détection des croisements pathogènes — Design
 
 **Date :** 2026-07-21
-**Statut :** Brainstorm mené en autonomie (Laurent absent ~1h) — hypothèses clairement
-flaguées ci-dessous, **à confirmer avant tout passage au plan d'implémentation.**
+**Statut :** Brainstorm mené en autonomie (Laurent absent ~1h), relu et corrigé
+(spec-document-reviewer, PASS 2026-07-21) — hypothèses clairement flaguées ci-dessous,
+**à confirmer avant tout passage au plan d'implémentation.**
 **Sous-projet de :** GEOBIO — extension de Plan 1 (ex-"Chunk 11", jamais conçu ni
 construit), sous-projet séparé.
 
@@ -98,8 +99,14 @@ chaque polyligne, pas sur la ligne entière comme un seul segment.
     segment compte comme une intersection valide, pas ignoré). Retourne `null` si
     parallèles (déterminant proche de 0 — un seuil epsilon, pas une comparaison
     d'égalité flottante exacte) ou si l'intersection tombe hors des deux segments.
-    Normalise `-0` en `0` sur le point retourné (convention déjà établie dans ce
-    codebase pour ce type de calcul, voir `gridGeneration.ts`).
+    Normalise `-0` en `0` sur le point retourné (`gridGeneration.test.ts` documente
+    déjà que `-0 === 0` doit être testé explicitement pour ce type de calcul dans ce
+    codebase — même prudence à appliquer ici, pas une fonction existante à réutiliser).
+    **Conséquence des bornes inclusives à noter à l'implémentation** : un croisement
+    tombant pile sur un sommet intérieur d'une polyligne est compté par les deux
+    segments adjacents (t=1 côté premier segment, t=0 côté suivant) → deux entrées
+    `PathogenicCrossing` au même point. Cas de mesure nulle en pratique, pas grave,
+    mais à savoir plutôt qu'à découvrir en test.
   - `computeHartmannCurryCrossings(hartmannLines: GridLine[], curryLines: GridLine[]): PathogenicCrossing[]`
     — pour chaque paire (ligne Hartmann, ligne Curry), itère sur tous les segments
     consécutifs de la polyligne Hartmann (`adjustedPoints[i]`→`adjustedPoints[i+1]`)
