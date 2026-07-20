@@ -57,7 +57,11 @@ next only if no match is found:
    ```
    Confirmed with Laurent: cyan for Eau (distinct from Palm's steel blue), brown for
    Failles (distinct from every existing network/layer color: Hartmann red, Curry
-   yellow, Palm blue, Peyré/Bagua purple, Wissmann green, pathogenic-crossings orange).
+   yellow, Palm blue, Peyré/Bagua purple, Wissmann green, and the orange `#e65100`
+   planned — not yet implemented — for pathogenic crossings). Failles brown vs.
+   Hartmann red is the closest pair under a protanopia (red-weak) simulation; if that
+   ever proves hard to tell apart in the field, differentiate by stroke style (e.g.
+   dashed) rather than hue, rather than hunting for a third color.
 4. **Grey `#888888`** — final fallback for a genuinely unrecognized name, unchanged.
 
 **Refactor for testability:** this resolution chain is extracted into a pure function
@@ -98,7 +102,7 @@ New table, next migration number after the already-applied `0014_mission_photo_c
 -- supabase/migrations/0015_felt_segment.sql
 create table felt_segment (
   id uuid primary key default gen_random_uuid(),
-  plan_id uuid not null references plan(id),
+  plan_id uuid not null references plan(id) on delete cascade,
   network_name text not null,
   ax double precision not null,
   ay double precision not null,
@@ -137,19 +141,25 @@ pattern (not GeoJSON fixtures).
 
 ### 3.2 Pairing at detection time
 
-`src/vision/arucoMapping.ts` gains a pairing step. Detections already resolve to
-`{ networkName, x, y }` via the existing `mapDetectionsToPoints` centroid + affine
-transform logic (unchanged) — the new step groups the resulting recognized points by
-`(networkName, rodNumber)`, which requires threading `rodNumber` through from
-`RodMarker` (currently looked up only for `networkName`; the lookup map becomes
-`Map<markerId, { networkName, rodNumber }>` instead of `Map<markerId, networkName>`).
+`src/vision/arucoMapping.ts` gains a pairing step. `RecognizedPoint` gains a `markerId`
+field (currently `{ networkName, x, y }`, becomes `{ markerId, networkName, x, y }`) —
+needed both for the dedup step below and for the deterministic ordering rule. The
+lookup map used by `mapDetectionsToPoints` changes from `Map<markerId, networkName>` to
+`Map<markerId, { networkName, rodNumber }>`, threading `rodNumber` through from
+`RodMarker` (stored today, read nowhere downstream).
 
-For each `(networkName, rodNumber)` group:
+**Dedup before pairing:** a detector can return the same `markerId` more than once in a
+single frame (misread/duplicate detection). Before grouping, recognized points are
+deduplicated by `markerId`, keeping the first occurrence — this makes a group of more
+than 2 recognized points structurally impossible, since each rod has exactly 2 distinct
+marker IDs by construction (`rod_marker` never assigns the same `marker_id` twice).
+
+Deduplicated points are then grouped by `(networkName, rodNumber)`. For each group:
 - **2 recognized points** → one `FeltSegment` candidate: `pointA`/`pointB` are the two
-  points in an unspecified but deterministic order (e.g. sorted by marker ID) — order
-  doesn't carry meaning today since nothing consumes directionality yet beyond "a line
-  exists between these two points," but a deterministic order keeps re-runs stable and
-  avoids flicker if the same photo is re-detected.
+  points sorted by `markerId` — order doesn't carry meaning today since nothing
+  consumes directionality yet beyond "a line exists between these two points," but a
+  deterministic order keeps re-runs stable and avoids flicker if the same photo is
+  re-detected.
 - **1 recognized point** → one `FeltPoint` candidate, exactly today's behavior.
 
 `RodDetectionPanel.handleDetect` creates both kinds via `Promise.all` (extending the
@@ -160,22 +170,30 @@ summary message becomes more informative:
 ### 3.3 Rendering — `FeltSegmentsLayer`
 
 New component `src/components/FeltSegmentsLayer.tsx`, same family and shape as
-`FeltPointsLayer`/`PathogenicCrossingsLayer`: `if (!visible) return null`, map segments
-through `localToLatLng` for both endpoints, render a react-leaflet `Polyline` colored
-via `colorForNetwork(segment.networkName)`.
+`FeltPointsLayer`/`BaguaLayer`: `if (!visible) return null`, map segments through
+`localToLatLng` for both endpoints, render a react-leaflet `Polyline` colored via
+`colorForNetwork(segment.networkName)`. (A third sibling layer, `PathogenicCrossingsLayer`,
+is planned in a parallel spec/plan — see the sequencing note below — but does not exist
+in the codebase yet; it is not something to copy from directly.)
 
 Wiring, following the exact established 2-file pattern (`LayerPanel.tsx` +
-`SiteMapView.tsx`, already done 3 times this session for felt points, Bagua, and
-pathogenic crossings):
+`SiteMapView.tsx`, already done twice in this codebase for felt points and Bagua):
 - `LayerPanel.tsx`: new `FELT_SEGMENTS_LAYER_ID = 'felt-segments'`, checkbox defaulting
   to visible (`?? true`, matching `FELT_POINTS_LAYER_ID` — this is real field data
-  Laurent wants to see by default, unlike the derived/auxiliary Bagua and
-  pathogenic-crossings layers which default hidden).
+  Laurent wants to see by default, unlike the derived/auxiliary Bagua layer which
+  defaults hidden).
 - `SiteMapView.tsx`: fetch `feltSegments` in the existing plan-keyed load effect
   (alongside grid instances/lines/felt points), render `<FeltSegmentsLayer>` inside
   `<MapView>` alongside the existing layers, mock it in `SiteMapView.test.tsx` the same
-  way `BaguaLayer`/`FeltPointsLayer`/`PathogenicCrossingsLayer` already are (a real
-  `Polyline` needs a real Leaflet context this file's mocked `MapView` doesn't provide).
+  way `BaguaLayer`/`FeltPointsLayer` already are (a real `Polyline` needs a real Leaflet
+  context this file's mocked `MapView` doesn't provide).
+
+**Sequencing note:** a separate, already-approved plan
+(`docs/superpowers/plans/2026-07-21-pathogenic-crossing-detection-plan.md`) also adds a
+new layer by modifying these same two files (`LayerPanel.tsx` + `SiteMapView.tsx`),
+independently of this spec. Whichever of the two implementation plans is executed
+second will need to merge/rebase past the other's edits to these files — a normal merge,
+not a design conflict, but worth flagging at execution time rather than being a surprise.
 
 ## 4. Testing
 
@@ -186,7 +204,8 @@ pathogenic crossings):
 - `src/vision/arucoMapping.test.ts` (extended) — pairing: 2 detections same
   `(networkName, rodNumber)` → 1 segment; 1 detection → 1 point; 2 different rods (same
   network, different `rodNumber`, or same `rodNumber`, different network) → 2 separate
-  results, not merged.
+  results, not merged; a duplicate detection of the same `markerId` within one photo is
+  deduped before pairing (does not produce a 3-point group or a zero-length segment).
 - `src/components/FeltSegmentsLayer.test.tsx` — mirror of `FeltPointsLayer.test.tsx`
   (renders one polyline per segment, nothing when `visible=false`, nothing when empty).
 - `SiteMapView.test.tsx` — extend the existing rod-detection-adjacent integration test
