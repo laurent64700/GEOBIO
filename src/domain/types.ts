@@ -118,6 +118,15 @@ export interface FeltPoint {
   createdAt: string
 }
 
+export interface FeltSegment {
+  id: string
+  planId: string
+  networkName: string
+  pointA: Point
+  pointB: Point
+  createdAt: string
+}
+
 /**
  * Fixed manufacture-time mapping of an ArUco marker ID to the network and rod
  * it is glued to — see docs/superpowers/specs/2026-07-16-rod-marker-detection-design.md.
