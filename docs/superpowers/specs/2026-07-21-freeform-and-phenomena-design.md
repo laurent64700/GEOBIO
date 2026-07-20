@@ -1,8 +1,9 @@
 # Tracé libre eau/faille + phénomènes ponctuels — Design
 
 **Date :** 2026-07-21
-**Statut :** Brainstorm mené en autonomie (Laurent absent ~1h) — hypothèses clairement
-flaguées ci-dessous, **à confirmer avant tout passage au plan d'implémentation.**
+**Statut :** Brainstorm mené en autonomie (Laurent absent ~1h), relu et corrigé
+(spec-document-reviewer, PASS 2026-07-21) — hypothèses clairement flaguées ci-dessous,
+**à confirmer avant tout passage au plan d'implémentation.**
 **Sous-projet de :** GEOBIO — extension de Plan 1 (ex-"Chunk 12", jamais conçu ni
 construit). **Deux composants indépendants mais liés**, traités dans un seul document
 car ils partagent le même pattern d'interaction (choisir un type → poser sur la carte)
@@ -95,7 +96,7 @@ dépendance à Geoman) et peut avancer sans attendre cette décision.
 ## 4. Composants & modèle de données
 
 **A. Tracé eau/faille**
-- Migration : `alter table freeform_network add column current_bearing_deg double precision, add column depth_m double precision, add column flow_rate text;` (tous nullables — un tracé peut être posé avant que Laurent n'ait mesuré le détail). **Correction post-revue** : `double precision`, pas `numeric` — convention réelle de ce codebase pour toute mesure/angle (`declination_deg`, `angle_true_north_deg`, `spacing_x_m`...), `numeric` n'est utilisé nulle part ailleurs.
+- Migration : `alter table freeform_network add column current_bearing_deg double precision, add column depth_m double precision, add column flow_rate text;` (tous nullables — un tracé peut être posé avant que Laurent n'ait mesuré le détail). **Correction post-revue** : `double precision`, pas `numeric` — convention dominante de ce codebase pour les mesures/angles de géométrie (`declination_deg`, `angle_true_north_deg`, `spacing_x_m`...). `numeric` existe ailleurs pour un cas différent (les curseurs 0-10/Bovis du bilan global, `0008_global_assessment.sql`) mais pas pour ce type de donnée géométrique.
 - `src/domain/types.ts` — `FreeformNetwork` élargi : `currentBearingDeg: number | null`, `depthM: number | null`, `flowRate: string | null`, **et `createdAt: string`** (le type actuel ne l'a pas alors que la table a `created_at` — à harmoniser en même temps que cet élargissement, incohérence pré-existante sans rapport avec ce sous-projet)
 - `src/data/freeformNetworksRepo.ts` (nouveau) — `createFreeformNetwork`, `listFreeformNetworksForPlan`, suivant exactement le pattern déjà établi (`feltPointsRepo.ts` comme référence la plus proche : create+list, erreurs françaises)
 - `src/components/FreeformDrawTool.tsx` (nouveau) — glue pour le mode dessin (voir §2 pour le choix du mécanisme, encore ouvert) ; **si l'option Geoman est retenue**, même traitement d'incertitude que `EditableNetworkLine.tsx` (isoler l'API dans un module fin) ; **si l'option capture maison est retenue**, ce module gère directement les événements pointeur. Dans les deux cas, **conversion de coordonnées explicite requise** : les points capturés (souris/tactile ou latlng Leaflet) doivent passer par `latLngToLocal` avant stockage — `FreeformNetwork.points` est en coordonnées métriques locales de la mission, pas en latlng brut (piège déjà rencontré, voir `EditableNetworkLine.tsx` qui fait cette conversion).
