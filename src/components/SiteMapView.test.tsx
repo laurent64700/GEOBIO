@@ -4,6 +4,7 @@ import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
+import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
 import * as buildingFootprintService from '../data/buildingFootprintService'
 import * as missionsRepo from '../data/missionsRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
@@ -12,6 +13,7 @@ import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 vi.mock('../data/gridInstancesRepo')
 vi.mock('../data/gridLinesRepo')
 vi.mock('../data/feltPointsRepo')
+vi.mock('../data/gridTemplatesRepo')
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 
@@ -109,6 +111,7 @@ describe('SiteMapView', () => {
     // existing tests are unaffected; individual tests below override this
     // with mockResolvedValue/mockRejectedValue as needed.
     vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([])
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
   })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
@@ -120,6 +123,18 @@ describe('SiteMapView', () => {
 
     expect(await screen.findByTestId('felt-points')).toBeInTheDocument()
     expect(screen.queryByTestId('lines-Hartmann')).not.toBeInTheDocument()
+  })
+
+  it('fetches grid templates alongside instances/lines/felt points', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([
+      { id: 't-peyre', name: 'Peyré', spacingXM: 6.5, spacingYM: 7.25, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#8e5fb3', vibratoryBase: 7 },
+    ])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    await waitFor(() => expect(gridTemplatesRepo.listGridTemplates).toHaveBeenCalled())
   })
 
   it('toggling the Hartmann layer in the panel shows its lines', async () => {

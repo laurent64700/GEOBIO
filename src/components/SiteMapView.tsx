@@ -13,10 +13,12 @@ import { BaguaLayer } from './BaguaLayer'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
+import { listGridTemplates } from '../data/gridTemplatesRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
 import { setBuildingFootprint } from '../data/missionsRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
+import { resolveNetworkColor } from '../domain/networkColors'
 import type { CompassDirection } from '../geometry/bagua'
 import type { GridInstance, GridLine, FeltPoint, Point, GridTemplate, GridLinePolarity } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
@@ -111,6 +113,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
+  const [templates, setTemplates] = useState<GridTemplate[]>([])
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   const [guideLineBearing, setGuideLineBearing] = useState<number | null>(null)
@@ -168,12 +171,14 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   useEffect(() => {
     async function load() {
       try {
-        const [loadedInstances, loadedPoints] = await Promise.all([
+        const [loadedInstances, loadedPoints, loadedTemplates] = await Promise.all([
           listGridInstancesForPlan(planId),
           listFeltPointsForPlan(planId),
+          listGridTemplates(),
         ])
         setInstances(loadedInstances)
         setFeltPoints(loadedPoints)
+        setTemplates(loadedTemplates)
         const entries = await Promise.all(
           loadedInstances.map(
             async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
@@ -361,8 +366,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   function colorForNetwork(networkName: string): string {
-    const match = instances.find((i) => i.templateSnapshot.name === networkName)
-    return match?.templateSnapshot.color ?? '#888888'
+    return resolveNetworkColor(networkName, instances, templates)
   }
 
   // The GridLine + owning GridInstance currently up for orthogonality review
