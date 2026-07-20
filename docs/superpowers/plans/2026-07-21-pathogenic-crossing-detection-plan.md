@@ -308,7 +308,7 @@ export function computeHartmannCurryCrossings(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/geometry/pathogenicCrossings.test.ts`
-Expected: PASS (10 tests)
+Expected: PASS (9 tests)
 
 - [ ] **Step 5: Type-check and commit**
 
