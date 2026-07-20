@@ -88,7 +88,7 @@ describe('RodDetectionPanel', () => {
       { markerId: 101, networkName: 'Hartmann', rodNumber: 1 },
     ])
     vi.mocked(arucoMapping.mapDetectionsToPoints).mockReturnValue({
-      recognized: [{ networkName: 'Hartmann', x: 5, y: 5 }],
+      recognized: [{ markerId: 101, rodNumber: 1, networkName: 'Hartmann', x: 5, y: 5 }],
       totalDetected: 1,
       totalRecognized: 1,
     })

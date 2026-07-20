@@ -9,6 +9,8 @@ export interface RawMarkerDetection {
 }
 
 export interface RecognizedPoint {
+  markerId: number
+  rodNumber: number
   networkName: string
   x: number
   y: number
@@ -38,16 +40,73 @@ export function mapDetectionsToPoints(
   calibration: AffineTransform,
   rodMarkers: RodMarker[]
 ): MappingResult {
-  const networkByMarkerId = new Map(rodMarkers.map((m) => [m.markerId, m.networkName]))
+  const markerById = new Map(rodMarkers.map((m) => [m.markerId, m]))
   const recognized: RecognizedPoint[] = []
 
   for (const detection of detections) {
-    const networkName = networkByMarkerId.get(detection.markerId)
-    if (networkName === undefined) continue
+    const marker = markerById.get(detection.markerId)
+    if (marker === undefined) continue
 
     const real = applyAffineTransform(centroid(detection.corners), calibration)
-    recognized.push({ networkName, x: real.x, y: real.y })
+    recognized.push({
+      markerId: marker.markerId,
+      rodNumber: marker.rodNumber,
+      networkName: marker.networkName,
+      x: real.x,
+      y: real.y,
+    })
   }
 
   return { recognized, totalDetected: detections.length, totalRecognized: recognized.length }
+}
+
+export interface FeltSegmentCandidate {
+  networkName: string
+  pointA: Point
+  pointB: Point
+}
+
+export interface PairingResult {
+  segments: FeltSegmentCandidate[]
+  points: RecognizedPoint[]
+}
+
+/**
+ * Groups recognized points by (networkName, rodNumber) — the two markers of
+ * the same physical rod, per spec §3.2. A duplicate detection of the same
+ * markerId within one frame is deduped first (keep first occurrence), so a
+ * group can only exceed 2 members if rod_marker itself has more than 2
+ * distinct marker IDs for one (networkName, rodNumber) pair — not expected
+ * given how rod_marker is seeded, but handled defensively: only the 2 lowest
+ * marker IDs in a group become a segment, extras are silently dropped.
+ */
+export function pairIntoSegmentsAndPoints(recognized: RecognizedPoint[]): PairingResult {
+  const seenMarkerIds = new Set<number>()
+  const deduped: RecognizedPoint[] = []
+  for (const point of recognized) {
+    if (seenMarkerIds.has(point.markerId)) continue
+    seenMarkerIds.add(point.markerId)
+    deduped.push(point)
+  }
+
+  const groups = new Map<string, RecognizedPoint[]>()
+  for (const point of deduped) {
+    const key = `${point.networkName}::${point.rodNumber}`
+    const group = groups.get(key)
+    if (group) group.push(point)
+    else groups.set(key, [point])
+  }
+
+  const segments: FeltSegmentCandidate[] = []
+  const points: RecognizedPoint[] = []
+  for (const group of groups.values()) {
+    if (group.length >= 2) {
+      const [a, b] = [...group].sort((x, y) => x.markerId - y.markerId)
+      segments.push({ networkName: a.networkName, pointA: { x: a.x, y: a.y }, pointB: { x: b.x, y: b.y } })
+    } else {
+      points.push(group[0])
+    }
+  }
+
+  return { segments, points }
 }
