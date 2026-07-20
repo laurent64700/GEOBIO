@@ -121,6 +121,8 @@ export interface FeltPoint {
 export interface FeltSegment {
   id: string
   planId: string
+  /** Free text, not a foreign key to GridTemplate — Laurent may search for a
+   * network before its GridTemplate row exists, or use a name not yet templated. */
   networkName: string
   pointA: Point
   pointB: Point
