@@ -119,6 +119,16 @@ export interface FeltPoint {
 }
 
 /**
+ * Fixed manufacture-time mapping of an ArUco marker ID to the network and rod
+ * it is glued to — see docs/superpowers/specs/2026-07-16-rod-marker-detection-design.md.
+ */
+export interface RodMarker {
+  markerId: number
+  networkName: string
+  rodNumber: number
+}
+
+/**
  * A mission-level aerial photo (storage/display only — no rod detection in
  * Plan 1; that's a separate future project involving ArUco markers). Attached
  * to the mission as a whole, not to a specific grid/network.
