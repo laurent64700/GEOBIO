@@ -41,34 +41,26 @@ ce principe :
   clic-pour-placer (même pattern que le point ressenti, déjà écrit dans un autre
   sous-projet en attente), Geoman n'apporte rien ici (pas de dessin de forme complexe)
 
-**Correction post-revue (2026-07-21) — le mécanisme de tracé n'est PAS un fait acquis,
-c'est une vraie décision à trancher avec Laurent.** Vérifié contre le package
-`@geoman-io/leaflet-geoman-free` réellement installé : **la version gratuite n'a pas de
-mode "ligne libre au doigt/stylet".** Elle fournit `Draw.Line`, un mode
-**clic-clic-clic pour poser des sommets** (comme dessiner un polygone), pas un tracé
-continu par glissement du doigt. Un mode `Freehand` existe bien dans les définitions de
-types du package, mais il est marqué comme fonctionnalité **payante (Pro)**, et absent
-du bundle gratuit réellement chargé — et même en Pro, c'est un freehand **polygone**,
-pas ligne. Trois options réelles, à trancher avec Laurent avant le plan d'implémentation :
+**Point technique vérifié (2026-07-21) puis décision de Laurent, ferme :** vérifié
+contre le package `@geoman-io/leaflet-geoman-free` réellement installé — **la version
+gratuite n'a pas de mode "ligne libre au doigt/stylet".** Elle fournit `Draw.Line`, un
+mode **clic-clic-clic pour poser des sommets** (comme dessiner un polygone), pas un
+tracé continu par glissement du doigt. Un mode `Freehand` existe bien dans les
+définitions de types du package, mais il est marqué comme fonctionnalité **payante
+(Pro)**, absent du bundle gratuit réellement chargé — et même en Pro, c'est un freehand
+**polygone**, pas ligne.
 
-1. **Accepter le clic-clic-clic** (`Draw.Line` gratuit) — chaque clic pose un sommet,
-   Laurent "dessine" une ligne brisée approximant le parcours de l'eau plutôt qu'un vrai
-   tracé continu. Gratuit, rapide à intégrer, mais moins fidèle au geste "stylet sur
-   l'écran" qu'il a décrit.
-2. **Construire une capture main-levée maison** (écouter les événements pointeur sur la
-   carte, suspendre le déplacement de la carte pendant le tracé, accumuler les points,
-   simplifier la ligne à la fin) — colle mieux au principe déjà posé "GEOBIO garde le
-   protocole", ne dépend d'aucune fonctionnalité Geoman payante, mais c'est du code
-   GEOBIO à écrire et tester, pas une brique existante à intégrer.
-3. **Passer à Geoman Pro** (payant) pour son vrai mode freehand — solution la plus
-   proche du geste souhaité, mais introduit une dépendance commerciale nouvelle.
-
-**Recommandation** : l'option 2 (capture maison) est cohérente avec le principe
-d'architecture déjà validé par Laurent (GEOBIO ne dépend pas d'un outil tiers pour son
-UX), et évite un abonnement pour une seule fonctionnalité. Mais c'est sa décision, pas
-la mienne — à trancher avant d'écrire le plan d'implémentation. **Le composant B
-(phénomènes ponctuels) est totalement indépendant de cette question** (aucune
-dépendance à Geoman) et peut avancer sans attendre cette décision.
+**Décision de Laurent (2026-07-21) : capture main-levée construite dans GEOBIO**, pas
+de dépendance à Geoman pour ce composant. Le clic-clic-clic a été explicitement rejeté
+("pas pratique"). Concrètement : écouter les événements pointeur directement sur la
+carte pendant le mode "Tracer l'eau"/"Tracer une faille" (suspendre le déplacement/zoom
+de la carte le temps du tracé, accumuler les points au fil du glissement, simplifier la
+ligne à la fin pour éviter un nombre de points excessif — ex. algorithme de
+Douglas-Peucker ou un simple seuil de distance minimale entre points consécutifs). Code
+GEOBIO à part entière (pas une brique tierce à intégrer), cohérent avec le principe déjà
+posé : GEOBIO ne dépend jamais d'un outil tiers pour son UX. **Le composant B
+(phénomènes ponctuels) reste indépendant de cette décision** (aucune dépendance à
+Geoman) et peut être construit dans n'importe quel ordre par rapport au composant A.
 
 ## 3. Flux utilisateur
 
