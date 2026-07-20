@@ -147,7 +147,11 @@ export function MissionWorkspace() {
               onChange={(e) => e.target.files?.[0] && handleInteriorFileChosen(e.target.files[0])}
             />
           </label>
-          <MissionPhotosGallery missionId={phase.mission.id} />
+          <MissionPhotosGallery
+            missionId={phase.mission.id}
+            planId={phase.exteriorPlan.id}
+            missionOrigin={{ lat: originLat!, lng: originLng! }}
+          />
         </div>
       )
     }

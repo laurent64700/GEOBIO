@@ -46,8 +46,21 @@ vi.mock('../components/SiteMapView', () => ({
 }))
 
 vi.mock('../components/MissionPhotosGallery', () => ({
-  MissionPhotosGallery: ({ missionId }: { missionId: string }) => (
-    <div data-testid="mission-photos-gallery" data-mission-id={missionId} />
+  MissionPhotosGallery: ({
+    missionId,
+    planId,
+    missionOrigin,
+  }: {
+    missionId: string
+    planId: string
+    missionOrigin: { lat: number; lng: number }
+  }) => (
+    <div
+      data-testid="mission-photos-gallery"
+      data-mission-id={missionId}
+      data-plan-id={planId}
+      data-mission-origin={missionOrigin && `${missionOrigin.lat},${missionOrigin.lng}`}
+    />
   ),
 }))
 
@@ -147,6 +160,12 @@ describe('MissionWorkspace', () => {
     // exteriorPlan-threading correction exists to get right.
     expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
     expect(screen.getByLabelText(/importer un plan intérieur/i)).toBeInTheDocument()
+    // The photos gallery must be threaded with the exterior Plan's id (same
+    // 'p1'-not-'m1' distinction as SiteMapView) and the mission origin, so
+    // rod-marker detection can calibrate photos and create FeltPoints.
+    const gallery = screen.getByTestId('mission-photos-gallery')
+    expect(gallery).toHaveAttribute('data-plan-id', 'p1')
+    expect(gallery).toHaveAttribute('data-mission-origin', '48.8566,2.3522')
   })
 
   it('uploads a chosen interior file, then shows the calibration tool', async () => {
