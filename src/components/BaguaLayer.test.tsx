@@ -63,6 +63,23 @@ describe('BaguaLayer', () => {
     expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
   })
 
+  it('renders nothing (instead of NaN polygons) for a degenerate zero-area footprint', () => {
+    // Collinear points → shoelace area 0 → computeCentroid divides by zero,
+    // yielding NaN/Infinity. Without the guard, Leaflet silently renders 8
+    // invisible NaN-coordinate polygons.
+    const degenerate = [
+      { x: 0, y: 0 },
+      { x: 5, y: 5 },
+      { x: 10, y: 10 },
+    ]
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <BaguaLayer footprint={degenerate} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+  })
+
   it('renders nothing when visible is false', () => {
     const footprint = [
       { x: 0, y: 0 },

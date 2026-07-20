@@ -15,6 +15,11 @@ export function BaguaLayer({ footprint, missionOrigin, visible }: BaguaLayerProp
   if (!visible || footprint === null || footprint.length === 0) return null
 
   const center = computeCentroid(footprint)
+  // computeCentroid divides by the polygon's area — a degenerate footprint
+  // (collinear points, area ≈ 0) yields NaN/Infinity, which Leaflet would
+  // render as invisible polygons with no error at all (audit S3.3). Render
+  // nothing instead: unreachable with real IGN outlines, but cheap to guard.
+  if (!Number.isFinite(center.x) || !Number.isFinite(center.y)) return null
   const radiusM = computeMaxRadius(footprint, center)
   const sectors = computeBaguaSectors(center, radiusM)
 
