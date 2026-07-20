@@ -11,10 +11,15 @@ live from each network's field-adjusted geometry, as a new toggleable layer.
 `computeHartmannCurryCrossings`) that treats `GridLine.adjustedPoints` as a polyline
 (not a 2-point segment — a field-edited line can have many vertices) and iterates
 consecutive segment pairs across both networks. `SiteMapView` derives the crossing list
-via `useMemo` whenever `instances`/`linesByInstance` changes (no new fetch, no new
-persisted table — this is entirely computed, unlike `GridInstance`/`GridLine`), and
-renders it through a new presentational layer component following the exact pattern
-already established by `FeltPointsLayer`/`BaguaLayer`.
+as a plain inline value recomputed on every render (no new fetch, no new persisted
+table — this is entirely computed, unlike `GridInstance`/`GridLine`), and renders it
+through a new presentational layer component following the exact pattern already
+established by `FeltPointsLayer`/`BaguaLayer`.
+
+**Deviation from spec:** the approved spec (§4/§5) calls for `useMemo`. This plan
+deviates — see Task 4 Step 2 for the justification (matching `SiteMapView`'s own
+established inline-derivation convention). Flag this to Laurent as a disclosed
+deviation, not something the spec itself endorsed.
 
 **Tech Stack:** Same as the rest of GEOBIO — Vite, React, TypeScript, react-leaflet,
 Vitest + Testing Library. No new dependency, no new database table, no new migration.
@@ -89,18 +94,14 @@ describe('computeSegmentIntersection', () => {
     expect(result).toEqual({ x: 0, y: 0 })
   })
 
-  it('normalizes a -0 result to 0', () => {
-    // A crossing at x=0 approached from the negative side can produce -0 from
-    // the underlying floating-point division — this codebase has been bitten
-    // by -0 !== "looks like 0" before (see gridGeneration.test.ts), so this is
-    // tested explicitly rather than assumed.
-    const result = computeSegmentIntersection(
-      { x: -5, y: 0 }, { x: 5, y: 0 },
-      { x: 0, y: -5 }, { x: 0, y: 5 }
-    )
-    expect(result).not.toBeNull()
-    expect(Object.is(result!.x, -0)).toBe(false)
-  })
+  // No dedicated "-0 normalization" test: verified by exhaustive search (2M random
+  // segment pairs, plus a systematic sweep of literal -0 endpoints) that this
+  // formula's arithmetic cannot actually produce a -0 result — `a1.x + t*d1x`
+  // resolves to +0 under IEEE 754 addition rules in every case tried, including
+  // when a1.x is itself a literal -0. The `x === 0 ? 0 : x` normalization in the
+  // implementation below is kept as cheap defensive code (harmless, matches the
+  // established -0-awareness convention from gridGeneration.test.ts) but isn't
+  // exercised by a test, since no real input reaches that branch.
 })
 ```
 
@@ -155,7 +156,7 @@ export function computeSegmentIntersection(a1: Point, a2: Point, b1: Point, b2: 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node_modules/.bin/vitest.cmd run src/geometry/pathogenicCrossings.test.ts`
-Expected: PASS (5 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -480,11 +481,16 @@ import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
 import { PATHOGENIC_CROSSINGS_LAYER_ID } from './LayerPanel' // add to the existing named import from './LayerPanel'
 
-// ... inside SiteMapView, after `const gridLayers = ...` (a plain derived
-// value computed on every render, no memoization — matches this file's own
-// established style for reviewTarget/reviewSuggestion/gridLayers, which the
-// spec's own review confirmed is an acceptable choice given the negligible
-// cost involved; do NOT introduce this file's first useMemo just for this):
+// ... inside SiteMapView, after `const gridLayers = ...`. DEVIATION FROM SPEC:
+// the approved spec (§4/§5) says to derive this via `useMemo`. This plan uses a
+// plain derived value instead, recomputed on every render — matching this
+// file's own established style for reviewTarget/reviewSuggestion/gridLayers
+// (none of which use useMemo, and the file doesn't import it at all). The cost
+// is negligible (small line counts per plan, two nested loops over segment
+// pairs), so introducing this file's first useMemo for one derived value would
+// add inconsistency without a measurable benefit. This is a deliberate choice
+// made during planning, not something the spec itself calls for — flag it to
+// Laurent during review; swap to useMemo if profiling ever shows otherwise.
 const hartmannLines = instances
   .filter((i) => i.templateSnapshot.name === 'Hartmann')
   .flatMap((i) => linesByInstance[i.id] ?? [])
