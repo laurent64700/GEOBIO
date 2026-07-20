@@ -8,9 +8,11 @@ Laurent needs to capture strong local grid deviations (a sacred site, a church, 
 "vortex" — places where the felt network line visibly bends, not just drifts slightly)
 by adding intermediate bend points to a grid line, not just nudging its two theoretical
 endpoints. `GridLine.adjustedPoints` is already an arbitrary-length `Point[]` (not
-capped at 2 — this is the same fact already established for
-`docs/superpowers/specs/2026-07-21-pathogenic-crossing-detection-design.md`'s
-polyline-aware crossing detection), so the data model already supports this. The
+capped at 2 — this is a separate, already-designed fact on `master`, in
+`docs/superpowers/specs/2026-07-21-pathogenic-crossing-detection-design.md`, approved
+but **not yet present on this worktree's `plan1-moteur-reseaux` branch** — verify it
+has actually landed here before treating it as prior art at implementation time), so
+the data model already supports this. The
 question was whether the *editing UI* (`EditableNetworkLine.tsx`, built on
 `leaflet-geoman-free` v2.20.0) already lets Laurent add a point, not just drag the two
 endpoints — the component's own code carries a warning that its Geoman integration was
@@ -35,12 +37,16 @@ Read directly from the installed `node_modules/@geoman-io/leaflet-geoman-free`
   database. This is a real, currently-shipped data-loss gap, not a missing feature to
   build from scratch.
 - A third gesture — dragging a middle marker directly (repositioning while creating
-  it, no separate click first) — goes through `_onMiddleMarkerMoveStart` and, based on
-  the promotion logic (`_addMarker` is called the same way as the click path), likely
-  ends up firing the same `pm:markerdragend` the component already handles correctly.
-  This was not exhaustively traced through the library's drag-completion code, and is
-  called out as a disclosed limitation in §4 rather than something this spec claims to
-  guarantee.
+  it, no separate click first) — was traced further than the first draft of this spec
+  did. `_onMiddleMarkerMoveStart` promotes the marker via the same `_addMarker` path as
+  a click, which means it fires `pm:vertexadded` **immediately at drag-start**, at the
+  marker's pre-drag (midpoint) position — not at the final, dragged-to position. The
+  promoted marker also keeps the ordinary `dragstart`/`move`/`dragend` bindings every
+  vertex marker has, so the same gesture is expected to **also** fire `pm:markerdragend`
+  once the drag actually ends, this time with the final position. Net effect: this one
+  gesture likely fires **both** events — an early `pm:vertexadded` with a stale
+  (midpoint) position, then a later `pm:markerdragend` with the correct final position.
+  See §4.2 for the consequence and the accepted scope decision.
 
 ## 3. Decisions (confirmed with Laurent)
 
@@ -102,19 +108,43 @@ function handleLineChanged(instanceId: string, updated: GridLine, changeKind: 'd
 }
 ```
 
-**Disclosed limitation:** a vertex added by dragging a middle marker directly
-(repositioning while creating, no separate click) is expected — based on reading the
-library's promotion logic, not an exhaustive trace — to still fire
-`pm:markerdragend`, which this design classifies as `'drag'` and therefore still shows
-the orthogonality panel for. This is a minor, disclosed gap (Laurent clicks "Ignorer"
-once if it appears after that specific gesture) rather than something this iteration
-attempts to distinguish perfectly — doing so would require hooking deeper into
-Geoman's internal marker-promotion state than is worth the complexity for this edge
-case. `handleResetLine`/`handleUndo` (which also call code on the `GridLine`-changing
-path) are unaffected by this change — they don't go through `EditableNetworkLine`'s
-`onChanged` at all, they call `handleLineChanged` directly; that direct call site
-keeps passing `'drag'` (its existing straighten/undo semantics are unrelated to vertex
-insertion and unchanged by this spec).
+**Disclosed limitation:** as traced in §2, dragging a middle marker directly (instead
+of clicking it, then optionally dragging the resulting real vertex separately) likely
+fires **both** `pm:vertexadded` (immediately, at the stale midpoint position) and
+`pm:markerdragend` (at gesture end, with the correct final position) for one gesture.
+Concretely, this means: an extra, premature `onChanged(..., 'vertex-added')` call
+happens first — pushing a transient, soon-superseded state onto the undo stack and
+writing it to the database via `updateAdjustedPoints` — immediately followed by the
+correct final `onChanged(..., 'drag')` call, which does show the orthogonality panel
+(the disclosed gap already anticipated) and pushes a second, correct undo entry.
+Net practical effect: one extra undo-stack entry (clicking "Annuler" once would revert
+to the brief intermediate state rather than to before the vertex existed at all — a
+minor "undo doesn't skip cleanly" annoyance, not data loss, since the final position is
+still correctly saved) and one extra, harmless database write. This iteration accepts
+this rather than adding a same-gesture de-duplication guard, because §4.4's UI hint
+explicitly teaches the click-based gesture ("cliquez le point central... pour ajouter
+un coude") as the intended workflow — the direct-drag gesture is a secondary,
+unadvertised path whose rough edges are acceptable for now. Revisit if this proves
+disruptive in the field.
+
+**Call sites of `handleLineChanged`** (verified against the real
+`src/components/SiteMapView.tsx`, not assumed) — there are three, and this design
+affects them differently:
+- The `EditableNetworkLine`'s `onChanged` wiring (current line 421) — this is the one
+  §4.1/§4.2 redesign: it now passes through the real `changeKind` from Geoman.
+- `handleResetLine` (current line 355, itself called from the "Réinitialiser" button)
+  — calls `handleLineChanged` directly with a hardcoded literal; keep passing
+  `'drag'` (resetting to the theoretical line is conceptually a "plain adjustment,"
+  and showing the orthogonality panel after a reset is unchanged, existing behavior).
+- The "Redresser" button inside the orthogonality-review panel itself (current line
+  632) — also calls `handleLineChanged` directly; keep passing `'drag'` for the same
+  reason (straightening is itself the panel's own action, not a vertex insertion).
+
+**`handleUndo` is a separate case, not a third call site to update:** it does **not**
+call `handleLineChanged` at all (verified: it has its own inline
+`setUndoStack`/`setLinesByInstance`/`updateAdjustedPoints` calls and never touches
+`setAwaitingOrthogonalityReview` or `setLastChangedLine`). It is therefore entirely
+unaffected by this change — no edit needed there.
 
 ### 4.3 Testing
 
@@ -160,10 +190,13 @@ Annuler/Réinitialiser buttons), shown only while `editMode` is on:
   — Laurent decides where to bend the line based on his own felt readings.
 - No perfect disambiguation of the drag-to-insert gesture from a plain existing-vertex
   drag (§4.2's disclosed limitation).
-- No changes to `computeSegmentIntersection`/`computeHartmannCurryCrossings`
-  (pathogenic-crossing detection) — that code already iterates consecutive segment
-  pairs of an arbitrary-length polyline, so a grid line gaining a bend point is already
-  handled correctly there with zero changes.
+- No changes anticipated to `computeSegmentIntersection`/`computeHartmannCurryCrossings`
+  (pathogenic-crossing detection) once that separate, already-approved work lands: its
+  design iterates consecutive segment pairs of an arbitrary-length polyline, so a grid
+  line gaining a bend point should already be handled correctly there. As of this
+  spec's writing that code does not yet exist in this worktree/branch (verified: no
+  match for either function under `src/`) — this is a forward-looking compatibility
+  note, not a claim about code that's already running.
 
 ## 6. Files touched (summary for the implementation plan)
 
