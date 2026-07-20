@@ -1,6 +1,6 @@
 // src/data/missionPhotosRepo.ts
 import { supabase } from '../lib/supabaseClient'
-import type { MissionPhoto } from '../domain/types'
+import type { AffineTransform, MissionPhoto } from '../domain/types'
 
 const BUCKET = 'mission-photos'
 // Bucket 'mission-photos' is private, for consistency with the 'plans' bucket
@@ -14,11 +14,18 @@ interface MissionPhotoRow {
   id: string
   mission_id: string
   image_url: string
+  calibration: AffineTransform | null
   created_at: string
 }
 
 function mapRowToMissionPhoto(row: MissionPhotoRow): MissionPhoto {
-  return { id: row.id, missionId: row.mission_id, imageUrl: row.image_url, createdAt: row.created_at }
+  return {
+    id: row.id,
+    missionId: row.mission_id,
+    imageUrl: row.image_url,
+    calibration: row.calibration,
+    createdAt: row.created_at,
+  }
 }
 
 // Unlike planImageStorage.ts's fixed 'interior-plan' name (justified there by
@@ -55,6 +62,21 @@ export async function addMissionPhoto(missionId: string, file: File): Promise<Mi
 
   if (error) throw new Error(`Impossible d'enregistrer la photo : ${error.message}`)
   return mapRowToMissionPhoto(row as MissionPhotoRow)
+}
+
+export async function setPhotoCalibration(
+  photoId: string,
+  calibration: AffineTransform
+): Promise<MissionPhoto> {
+  const { data, error } = await supabase
+    .from('mission_photo')
+    .update({ calibration })
+    .eq('id', photoId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible d'enregistrer le calage de la photo : ${error.message}`)
+  return mapRowToMissionPhoto(data as MissionPhotoRow)
 }
 
 export async function listMissionPhotos(missionId: string): Promise<MissionPhoto[]> {

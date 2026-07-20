@@ -129,13 +129,17 @@ export interface RodMarker {
 }
 
 /**
- * A mission-level aerial photo (storage/display only — no rod detection in
- * Plan 1; that's a separate future project involving ArUco markers). Attached
- * to the mission as a whole, not to a specific grid/network.
+ * A mission-level aerial photo, attached to the mission as a whole, not to a
+ * specific grid/network. Storage/display since Plan 1 Chunk 10; also the input
+ * to ArUco rod-marker detection (2026-07-16 sub-project) once calibrated.
  */
 export interface MissionPhoto {
   id: string
   missionId: string
   imageUrl: string
+  /** Per-photo calibration (pixel → mission-local metric), null until Laurent
+   * calibrates this photo for rod detection — each aerial photo has its own
+   * framing/angle, so calibration lives on the photo, not the mission. */
+  calibration: AffineTransform | null
   createdAt: string
 }

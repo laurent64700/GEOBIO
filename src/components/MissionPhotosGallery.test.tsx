@@ -9,7 +9,7 @@ vi.mock('../data/missionPhotosRepo')
 describe('MissionPhotosGallery', () => {
   it('loads and displays existing photos', async () => {
     vi.mocked(missionPhotosRepo.listMissionPhotos).mockResolvedValue([
-      { id: 'mp1', missionId: 'm1', imageUrl: 'https://x/a.jpg', createdAt: '2026-07-16T10:00:00Z' },
+      { id: 'mp1', missionId: 'm1', imageUrl: 'https://x/a.jpg', calibration: null, createdAt: '2026-07-16T10:00:00Z' },
     ])
     render(<MissionPhotosGallery missionId="m1" />)
     expect(await screen.findByAltText(/photo aérienne/i)).toBeInTheDocument()
@@ -18,7 +18,7 @@ describe('MissionPhotosGallery', () => {
   it('uploads a chosen file and adds it to the displayed list', async () => {
     vi.mocked(missionPhotosRepo.listMissionPhotos).mockResolvedValue([])
     vi.mocked(missionPhotosRepo.addMissionPhoto).mockResolvedValue({
-      id: 'mp1', missionId: 'm1', imageUrl: 'https://x/new.jpg', createdAt: '2026-07-16T10:05:00Z',
+      id: 'mp1', missionId: 'm1', imageUrl: 'https://x/new.jpg', calibration: null, createdAt: '2026-07-16T10:05:00Z',
     })
 
     render(<MissionPhotosGallery missionId="m1" />)
