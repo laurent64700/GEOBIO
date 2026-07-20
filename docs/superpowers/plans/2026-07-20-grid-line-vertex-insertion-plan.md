@@ -84,9 +84,15 @@ import type { Map as LeafletMap, Polyline as LeafletPolyline } from 'leaflet'
 // existing rendering test
 
   function renderEditableLine(onChanged: (updated: GridLine, changeKind: 'drag' | 'vertex-added') => void) {
-    let map: LeafletMap | null = null
+    // Holder object, not a plain `let map = null` reassigned inside the ref callback:
+    // TypeScript's control-flow narrowing doesn't track a `let` variable's mutation
+    // happening only inside a closure invoked by React — at the `.eachLayer(...)` call
+    // below it would otherwise still see `map` narrowed to its literal initializer
+    // `null` (type `never` after optional chaining), even though the explicit
+    // annotation says `LeafletMap | null`. A holder's property access avoids this.
+    const mapHolder: { current: LeafletMap | null } = { current: null }
     render(
-      <MapContainer center={[48.8566, 2.3522]} zoom={18} ref={(m) => { map = m }}>
+      <MapContainer center={[48.8566, 2.3522]} zoom={18} ref={(m) => { mapHolder.current = m }}>
         <EditableNetworkLine
           line={line}
           color="#d32f2f"
@@ -103,7 +109,7 @@ import type { Map as LeafletMap, Polyline as LeafletPolyline } from 'leaflet'
     // Duck-type on setLatLngs (only Polyline/Polygon-family layers have it; Markers
     // don't) rather than picking whichever layer eachLayer iterates to last.
     let polyline: LeafletPolyline | null = null
-    map?.eachLayer((layer) => {
+    mapHolder.current?.eachLayer((layer) => {
       if (typeof (layer as unknown as { setLatLngs?: unknown }).setLatLngs === 'function') {
         polyline = layer as unknown as LeafletPolyline
       }
