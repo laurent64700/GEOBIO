@@ -23,8 +23,13 @@ import { AR } from 'js-aruco2'
 const TINY_WHITE_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAABmJLR0QA/wD/AP+gvaeTAAAAFUlEQVQImWP8////fwYGBgYmBigAAD34BADZfIBGAAAAAElFTkSuQmCC'
 
+// First test in the file pays jsdom's canvas/image-decoding warm-up, which
+// under a fully parallel `vitest run` (40+ suites) can exceed the default 5s
+// (observed 2026-07-20: passes alone, times out in the full suite).
+const IMAGE_TEST_TIMEOUT_MS = 20000
+
 describe('detectMarkers', () => {
-  it('returns an empty array for a blank white image, without throwing', async () => {
+  it('returns an empty array for a blank white image, without throwing', { timeout: IMAGE_TEST_TIMEOUT_MS }, async () => {
     const image = new Image()
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve()
@@ -42,7 +47,7 @@ describe('detectMarkers', () => {
   // the full pipeline to find it. This validates the real js-aruco2 calling
   // convention, not just crash-freedom — but still not real-photo accuracy
   // (lighting/print quality), which needs a physical field test per spec §8.
-  it('detects a synthetically rendered ARUCO dictionary marker with its exact ID', async () => {
+  it('detects a synthetically rendered ARUCO dictionary marker with its exact ID', { timeout: IMAGE_TEST_TIMEOUT_MS }, async () => {
     const MARKER_ID = 101
     const CELL = 20
     const dictionary = new AR.Dictionary('ARUCO')
