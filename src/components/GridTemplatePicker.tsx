@@ -64,15 +64,20 @@ export function GridTemplatePicker({ onSelected }: GridTemplatePickerProps) {
         </label>
         <label>
           Espacement X (m)
+          {/* min="0.01": a 0 (or negative) spacing would make
+              maxOffsetIndexNeeded's Math.ceil(d/spacing) evaluate to Infinity
+              (gridGeneration.ts), hanging the grid-generation loop. The DB
+              check `spacing_x_m > 0` (migration 0001) is the real guard —
+              this is only a client-side round-trip saver (audit S3.5). */}
           <input
-            type="number" step="0.01" value={spacingXM}
+            type="number" step="0.01" min="0.01" value={spacingXM}
             onChange={(e) => setSpacingXM(e.target.value)} required
           />
         </label>
         <label>
           Espacement Y (m)
           <input
-            type="number" step="0.01" value={spacingYM}
+            type="number" step="0.01" min="0.01" value={spacingYM}
             onChange={(e) => setSpacingYM(e.target.value)} required
           />
         </label>
