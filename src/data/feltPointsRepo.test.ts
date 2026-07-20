@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createFeltPoint, listFeltPointsForPlan } from './feltPointsRepo'
+import { createFeltPoint, deleteFeltPoint, listFeltPointsForPlan } from './feltPointsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -51,5 +51,24 @@ describe('feltPointsRepo', () => {
     expect(chain.eq).toHaveBeenCalledWith('plan_id', 'p1')
     expect(points).toHaveLength(2)
     expect(points.map((p) => p.networkName)).toEqual(['Hartmann', 'Curry'])
+  })
+
+  it('deletes a felt point', async () => {
+    const { from, chain } = createSupabaseChainMock({ data: null, error: null })
+    vi.mocked(supabase).from = from
+
+    await deleteFeltPoint('fp1')
+
+    expect(from).toHaveBeenCalledWith('felt_point')
+    expect(chain.eq).toHaveBeenCalledWith('id', 'fp1')
+  })
+
+  it('throws a descriptive French error when deletion fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(deleteFeltPoint('fp1')).rejects.toThrow(
+      'Impossible de supprimer le point ressenti : network down'
+    )
   })
 })

@@ -20,6 +20,7 @@ export function createSupabaseChainMock<T>(result: SupabaseQueryResult<T>) {
   const chain: any = {
     insert: vi.fn(() => chain),
     update: vi.fn(() => chain),
+    delete: vi.fn(() => chain),
     select: vi.fn(() => chain),
     eq: vi.fn(() => chain),
     order: vi.fn(() => chain),

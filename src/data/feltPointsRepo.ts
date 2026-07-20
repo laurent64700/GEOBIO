@@ -39,6 +39,11 @@ export async function createFeltPoint(input: CreateFeltPointInput): Promise<Felt
   return mapRowToFeltPoint(data as FeltPointRow)
 }
 
+export async function deleteFeltPoint(id: string): Promise<void> {
+  const { error } = await supabase.from('felt_point').delete().eq('id', id)
+  if (error) throw new Error(`Impossible de supprimer le point ressenti : ${error.message}`)
+}
+
 export async function listFeltPointsForPlan(planId: string): Promise<FeltPoint[]> {
   const { data, error } = await supabase.from('felt_point').select().eq('plan_id', planId)
 
