@@ -33,4 +33,8 @@ describe('resolveNetworkColor', () => {
   it('falls back to grey for a genuinely unrecognized network name', () => {
     expect(resolveNetworkColor('Inconnu', [], [])).toBe('#888888')
   })
+
+  it('falls back to grey rather than exposing a prototype property for a name like "constructor"', () => {
+    expect(resolveNetworkColor('constructor', [], [])).toBe('#888888')
+  })
 })

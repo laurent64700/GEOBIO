@@ -32,7 +32,7 @@ export function resolveNetworkColor(
   const templateMatch = templates.find((t) => t.name === networkName)
   if (templateMatch) return templateMatch.color
 
-  if (networkName in NON_GRID_NETWORK_COLORS) return NON_GRID_NETWORK_COLORS[networkName]
+  if (Object.hasOwn(NON_GRID_NETWORK_COLORS, networkName)) return NON_GRID_NETWORK_COLORS[networkName]
 
   return FALLBACK_COLOR
 }
