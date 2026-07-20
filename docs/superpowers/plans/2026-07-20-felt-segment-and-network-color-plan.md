@@ -1029,16 +1029,28 @@ git commit -m "Add FeltSegmentsLayer: renders felt-segment polylines colored by 
 
 ### Task 9: Wire into `LayerPanel` and `SiteMapView`
 
+**Hard prerequisite:** Chunk 1 Task 2 must already be landed on this branch before
+starting this task — Step 2 below extends the `Promise.all`/`templates` state that
+Chunk 1 Task 2 introduces into `SiteMapView.tsx`'s load effect. If Chunk 2 is ever
+executed without Chunk 1 already merged, Step 2 references a `loadedTemplates`/
+`templates` state and a `listGridTemplates` import that don't exist yet, and will not
+compile.
+
 **Files:**
 - Modify: `src/components/LayerPanel.tsx` + `.test.tsx`
 - Modify: `src/components/SiteMapView.tsx` + `.test.tsx`
 
 - [ ] **Step 1: Add a layer id and checkbox to `LayerPanel`**
 
-`LayerPanel.test.tsx` wasn't read in full while writing this plan — before editing,
-check its existing test structure for `FELT_POINTS_LAYER_ID` (defaults to visible,
-`?? true`) and mirror that pattern exactly for the new id, not the Bagua one (`?? false`)
-— this layer is real field data, like felt points, not an auxiliary derived layer.
+There is no single existing test that cleanly mirrors what's needed here — check
+`LayerPanel.test.tsx` before editing and combine two real patterns from it: the
+default-visible assertion lives inside a combined first test (something like `'shows
+"Ressenti terrain" checked by default, grid layers unchecked by default'`) — follow
+its `?? true` pattern for the new id, not the Bagua checkbox's `?? false` (this layer
+is real field data, like felt points, not an auxiliary derived layer). For the
+click/toggle assertion mechanics (`fireEvent.click` → `expect(onToggle).toHaveBeenCalledWith(...)`),
+the only existing test with that exact shape is the Bagua one — copy its assertion
+structure only, not its `?? false` default.
 
 ```typescript
 // src/components/LayerPanel.tsx — add alongside FELT_POINTS_LAYER_ID/BAGUA_LAYER_ID
