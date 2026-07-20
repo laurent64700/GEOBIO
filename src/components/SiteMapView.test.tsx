@@ -4,6 +4,7 @@ import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
+import * as feltSegmentsRepo from '../data/feltSegmentsRepo'
 import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
 import * as buildingFootprintService from '../data/buildingFootprintService'
 import * as missionsRepo from '../data/missionsRepo'
@@ -13,6 +14,7 @@ import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 vi.mock('../data/gridInstancesRepo')
 vi.mock('../data/gridLinesRepo')
 vi.mock('../data/feltPointsRepo')
+vi.mock('../data/feltSegmentsRepo')
 vi.mock('../data/gridTemplatesRepo')
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
@@ -51,6 +53,9 @@ vi.mock('./NetworkLinesLayer', () => ({
 }))
 vi.mock('./FeltPointsLayer', () => ({
   FeltPointsLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="felt-points" /> : null),
+}))
+vi.mock('./FeltSegmentsLayer', () => ({
+  FeltSegmentsLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="felt-segments" /> : null),
 }))
 vi.mock('./GuideLineLayer', () => ({
   GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
@@ -112,6 +117,7 @@ describe('SiteMapView', () => {
     // with mockResolvedValue/mockRejectedValue as needed.
     vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([])
     vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
+    vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([])
   })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
@@ -123,6 +129,18 @@ describe('SiteMapView', () => {
 
     expect(await screen.findByTestId('felt-points')).toBeInTheDocument()
     expect(screen.queryByTestId('lines-Hartmann')).not.toBeInTheDocument()
+  })
+
+  it('loads felt segments and shows the layer by default', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([
+      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z' },
+    ])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    expect(await screen.findByTestId('felt-segments')).toBeInTheDocument()
   })
 
   it('fetches grid templates alongside instances/lines/felt points', async () => {

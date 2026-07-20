@@ -3,9 +3,10 @@ import { MapView } from './MapView'
 import { NetworkLinesLayer } from './NetworkLinesLayer'
 import { EditableNetworkLine } from './EditableNetworkLine'
 import { FeltPointsLayer } from './FeltPointsLayer'
+import { FeltSegmentsLayer } from './FeltSegmentsLayer'
 import { GuideLineLayer } from './GuideLineLayer'
 import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
-import { LayerPanel, FELT_POINTS_LAYER_ID, BAGUA_LAYER_ID, type LayerEntry } from './LayerPanel'
+import { LayerPanel, FELT_POINTS_LAYER_ID, FELT_SEGMENTS_LAYER_ID, BAGUA_LAYER_ID, type LayerEntry } from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
@@ -13,6 +14,7 @@ import { BaguaLayer } from './BaguaLayer'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
+import { listFeltSegmentsForPlan } from '../data/feltSegmentsRepo'
 import { listGridTemplates } from '../data/gridTemplatesRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
@@ -20,7 +22,7 @@ import { setBuildingFootprint } from '../data/missionsRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
 import type { CompassDirection } from '../geometry/bagua'
-import type { GridInstance, GridLine, FeltPoint, Point, GridTemplate, GridLinePolarity } from '../domain/types'
+import type { GridInstance, GridLine, FeltPoint, FeltSegment, Point, GridTemplate, GridLinePolarity } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
@@ -113,6 +115,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
+  const [feltSegments, setFeltSegments] = useState<FeltSegment[]>([])
   const [templates, setTemplates] = useState<GridTemplate[]>([])
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
@@ -171,14 +174,16 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   useEffect(() => {
     async function load() {
       try {
-        const [loadedInstances, loadedPoints, loadedTemplates] = await Promise.all([
+        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments] = await Promise.all([
           listGridInstancesForPlan(planId),
           listFeltPointsForPlan(planId),
           listGridTemplates(),
+          listFeltSegmentsForPlan(planId),
         ])
         setInstances(loadedInstances)
         setFeltPoints(loadedPoints)
         setTemplates(loadedTemplates)
+        setFeltSegments(loadedSegments)
         const entries = await Promise.all(
           loadedInstances.map(
             async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
@@ -361,7 +366,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   function toggleLayer(id: string) {
-    const currentlyVisible = visibility[id] ?? id === FELT_POINTS_LAYER_ID
+    const currentlyVisible = visibility[id] ?? (id === FELT_POINTS_LAYER_ID || id === FELT_SEGMENTS_LAYER_ID)
     setVisibility((prev) => ({ ...prev, [id]: !currentlyVisible }))
   }
 
@@ -411,6 +416,12 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           colorForNetwork={colorForNetwork}
           missionOrigin={missionOrigin}
           visible={visibility[FELT_POINTS_LAYER_ID] ?? true}
+        />
+        <FeltSegmentsLayer
+          segments={feltSegments}
+          colorForNetwork={colorForNetwork}
+          missionOrigin={missionOrigin}
+          visible={visibility[FELT_SEGMENTS_LAYER_ID] ?? true}
         />
         {instances.map((instance) =>
           editMode && (visibility[instance.id] ?? false) ? (

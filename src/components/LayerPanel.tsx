@@ -1,4 +1,5 @@
 export const FELT_POINTS_LAYER_ID = 'felt-points'
+export const FELT_SEGMENTS_LAYER_ID = 'felt-segments'
 export const BAGUA_LAYER_ID = 'bagua'
 
 export interface LayerEntry {
@@ -40,6 +41,14 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
           onChange={() => onToggle(FELT_POINTS_LAYER_ID)}
         />
         Ressenti terrain
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[FELT_SEGMENTS_LAYER_ID] ?? true}
+          onChange={() => onToggle(FELT_SEGMENTS_LAYER_ID)}
+        />
+        Tiges (segments ressentis)
       </label>
       {gridLayers.map((layer) => (
         <label key={layer.id}>
