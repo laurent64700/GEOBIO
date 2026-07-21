@@ -36,6 +36,13 @@ vi.mock('./BuildingFootprintPicker', () => ({
 vi.mock('./BaguaLayer', () => ({
   BaguaLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="bagua-layer" /> : null),
 }))
+// Same reasoning as BuildingFootprintPicker/BaguaLayer above —
+// PathogenicCrossingsLayer renders a real <CircleMarker> per crossing, which
+// would crash without a real Leaflet context.
+vi.mock('./PathogenicCrossingsLayer', () => ({
+  PathogenicCrossingsLayer: ({ crossings, visible }: { crossings: unknown[]; visible: boolean }) =>
+    visible ? <div data-testid="pathogenic-crossings-count">{crossings.length}</div> : null,
+}))
 
 vi.mock('./MapView', () => ({
   MapView: ({ children, onMapClick }: { children?: React.ReactNode; onMapClick?: (l: { lat: number; lng: number }) => void }) => (
@@ -767,5 +774,24 @@ describe('SiteMapView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Détails' }))
 
     expect(screen.getByText('Carrière')).toBeInTheDocument()
+  })
+
+  it('computes and shows Hartmann×Curry crossings once the layer is toggled visible', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([
+      { id: 'gi-h', planId: 'p1', templateSnapshot: { id: 't-h', name: 'Hartmann', spacingXM: 1.8, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7 }, originX: 0, originY: 0 },
+      { id: 'gi-c', planId: 'p1', templateSnapshot: { id: 't-c', name: 'Curry', spacingXM: 4, spacingYM: 4, angleTrueNorthDeg: 45, originOffsetX: 0, originOffsetY: 0, color: '#f2c230', vibratoryBase: 5 }, originX: 0, originY: 0 },
+    ])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockImplementation(async (instanceId) =>
+      instanceId === 'gi-h'
+        ? [{ id: 'h1', gridInstanceId: 'gi-h', family: 'axis-a', polarity: '+', reinforced: false, theoreticalPoints: [{ x: 0, y: -5 }, { x: 0, y: 5 }], adjustedPoints: [{ x: 0, y: -5 }, { x: 0, y: 5 }] }]
+        : [{ id: 'c1', gridInstanceId: 'gi-c', family: 'axis-b', polarity: '+', reinforced: false, theoreticalPoints: [{ x: -5, y: 0 }, { x: 5, y: 0 }], adjustedPoints: [{ x: -5, y: 0 }, { x: 5, y: 0 }] }]
+    )
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByLabelText(/croisements pathogènes/i))
+
+    expect(await screen.findByTestId('pathogenic-crossings-count')).toHaveTextContent('1')
   })
 })

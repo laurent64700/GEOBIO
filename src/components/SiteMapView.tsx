@@ -11,6 +11,7 @@ import {
   FELT_POINTS_LAYER_ID,
   FELT_SEGMENTS_LAYER_ID,
   BAGUA_LAYER_ID,
+  PATHOGENIC_CROSSINGS_LAYER_ID,
   DEFAULT_VISIBLE_LAYER_IDS,
   type LayerEntry,
 } from './LayerPanel'
@@ -18,6 +19,8 @@ import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
+import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
+import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
@@ -418,6 +421,20 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     color: instance.templateSnapshot.color,
   }))
 
+  // Derived on every render, no memoization — matches this file's own
+  // established style for reviewTarget/reviewSuggestion/gridLayers above
+  // (none of which use useMemo). Spec §4 hypothesis: every Hartmann line
+  // crossed against every Curry line, across ALL Hartmann/Curry
+  // GridInstances on the plan (not paired per-instance) — flagged as an
+  // assumption to confirm with Laurent, not second-guessed here.
+  const hartmannLines = instances
+    .filter((i) => i.templateSnapshot.name === 'Hartmann')
+    .flatMap((i) => linesByInstance[i.id] ?? [])
+  const curryLines = instances
+    .filter((i) => i.templateSnapshot.name === 'Curry')
+    .flatMap((i) => linesByInstance[i.id] ?? [])
+  const pathogenicCrossings = computeHartmannCurryCrossings(hartmannLines, curryLines)
+
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MapView
@@ -481,6 +498,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           footprint={buildingFootprint}
           missionOrigin={missionOrigin}
           visible={visibility[BAGUA_LAYER_ID] ?? false}
+        />
+        <PathogenicCrossingsLayer
+          crossings={pathogenicCrossings}
+          missionOrigin={missionOrigin}
+          visible={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? false}
         />
       </MapView>
       {/* Top-right — LayerPanel and GridCreationPanel share this corner
