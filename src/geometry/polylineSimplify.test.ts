@@ -30,4 +30,33 @@ describe('simplifyByMinDistance', () => {
     const points = [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 4, y: 0 }]
     expect(simplifyByMinDistance(points, 0.5)).toEqual(points)
   })
+
+  it('accumulates distance against the last KEPT point, not the last raw point', () => {
+    // Points every 0.3m, threshold 0.5m. A naive implementation that compares
+    // each point to the previous RAW point would never see a jump >= 0.5m
+    // (every consecutive raw gap is exactly 0.3m) and would collapse this
+    // down to just the first and last point. The correct behavior compares
+    // to the last KEPT point, so distance accumulates across dropped points:
+    //   0.0 kept (first)
+    //   0.3 -> 0.3m from 0.0 -> dropped
+    //   0.6 -> 0.6m from 0.0 -> kept
+    //   0.9 -> 0.3m from 0.6 -> dropped
+    //   1.2 -> 0.6m from 0.6 -> kept
+    //   1.5 -> kept (last)
+    const points = [
+      { x: 0, y: 0 },
+      { x: 0.3, y: 0 },
+      { x: 0.6, y: 0 },
+      { x: 0.9, y: 0 },
+      { x: 1.2, y: 0 },
+      { x: 1.5, y: 0 },
+    ]
+    const result = simplifyByMinDistance(points, 0.5)
+    expect(result).toEqual([
+      { x: 0, y: 0 },
+      { x: 0.6, y: 0 },
+      { x: 1.2, y: 0 },
+      { x: 1.5, y: 0 },
+    ])
+  })
 })
