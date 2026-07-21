@@ -129,6 +129,25 @@ export interface FeltSegment {
   createdAt: string
 }
 
+export type PhenomenonKind =
+  | 'cheminee-1'
+  | 'cheminee-2'
+  | 'cheminee-3'
+  | 'cheminee-4'
+  | 'spire-vortex'
+  | 'point-cosmique'
+  | 'carre-magique'
+  | 'tube-magique'
+
+export interface Phenomenon {
+  id: string
+  planId: string
+  kind: PhenomenonKind
+  x: number
+  y: number
+  createdAt: string
+}
+
 /**
  * Fixed manufacture-time mapping of an ArUco marker ID to the network and rod
  * it is glued to — see docs/superpowers/specs/2026-07-16-rod-marker-detection-design.md.
