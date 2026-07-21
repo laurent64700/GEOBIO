@@ -39,7 +39,7 @@ export function FreeformMetadataForm({ onSubmit, onCancel }: FreeformMetadataFor
         Débit
         <input type="text" value={flowRate} onChange={(e) => setFlowRate(e.target.value)} />
       </label>
-      <button onClick={handleSubmit}>Valider</button>
+      <button onClick={handleSubmit} aria-label="Valider le tracé">Valider</button>
       <button onClick={onCancel}>Annuler</button>
     </div>
   )

@@ -931,10 +931,10 @@ describe('SiteMapView', () => {
     fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
     fireEvent.click(await screen.findByText('simulate-freeform-complete'))
     // The guide-line "Angle personnalisé" card also has its own "Valider"
-    // button, so /valider/i alone is ambiguous — the metadata form's is the
-    // last one rendered in the top-left stack (after the guide-line card).
-    const validerButtons = await screen.findAllByRole('button', { name: /valider/i })
-    fireEvent.click(validerButtons[validerButtons.length - 1]) // all fields left blank
+    // button with the same visible text, so plain /valider/i is ambiguous —
+    // FreeformMetadataForm's submit button carries a distinguishing
+    // aria-label ("Valider le tracé") instead of relying on DOM order.
+    fireEvent.click(await screen.findByRole('button', { name: /valider le tracé/i })) // all fields left blank
 
     await waitFor(() =>
       expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledWith(
