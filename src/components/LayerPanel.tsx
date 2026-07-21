@@ -3,6 +3,7 @@ export const FELT_SEGMENTS_LAYER_ID = 'felt-segments'
 export const BAGUA_LAYER_ID = 'bagua'
 export const PATHOGENIC_CROSSINGS_LAYER_ID = 'pathogenic-crossings'
 export const PHENOMENA_LAYER_ID = 'phenomena'
+export const FREEFORM_NETWORK_LAYER_ID = 'freeform-network'
 
 // Single source of truth for which layer ids default to visible when absent
 // from the `visibility` map. Duplicating this list (as a literal OR-chain) in
@@ -91,6 +92,14 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
           onChange={() => onToggle(PHENOMENA_LAYER_ID)}
         />
         Phénomènes ponctuels
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[FREEFORM_NETWORK_LAYER_ID] ?? false}
+          onChange={() => onToggle(FREEFORM_NETWORK_LAYER_ID)}
+        />
+        Tracés eau/faille
       </label>
     </div>
   )

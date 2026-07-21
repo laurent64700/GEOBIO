@@ -9,6 +9,7 @@ import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
 import * as buildingFootprintService from '../data/buildingFootprintService'
 import * as missionsRepo from '../data/missionsRepo'
 import * as phenomenaRepo from '../data/phenomenaRepo'
+import * as freeformNetworksRepo from '../data/freeformNetworksRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
@@ -20,6 +21,7 @@ vi.mock('../data/gridTemplatesRepo')
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 vi.mock('../data/phenomenaRepo')
+vi.mock('../data/freeformNetworksRepo')
 
 // SiteMapView.test.tsx mocks ./MapView down to a plain <div> — there is no
 // real <MapContainer> anywhere in this test file, so a real, unmocked
@@ -51,6 +53,14 @@ vi.mock('./PathogenicCrossingsLayer', () => ({
 vi.mock('./PhenomenaLayer', () => ({
   PhenomenaLayer: ({ visible, phenomena }: { visible: boolean; phenomena: unknown[] }) =>
     visible ? <div data-testid="phenomena-count">{phenomena.length}</div> : null,
+}))
+vi.mock('./FreeformDrawTool', () => ({
+  FreeformDrawTool: ({ active, onComplete }: { active: boolean; onComplete: (points: unknown[]) => void }) =>
+    active ? <button onClick={() => onComplete([{ x: 0, y: 0 }, { x: 1, y: 1 }])}>simulate-freeform-complete</button> : null,
+}))
+vi.mock('./FreeformNetworkLayer', () => ({
+  FreeformNetworkLayer: ({ visible, networks }: { visible: boolean; networks: unknown[] }) =>
+    visible ? <div data-testid="freeform-count">{networks.length}</div> : null,
 }))
 
 vi.mock('./MapView', () => ({
@@ -140,6 +150,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([])
     vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.listFreeformNetworksForPlan).mockResolvedValue([])
   })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
@@ -903,5 +914,34 @@ describe('SiteMapView', () => {
 
     fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
     expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('2')
+  })
+
+  it('captures a freeform trace, submits metadata, and saves it', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.listFreeformNetworksForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.createFreeformNetwork).mockResolvedValue({
+      id: 'fn1', planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
+    })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    fireEvent.click(await screen.findByText('simulate-freeform-complete'))
+    // The guide-line "Angle personnalisé" card also has its own "Valider"
+    // button, so /valider/i alone is ambiguous — the metadata form's is the
+    // last one rendered in the top-left stack (after the guide-line card).
+    const validerButtons = await screen.findAllByRole('button', { name: /valider/i })
+    fireEvent.click(validerButtons[validerButtons.length - 1]) // all fields left blank
+
+    await waitFor(() =>
+      expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledWith(
+        expect.objectContaining({ planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] })
+      )
+    )
+    fireEvent.click(screen.getByLabelText(/tracés eau\/faille/i))
+    expect(await screen.findByTestId('freeform-count')).toHaveTextContent('1')
   })
 })

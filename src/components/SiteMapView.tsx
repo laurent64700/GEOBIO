@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { MapView } from './MapView'
 import { NetworkLinesLayer } from './NetworkLinesLayer'
 import { EditableNetworkLine } from './EditableNetworkLine'
@@ -13,6 +13,7 @@ import {
   BAGUA_LAYER_ID,
   PATHOGENIC_CROSSINGS_LAYER_ID,
   PHENOMENA_LAYER_ID,
+  FREEFORM_NETWORK_LAYER_ID,
   DEFAULT_VISIBLE_LAYER_IDS,
   type LayerEntry,
 } from './LayerPanel'
@@ -23,6 +24,9 @@ import { BaguaLayer } from './BaguaLayer'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
 import { PhenomenonPicker } from './PhenomenonPicker'
 import { PhenomenaLayer } from './PhenomenaLayer'
+import { FreeformDrawTool } from './FreeformDrawTool'
+import { FreeformNetworkLayer } from './FreeformNetworkLayer'
+import { FreeformMetadataForm, type FreeformMetadata } from './FreeformMetadataForm'
 import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
@@ -33,6 +37,7 @@ import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
 import { setBuildingFootprint } from '../data/missionsRepo'
 import { createPhenomenon, listPhenomenaForPlan } from '../data/phenomenaRepo'
+import { createFreeformNetwork, listFreeformNetworksForPlan } from '../data/freeformNetworksRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
 import type { CompassDirection } from '../geometry/bagua'
@@ -46,6 +51,8 @@ import type {
   GridLinePolarity,
   Phenomenon,
   PhenomenonKind,
+  FreeformNetwork,
+  FreeformNetworkKind,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
@@ -90,13 +97,15 @@ function BaguaLegendCollapsed() {
 // active. Replaces two independent booleans (awaitingGridOrigin,
 // placingGuideLine) that had to be manually kept mutually exclusive by every
 // "start X" handler clearing the other flag — see handleGridOriginRequested,
-// the "Placer ici" button, and handleMapClick below. Extended here with the
-// 'phenomenon' variant (PhenomenonPicker below); a later task adds a
-// 'freeform' variant too. Keep it a plain discriminated union on `kind`.
+// the "Placer ici" button, and handleMapClick below. Extended with the
+// 'phenomenon' variant (PhenomenonPicker below) and, here, the 'freeform'
+// variant (Tracer l'eau / Tracer une faille — FreeformDrawTool below). Keep
+// it a plain discriminated union on `kind`.
 type PlacementMode =
   | { kind: 'grid-origin' }
   | { kind: 'guide-line' }
   | { kind: 'phenomenon'; phenomenonKind: PhenomenonKind }
+  | { kind: 'freeform'; freeformKind: FreeformNetworkKind }
   | null
 
 export interface SiteMapViewProps {
@@ -154,6 +163,10 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
   const [feltSegments, setFeltSegments] = useState<FeltSegment[]>([])
   const [phenomena, setPhenomena] = useState<Phenomenon[]>([])
+  const [freeformNetworks, setFreeformNetworks] = useState<FreeformNetwork[]>([])
+  // Holds the captured (not-yet-saved) points between FreeformDrawTool.onComplete
+  // and the metadata form being submitted/cancelled — null means no pending trace.
+  const [pendingFreeformTrace, setPendingFreeformTrace] = useState<{ kind: FreeformNetworkKind; points: Point[] } | null>(null)
   const [templates, setTemplates] = useState<GridTemplate[]>([])
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
@@ -212,18 +225,20 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   useEffect(() => {
     async function load() {
       try {
-        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments, loadedPhenomena] = await Promise.all([
+        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments, loadedPhenomena, loadedFreeform] = await Promise.all([
           listGridInstancesForPlan(planId),
           listFeltPointsForPlan(planId),
           listGridTemplates(),
           listFeltSegmentsForPlan(planId),
           listPhenomenaForPlan(planId),
+          listFreeformNetworksForPlan(planId),
         ])
         setInstances(loadedInstances)
         setFeltPoints(loadedPoints)
         setTemplates(loadedTemplates)
         setFeltSegments(loadedSegments)
         setPhenomena(loadedPhenomena)
+        setFreeformNetworks(loadedFreeform)
         const entries = await Promise.all(
           loadedInstances.map(
             async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
@@ -344,6 +359,59 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  function handleStartFreeformTrace(kind: FreeformNetworkKind) {
+    setPlacementMode({ kind: 'freeform', freeformKind: kind })
+  }
+
+  // useCallback is required here, not just tidiness: FreeformDrawTool's effect
+  // (Task 11) depends on this function reference to know when to rebind its
+  // native listeners. An inline/unmemoized function would be a fresh reference
+  // on every SiteMapView render, forcing FreeformDrawTool to tear down and
+  // rebuild all 7 DOM listeners on every unrelated re-render, including
+  // mid-drag. placementMode is read via its .kind/.freeformKind fields inside
+  // the callback, but since placementMode itself can legitimately change
+  // between drags (that's the point of the check on the next line), it stays
+  // in the dependency array — this callback is only unstable across renders
+  // where placementMode changes, which is fine since a drag can't be in
+  // progress across a placementMode change anyway.
+  const handleFreeformTraceComplete = useCallback(
+    (points: Point[]) => {
+      if (placementMode?.kind !== 'freeform') return
+      // Capture is done — hand off to the metadata form rather than saving
+      // immediately (spec §3A step 3). placementMode stays 'freeform' so
+      // FreeformDrawTool.active goes false (draw finished) while the map still
+      // knows a freeform flow is in progress, until the form is submitted/cancelled.
+      setPendingFreeformTrace({ kind: placementMode.freeformKind, points })
+    },
+    [placementMode]
+  )
+
+  async function handleSubmitFreeformMetadata(metadata: FreeformMetadata) {
+    if (!pendingFreeformTrace) return
+    try {
+      const created = await createFreeformNetwork({
+        planId,
+        kind: pendingFreeformTrace.kind,
+        points: pendingFreeformTrace.points,
+        ...metadata,
+      })
+      setFreeformNetworks((prev) => [...prev, created])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingFreeformTrace(null)
+      setPlacementMode(null)
+    }
+  }
+
+  function handleCancelFreeformMetadata() {
+    // Spec §5: a cancelled trace must leave no orphaned FreeformNetwork — since
+    // nothing was persisted yet at this point (creation only happens on submit),
+    // simply discarding the pending state is enough, no delete call needed.
+    setPendingFreeformTrace(null)
+    setPlacementMode(null)
   }
 
   // Single MapView onMapClick dispatcher: dispatches by whichever mode is
@@ -581,6 +649,16 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           missionOrigin={missionOrigin}
           visible={visibility[PHENOMENA_LAYER_ID] ?? false}
         />
+        <FreeformDrawTool
+          active={placementMode?.kind === 'freeform' && pendingFreeformTrace === null}
+          missionOrigin={missionOrigin}
+          onComplete={handleFreeformTraceComplete}
+        />
+        <FreeformNetworkLayer
+          networks={freeformNetworks}
+          missionOrigin={missionOrigin}
+          visible={visibility[FREEFORM_NETWORK_LAYER_ID] ?? false}
+        />
       </MapView>
       {/* Top-right — LayerPanel and GridCreationPanel share this corner
           instead of each claiming one of their own; see OverlayPanel.tsx for
@@ -670,6 +748,24 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             onSelectKind={handleSelectPhenomenonKind}
           />
         </div>
+        {/* Stacked as another card in the same top-left corner — starts a
+            freeform eau/faille trace (FreeformDrawTool, rendered inside
+            <MapView> above). Disabled while any OTHER placement mode is
+            active, matching the single-active-placement-mode invariant that
+            grid-origin/guide-line/phenomenon already share. */}
+        <div style={CARD_CHROME_STYLE}>
+          <button onClick={() => handleStartFreeformTrace('eau')} disabled={placementMode !== null}>
+            Tracer l'eau
+          </button>
+          <button onClick={() => handleStartFreeformTrace('faille')} disabled={placementMode !== null}>
+            Tracer une faille
+          </button>
+        </div>
+        {pendingFreeformTrace && (
+          <div style={CARD_CHROME_STYLE}>
+            <FreeformMetadataForm onSubmit={handleSubmitFreeformMetadata} onCancel={handleCancelFreeformMetadata} />
+          </div>
+        )}
         {/* Stacked as a second card in the same top-left corner (see
             OverlayPanel.tsx for why a corner can hold more than one item) —
             only shown once there's something to say about the building
