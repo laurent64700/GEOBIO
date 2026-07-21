@@ -1,9 +1,5 @@
 // src/vision/arucoDetector.ts
-// @ts-expect-error — js-aruco2 (v2.0.0) ships no TypeScript types. Verified
-// against node_modules/js-aruco2/src/aruco.js: the module is CJS whose
-// top-level `this.AR = AR` puts `AR` on module.exports, so a named import
-// works through CJS interop.
-import { AR } from 'js-aruco2'
+import { AR } from './jsAruco2Shim'
 import type { RawMarkerDetection } from './arucoMapping'
 import type { Point } from '../domain/types'
 
