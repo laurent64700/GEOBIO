@@ -26,6 +26,16 @@
 // user-controlled input fetched at runtime), which is what makes this a
 // contained, legitimate use of dynamic code execution rather than an
 // injection risk.
+//
+// Version-bump risk: this shim assumes js-aruco2's CURRENT internal export
+// pattern — plain top-level `this.CV =` / `this.AR =` assignment, no real
+// `export`/`import` statements (which would be a SyntaxError inside a
+// `new Function` body). package.json pins `^2.0.0`, so a routine
+// `npm update` could pull in a version that changes this pattern and
+// silently breaks the shim. Re-verify after any js-aruco2 upgrade by
+// rerunning jsAruco2Shim.test.ts AND the manual dev-server check (npm run
+// dev, confirm no console error) — don't assume a passing `npm install` is
+// enough.
 import cvSource from 'js-aruco2/src/cv.js?raw'
 import arucoSource from 'js-aruco2/src/aruco.js?raw'
 
@@ -52,8 +62,14 @@ interface JsAruco2Namespace {
 }
 
 const sharedContext: { CV?: unknown; AR?: JsAruco2Namespace } = {}
-new Function(cvSource).call(sharedContext)
-new Function(arucoSource).call(sharedContext)
+try {
+  new Function(cvSource).call(sharedContext)
+  new Function(arucoSource).call(sharedContext)
+} catch (err) {
+  throw new Error(
+    `Impossible de charger js-aruco2 : l'exécution du shim a échoué (${err instanceof Error ? err.message : String(err)}). Une mise à jour de js-aruco2 a peut-être changé son format d'export.`
+  )
+}
 
 if (!sharedContext.AR) {
   throw new Error("Impossible de charger js-aruco2 : l'export AR est introuvable après exécution du shim.")
