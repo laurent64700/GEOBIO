@@ -12,6 +12,7 @@ import {
   FELT_SEGMENTS_LAYER_ID,
   BAGUA_LAYER_ID,
   PATHOGENIC_CROSSINGS_LAYER_ID,
+  PHENOMENA_LAYER_ID,
   DEFAULT_VISIBLE_LAYER_IDS,
   type LayerEntry,
 } from './LayerPanel'
@@ -20,6 +21,8 @@ import { OverlayPanel } from './OverlayPanel'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
+import { PhenomenonPicker } from './PhenomenonPicker'
+import { PhenomenaLayer } from './PhenomenaLayer'
 import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
@@ -29,10 +32,21 @@ import { listGridTemplates } from '../data/gridTemplatesRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
 import { setBuildingFootprint } from '../data/missionsRepo'
+import { createPhenomenon, listPhenomenaForPlan } from '../data/phenomenaRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
 import type { CompassDirection } from '../geometry/bagua'
-import type { GridInstance, GridLine, FeltPoint, FeltSegment, Point, GridTemplate, GridLinePolarity } from '../domain/types'
+import type {
+  GridInstance,
+  GridLine,
+  FeltPoint,
+  FeltSegment,
+  Point,
+  GridTemplate,
+  GridLinePolarity,
+  Phenomenon,
+  PhenomenonKind,
+} from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
@@ -76,10 +90,14 @@ function BaguaLegendCollapsed() {
 // active. Replaces two independent booleans (awaitingGridOrigin,
 // placingGuideLine) that had to be manually kept mutually exclusive by every
 // "start X" handler clearing the other flag — see handleGridOriginRequested,
-// the "Placer ici" button, and handleMapClick below. A later task extends
-// this with `{kind: 'phenomenon', ...}` and `{kind: 'freeform', ...}`
-// variants; keep it a plain discriminated union on `kind`.
-type PlacementMode = { kind: 'grid-origin' } | { kind: 'guide-line' } | null
+// the "Placer ici" button, and handleMapClick below. Extended here with the
+// 'phenomenon' variant (PhenomenonPicker below); a later task adds a
+// 'freeform' variant too. Keep it a plain discriminated union on `kind`.
+type PlacementMode =
+  | { kind: 'grid-origin' }
+  | { kind: 'guide-line' }
+  | { kind: 'phenomenon'; phenomenonKind: PhenomenonKind }
+  | null
 
 export interface SiteMapViewProps {
   planId: string
@@ -135,6 +153,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
   const [feltSegments, setFeltSegments] = useState<FeltSegment[]>([])
+  const [phenomena, setPhenomena] = useState<Phenomenon[]>([])
   const [templates, setTemplates] = useState<GridTemplate[]>([])
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
@@ -193,16 +212,18 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   useEffect(() => {
     async function load() {
       try {
-        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments] = await Promise.all([
+        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments, loadedPhenomena] = await Promise.all([
           listGridInstancesForPlan(planId),
           listFeltPointsForPlan(planId),
           listGridTemplates(),
           listFeltSegmentsForPlan(planId),
+          listPhenomenaForPlan(planId),
         ])
         setInstances(loadedInstances)
         setFeltPoints(loadedPoints)
         setTemplates(loadedTemplates)
         setFeltSegments(loadedSegments)
+        setPhenomena(loadedPhenomena)
         const entries = await Promise.all(
           loadedInstances.map(
             async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
@@ -307,10 +328,28 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     }
   }
 
+  // Arms/disarms phenomenon-placement mode — mirrors handleGridOriginRequested
+  // and the guide-line "Placer ici" button's use of setPlacementMode to
+  // structurally replace whatever mode was previously active. Passing null
+  // (PhenomenonPicker's own click-active-kind-again toggle) cancels placement
+  // mode entirely, same as clearing the other two modes.
+  function handleSelectPhenomenonKind(kind: PhenomenonKind | null) {
+    setPlacementMode(kind ? { kind: 'phenomenon', phenomenonKind: kind } : null)
+  }
+
+  async function handlePlacePhenomenon(local: Point, kind: PhenomenonKind) {
+    try {
+      const created = await createPhenomenon({ planId, kind, x: local.x, y: local.y })
+      setPhenomena((prev) => [...prev, created])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // Single MapView onMapClick dispatcher: dispatches by whichever mode is
-  // active. Since placementMode is a single discriminated union, "grid-origin"
-  // and "guide-line" are structurally mutually exclusive at every point in
-  // time, not just in the common case.
+  // active. Since placementMode is a single discriminated union, "grid-origin",
+  // "guide-line" and "phenomenon" are structurally mutually exclusive at every
+  // point in time, not just in the common case.
   function handleMapClick(latlng: { lat: number; lng: number }) {
     if (placementMode?.kind === 'grid-origin') {
       setPendingGridOrigin(latLngToLocal(latlng, missionOrigin))
@@ -320,6 +359,16 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     if (placementMode?.kind === 'guide-line') {
       setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
       setPlacementMode(null)
+      return
+    }
+    if (placementMode?.kind === 'phenomenon') {
+      const local = latLngToLocal(latlng, missionOrigin)
+      handlePlacePhenomenon(local, placementMode.phenomenonKind)
+      // Deliberately does NOT clear placementMode — placing several phenomena
+      // of the same kind in a row (e.g. multiple telluric chimneys along a
+      // wall) shouldn't require re-selecting the kind after every single
+      // click. Laurent explicitly deselects via PhenomenonPicker (clicking
+      // the active kind again) or by selecting a different kind.
     }
   }
 
@@ -527,6 +576,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           missionOrigin={missionOrigin}
           visible={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? false}
         />
+        <PhenomenaLayer
+          phenomena={phenomena}
+          missionOrigin={missionOrigin}
+          visible={visibility[PHENOMENA_LAYER_ID] ?? false}
+        />
       </MapView>
       {/* Top-right — LayerPanel and GridCreationPanel share this corner
           instead of each claiming one of their own; see OverlayPanel.tsx for
@@ -605,6 +659,16 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
             Effacer
           </button>
+        </div>
+        {/* Stacked as another card in the same top-left corner — the legend
+            of 8 point-phenomenon kinds plus the "click the map to place"
+            affordance. Selecting a kind arms placementMode the same way the
+            guide-line "Placer ici" button does. */}
+        <div style={CARD_CHROME_STYLE}>
+          <PhenomenonPicker
+            activeKind={placementMode?.kind === 'phenomenon' ? placementMode.phenomenonKind : null}
+            onSelectKind={handleSelectPhenomenonKind}
+          />
         </div>
         {/* Stacked as a second card in the same top-left corner (see
             OverlayPanel.tsx for why a corner can hold more than one item) —

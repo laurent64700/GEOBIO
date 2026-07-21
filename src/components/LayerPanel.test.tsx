@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { LayerPanel, BAGUA_LAYER_ID, FELT_SEGMENTS_LAYER_ID, PATHOGENIC_CROSSINGS_LAYER_ID } from './LayerPanel'
+import { LayerPanel, BAGUA_LAYER_ID, FELT_SEGMENTS_LAYER_ID, PATHOGENIC_CROSSINGS_LAYER_ID, PHENOMENA_LAYER_ID } from './LayerPanel'
 
 describe('LayerPanel', () => {
   it('shows "Ressenti terrain" checked by default, grid layers unchecked by default', () => {
@@ -85,6 +85,30 @@ describe('LayerPanel', () => {
     )
     fireEvent.click(screen.getByLabelText(/croisements pathogènes/i))
     expect(onToggle).toHaveBeenCalledWith(PATHOGENIC_CROSSINGS_LAYER_ID)
+  })
+
+  it('shows the phenomena layer checkbox, unchecked by default (like Bagua/pathogenic-crossings)', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/phénomènes ponctuels/i)).not.toBeChecked()
+  })
+
+  it('calls onToggle with PHENOMENA_LAYER_ID when the phenomena checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
+    expect(onToggle).toHaveBeenCalledWith(PHENOMENA_LAYER_ID)
   })
 
   it('respects explicit visibility overrides', () => {

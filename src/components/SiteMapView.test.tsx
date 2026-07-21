@@ -8,6 +8,7 @@ import * as feltSegmentsRepo from '../data/feltSegmentsRepo'
 import * as gridTemplatesRepo from '../data/gridTemplatesRepo'
 import * as buildingFootprintService from '../data/buildingFootprintService'
 import * as missionsRepo from '../data/missionsRepo'
+import * as phenomenaRepo from '../data/phenomenaRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
@@ -18,6 +19,7 @@ vi.mock('../data/feltSegmentsRepo')
 vi.mock('../data/gridTemplatesRepo')
 vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
+vi.mock('../data/phenomenaRepo')
 
 // SiteMapView.test.tsx mocks ./MapView down to a plain <div> — there is no
 // real <MapContainer> anywhere in this test file, so a real, unmocked
@@ -42,6 +44,13 @@ vi.mock('./BaguaLayer', () => ({
 vi.mock('./PathogenicCrossingsLayer', () => ({
   PathogenicCrossingsLayer: ({ crossings, visible }: { crossings: unknown[]; visible: boolean }) =>
     visible ? <div data-testid="pathogenic-crossings-count">{crossings.length}</div> : null,
+}))
+// Same reasoning as BuildingFootprintPicker/BaguaLayer/PathogenicCrossingsLayer
+// above — PhenomenaLayer renders a real <CircleMarker>/<Tooltip> per
+// phenomenon, which would crash without a real Leaflet context.
+vi.mock('./PhenomenaLayer', () => ({
+  PhenomenaLayer: ({ visible, phenomena }: { visible: boolean; phenomena: unknown[] }) =>
+    visible ? <div data-testid="phenomena-count">{phenomena.length}</div> : null,
 }))
 
 vi.mock('./MapView', () => ({
@@ -130,6 +139,7 @@ describe('SiteMapView', () => {
     vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([])
     vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
   })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
@@ -823,5 +833,27 @@ describe('SiteMapView', () => {
     fireEvent.click(await screen.findByLabelText(/croisements pathogènes/i))
 
     expect(await screen.findByTestId('pathogenic-crossings-count')).toHaveTextContent('1')
+  })
+
+  it('places a phenomenon on map click once a kind is selected', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.createPhenomenon).mockResolvedValue({
+      id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-21T10:00:00Z',
+    })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /spire de vortex/i }))
+    fireEvent.click(await screen.findByText('simulate-map-click'))
+
+    await waitFor(() =>
+      expect(phenomenaRepo.createPhenomenon).toHaveBeenCalledWith(
+        expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
+      )
+    )
+    fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
+    expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('1')
   })
 })

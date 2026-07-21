@@ -2,6 +2,7 @@ export const FELT_POINTS_LAYER_ID = 'felt-points'
 export const FELT_SEGMENTS_LAYER_ID = 'felt-segments'
 export const BAGUA_LAYER_ID = 'bagua'
 export const PATHOGENIC_CROSSINGS_LAYER_ID = 'pathogenic-crossings'
+export const PHENOMENA_LAYER_ID = 'phenomena'
 
 // Single source of truth for which layer ids default to visible when absent
 // from the `visibility` map. Duplicating this list (as a literal OR-chain) in
@@ -82,6 +83,14 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
           onChange={() => onToggle(PATHOGENIC_CROSSINGS_LAYER_ID)}
         />
         Croisements pathogènes
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[PHENOMENA_LAYER_ID] ?? false}
+          onChange={() => onToggle(PHENOMENA_LAYER_ID)}
+        />
+        Phénomènes ponctuels
       </label>
     </div>
   )
