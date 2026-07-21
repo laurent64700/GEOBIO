@@ -944,4 +944,74 @@ describe('SiteMapView', () => {
     fireEvent.click(screen.getByLabelText(/tracés eau\/faille/i))
     expect(await screen.findByTestId('freeform-count')).toHaveTextContent('1')
   })
+
+  it('selecting a phenomenon kind while a grid-origin request is pending does not strand GridCreationPanel', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({ instance: mockHartmannInstance, lines: [] })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // Start grid creation and pick a template — pendingOrigin is null, so
+    // GridCreationPanel shows "Cliquez l'origine sur la carte" and stays that
+    // way until the map is clicked OR gridCreationKey is bumped.
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+    expect(screen.getByText(/cliquez l'origine sur la carte/i)).toBeInTheDocument()
+
+    // Instead of clicking the map, select a phenomenon kind — this must cancel
+    // the pending grid-origin request AND force GridCreationPanel back to
+    // collapsed, exactly like the guide-line "Placer ici" button already does.
+    fireEvent.click(screen.getByRole('button', { name: /spire de vortex/i }))
+
+    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
+  })
+
+  it('does not let starting another mode silently discard an in-progress freeform drag', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // Start a freeform trace — the mocked FreeformDrawTool renders
+    // "simulate-freeform-complete" only while active, proving a drag could be
+    // in progress right now.
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
+
+    // Attempt to start phenomenon-placement mode WITHOUT finishing the drag —
+    // this must be refused (the freeform tool must stay active), not silently
+    // switch away and discard the in-progress capture.
+    fireEvent.click(screen.getByRole('button', { name: /spire de vortex/i }))
+
+    expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /spire de vortex/i })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('cancels an armed (not-yet-dragging) freeform mode by clicking its own button again', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // Arm freeform mode — FreeformDrawTool goes active, no drag has started yet.
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
+
+    // Clicking the SAME button again must cancel it directly — this is the
+    // only way to back out of an armed-but-not-dragging freeform mode, since
+    // every other mode-start control now correctly refuses to interrupt it
+    // (see the previous test).
+    fireEvent.click(screen.getByRole('button', { name: /tracer l'eau/i }))
+    expect(screen.queryByText('simulate-freeform-complete')).not.toBeInTheDocument()
+
+    // And starting a DIFFERENT mode now works normally, proving placementMode
+    // is genuinely back to null, not stuck.
+    fireEvent.click(screen.getByRole('button', { name: /spire de vortex/i }))
+    expect(screen.getByRole('button', { name: /spire de vortex/i })).toHaveAttribute('aria-pressed', 'true')
+  })
 })
