@@ -105,6 +105,10 @@ export interface FreeformNetwork {
   planId: string
   kind: FreeformNetworkKind
   points: Point[]
+  currentBearingDeg: number | null
+  depthM: number | null
+  flowRate: string | null
+  createdAt: string
 }
 
 export interface FeltPoint {
