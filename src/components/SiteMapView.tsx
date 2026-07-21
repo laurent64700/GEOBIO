@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { MapView } from './MapView'
 import { NetworkLinesLayer } from './NetworkLinesLayer'
 import { EditableNetworkLine } from './EditableNetworkLine'
@@ -402,6 +402,36 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     return null
   }
 
+  // Unlike gridLayers/reviewTarget/reviewSuggestion below (O(1) or
+  // O(instances) — cheap enough to recompute on every render, matching this
+  // file's own inline-derivation style), this one is genuinely expensive:
+  // computeHartmannCurryCrossings is O(instances × lines × segments²) — a
+  // nested loop over every consecutive segment pair of every Hartmann line
+  // against every consecutive segment pair of every Curry line. Since lines
+  // are arbitrary-length polylines that grow with field edits (drags and,
+  // per the vertex-insertion feature, new vertices), an unmemoized derivation
+  // here would redo that quadratic work on every unrelated render — every
+  // keystroke in the "Angle personnalisé" input, every guide-line preset
+  // click — a real typing-lag risk, not a hypothetical one. This also
+  // resolves a deliberate deviation from the original spec (§4/§5 called for
+  // useMemo here; the plan inlined it instead to match the file's style,
+  // flagged as a tradeoff) by following the spec after all.
+  //
+  // Placed ABOVE the `if (error) return ...` below (unlike every other
+  // derived value in this function, which are plain calculations computed
+  // after it): useMemo is a hook, and hooks must run unconditionally on
+  // every render — a hook called only on the non-error branch would throw
+  // "Rendered fewer hooks than expected" the moment `error` becomes set.
+  const pathogenicCrossings = useMemo(() => {
+    const hartmannLines = instances
+      .filter((i) => i.templateSnapshot.name === 'Hartmann')
+      .flatMap((i) => linesByInstance[i.id] ?? [])
+    const curryLines = instances
+      .filter((i) => i.templateSnapshot.name === 'Curry')
+      .flatMap((i) => linesByInstance[i.id] ?? [])
+    return computeHartmannCurryCrossings(hartmannLines, curryLines)
+  }, [instances, linesByInstance])
+
   if (error) return <p role="alert">{error}</p>
 
   const reviewTarget = findAwaitingOrthogonalityReview()
@@ -420,20 +450,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     label: instance.templateSnapshot.name,
     color: instance.templateSnapshot.color,
   }))
-
-  // Derived on every render, no memoization — matches this file's own
-  // established style for reviewTarget/reviewSuggestion/gridLayers above
-  // (none of which use useMemo). Spec §4 hypothesis: every Hartmann line
-  // crossed against every Curry line, across ALL Hartmann/Curry
-  // GridInstances on the plan (not paired per-instance) — flagged as an
-  // assumption to confirm with Laurent, not second-guessed here.
-  const hartmannLines = instances
-    .filter((i) => i.templateSnapshot.name === 'Hartmann')
-    .flatMap((i) => linesByInstance[i.id] ?? [])
-  const curryLines = instances
-    .filter((i) => i.templateSnapshot.name === 'Curry')
-    .flatMap((i) => linesByInstance[i.id] ?? [])
-  const pathogenicCrossings = computeHartmannCurryCrossings(hartmannLines, curryLines)
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
