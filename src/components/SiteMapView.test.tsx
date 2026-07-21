@@ -856,4 +856,52 @@ describe('SiteMapView', () => {
     fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
     expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('1')
   })
+
+  it('places several phenomena of the same kind in a row without needing to reselect the kind', async () => {
+    // Regression test for handleMapClick's phenomenon branch deliberately NOT
+    // clearing placementMode (see SiteMapView.tsx) — the exact behavior this
+    // task was flagged for during review, since it's easy for a future
+    // refactor of the PlacementMode union (Task 1's consolidation, or the
+    // upcoming Chunk 2 'freeform' variant) to silently reintroduce a
+    // clear-after-every-click regression that no other test would catch.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
+    vi.mocked(phenomenaRepo.createPhenomenon)
+      .mockResolvedValueOnce({
+        id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-21T10:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: 'ph2', planId: 'p1', kind: 'spire-vortex', x: 2, y: 2, createdAt: '2026-07-21T10:01:00Z',
+      })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /spire de vortex/i }))
+    fireEvent.click(await screen.findByText('simulate-map-click'))
+
+    await waitFor(() => expect(phenomenaRepo.createPhenomenon).toHaveBeenCalledTimes(1))
+
+    // The kind must still be armed after the first placement — no reselection —
+    // proving placementMode survived the click instead of being cleared.
+    expect(screen.getByRole('button', { name: /spire de vortex/i })).toHaveAttribute('aria-pressed', 'true')
+    // The map-click affordance must also still be wired up (onMapClick isn't
+    // undefined) — if placementMode had been cleared, this button wouldn't render.
+    expect(screen.getByText('simulate-map-click')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    await waitFor(() => expect(phenomenaRepo.createPhenomenon).toHaveBeenCalledTimes(2))
+    expect(phenomenaRepo.createPhenomenon).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
+    )
+    expect(phenomenaRepo.createPhenomenon).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
+    )
+
+    fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
+    expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('2')
+  })
 })
