@@ -20,6 +20,21 @@ describe('PhenomenaLayer', () => {
     expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(2)
   })
 
+  it('labels each marker with its kind\'s placeholder text code', () => {
+    // The permanent Tooltip mounts its content synchronously on first
+    // render (unlike a hover-triggered Tooltip), so no mouseover/waitFor
+    // simulation is needed here. This is the assertion that actually
+    // distinguishes PhenomenaLayer from FeltPointsLayer: without it, a
+    // scrambled or missing KIND_LABELS entry would pass every other test.
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <PhenomenaLayer phenomena={phenomena} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    expect(container.textContent).toContain('Vx')
+    expect(container.textContent).toContain('Ch2')
+  })
+
   it('renders nothing when visible is false', () => {
     const { container } = render(
       <MapContainer center={[48.8566, 2.3522]} zoom={18}>
