@@ -21,16 +21,19 @@ export interface EditableNetworkLineProps {
   color: string
   missionOrigin: LatLng
   editable: boolean
-  onChanged: (updated: GridLine) => void
+  onChanged: (updated: GridLine, changeKind: 'drag' | 'vertex-added') => void
 }
 
 /**
- * ⚠️ The `pm.enable()` call and `pm:markerdragend` event name below are a
- * best-effort guess at leaflet-geoman-free's actual API — VERIFY against
- * https://github.com/geoman-io/leaflet-geoman before relying on this. If the
- * event/method names are wrong, the surrounding logic (applyAllVertices,
- * onChanged, the repo update, undo) is unaffected — only this glue needs
- * correcting.
+ * `pm:markerdragend` (dragging an existing vertex) and `pm:vertexadded` (clicking a
+ * Geoman "middle marker" to insert a new one — the library's default
+ * `addVertexOn: 'click'` behavior) are both verified against the installed
+ * `@geoman-io/leaflet-geoman-free` v2.20.0 source — see
+ * docs/superpowers/specs/2026-07-20-grid-line-vertex-insertion-design.md §2 for the
+ * exact trace. A third gesture (dragging a middle marker directly, without a
+ * separate click first) is expected to fire BOTH events for one gesture — a disclosed,
+ * accepted limitation, see that spec's §4.2 — not something this component tries to
+ * de-duplicate.
  */
 export function EditableNetworkLine({ line, color, missionOrigin, editable, onChanged }: EditableNetworkLineProps) {
   const layerRef = useRef<LeafletPolyline & { pm?: { enable: () => void; disable: () => void } }>(null)
@@ -46,23 +49,31 @@ export function EditableNetworkLine({ line, color, missionOrigin, editable, onCh
   useEffect(() => {
     const layer = layerRef.current as unknown as {
       on: (event: string, handler: (e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) => void) => void
-      off: (event: string) => void
+      off: (event: string, handler: (e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) => void) => void
     } | null
     if (!layer) return
 
-    function handleDragEnd(e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) {
-      // Fold every vertex from this one drag gesture into a single updated
-      // GridLine, and call onChanged exactly once. getLatLngs() returns ALL
-      // vertices (not just the one dragged) on every call — looping and
-      // calling onChanged per-vertex would fire multiple stale updates that
-      // race each other (see applyAllVertices' doc comment for why).
-      const latlngs = e.target.getLatLngs()
-      const points = latlngs.map((latlng) => latLngToLocal(latlng, missionOrigin))
-      onChanged(applyAllVertices(line, points))
+    // Fold every vertex from the gesture into a single updated GridLine, exactly
+    // once per event (see applyAllVertices' doc comment for why looping per-vertex
+    // would race) — shared between both event kinds, differing only in the
+    // changeKind tag passed through to onChanged.
+    function makeHandler(changeKind: 'drag' | 'vertex-added') {
+      return function handle(e: { target: { getLatLngs: () => { lat: number; lng: number }[] } }) {
+        const latlngs = e.target.getLatLngs()
+        const points = latlngs.map((latlng) => latLngToLocal(latlng, missionOrigin))
+        onChanged(applyAllVertices(line, points), changeKind)
+      }
     }
 
+    const handleDragEnd = makeHandler('drag')
+    const handleVertexAdded = makeHandler('vertex-added')
+
     layer.on('pm:markerdragend', handleDragEnd)
-    return () => layer.off('pm:markerdragend')
+    layer.on('pm:vertexadded', handleVertexAdded)
+    return () => {
+      layer.off('pm:markerdragend', handleDragEnd)
+      layer.off('pm:vertexadded', handleVertexAdded)
+    }
   }, [line, missionOrigin, onChanged])
 
   return (
