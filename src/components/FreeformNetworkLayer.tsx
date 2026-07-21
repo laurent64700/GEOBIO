@@ -9,8 +9,13 @@ export interface FreeformNetworkLayerProps {
   visible: boolean
 }
 
+const KIND_COLORS = {
+  eau: NON_GRID_NETWORK_COLORS.Eau,
+  faille: NON_GRID_NETWORK_COLORS.Failles,
+} satisfies Record<FreeformNetwork['kind'], string>
+
 function colorForKind(kind: FreeformNetwork['kind']): string {
-  return kind === 'eau' ? NON_GRID_NETWORK_COLORS.Eau : NON_GRID_NETWORK_COLORS.Failles
+  return KIND_COLORS[kind]
 }
 
 export function FreeformNetworkLayer({ networks, missionOrigin, visible }: FreeformNetworkLayerProps) {
