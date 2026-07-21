@@ -2,6 +2,12 @@ export const FELT_POINTS_LAYER_ID = 'felt-points'
 export const FELT_SEGMENTS_LAYER_ID = 'felt-segments'
 export const BAGUA_LAYER_ID = 'bagua'
 
+// Single source of truth for which layer ids default to visible when absent
+// from the `visibility` map. Duplicating this list (as a literal OR-chain) in
+// each consumer is exactly how SiteMapView's toggleLayer "forgot" about
+// FELT_SEGMENTS_LAYER_ID once already — see toggleLayer in SiteMapView.tsx.
+export const DEFAULT_VISIBLE_LAYER_IDS: readonly string[] = [FELT_POINTS_LAYER_ID, FELT_SEGMENTS_LAYER_ID]
+
 export interface LayerEntry {
   id: string
   label: string

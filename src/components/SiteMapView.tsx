@@ -6,7 +6,14 @@ import { FeltPointsLayer } from './FeltPointsLayer'
 import { FeltSegmentsLayer } from './FeltSegmentsLayer'
 import { GuideLineLayer } from './GuideLineLayer'
 import { OrthogonalitySuggestion } from './OrthogonalitySuggestion'
-import { LayerPanel, FELT_POINTS_LAYER_ID, FELT_SEGMENTS_LAYER_ID, BAGUA_LAYER_ID, type LayerEntry } from './LayerPanel'
+import {
+  LayerPanel,
+  FELT_POINTS_LAYER_ID,
+  FELT_SEGMENTS_LAYER_ID,
+  BAGUA_LAYER_ID,
+  DEFAULT_VISIBLE_LAYER_IDS,
+  type LayerEntry,
+} from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
@@ -366,7 +373,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   function toggleLayer(id: string) {
-    const currentlyVisible = visibility[id] ?? (id === FELT_POINTS_LAYER_ID || id === FELT_SEGMENTS_LAYER_ID)
+    const currentlyVisible = visibility[id] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(id)
     setVisibility((prev) => ({ ...prev, [id]: !currentlyVisible }))
   }
 
