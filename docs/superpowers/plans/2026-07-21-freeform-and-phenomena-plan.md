@@ -1586,16 +1586,33 @@ export interface FreeformDrawToolProps {
  * spec §2: leaflet-geoman-free has no freehand LINE mode in its free tier,
  * and Laurent explicitly rejected the click-to-place-vertex alternative as
  * "pas pratique"). Listens for BOTH mouse (mousedown/mousemove/mouseup, for
- * desktop testing) and touch (touchstart/touchmove/touchend, for the real
- * field-use finger/stylus input) events, bound directly on the map's DOM
- * container via native addEventListener — NOT via react-leaflet's
- * useMapEvents, which only forwards Leaflet's own map-level event names and
- * does not merge touch gestures into them (verified against Leaflet's source:
- * a touchmove drag does not synthesize continuous mousemove events the way a
- * simple tap synthesizes one mousedown/mouseup/click pair). Suspends map
- * dragging for the duration of the gesture (map.dragging.disable/.enable) so
- * panning doesn't fight with drawing, and prevents the browser's default
- * touch behavior (page scroll/pinch-zoom) during a touch capture.
+ * desktop testing) and touch (touchstart/touchmove/touchend/touchcancel, for
+ * the real field-use finger/stylus input) events, bound directly on the map's
+ * DOM container (mousedown/touch*) or document (mousemove/mouseup) via native
+ * addEventListener — NOT via react-leaflet's useMapEvents, which only
+ * forwards Leaflet's own map-level event names and does not merge touch
+ * gestures into them (verified against Leaflet's source: a touchmove drag
+ * does not synthesize continuous mousemove events the way a simple tap
+ * synthesizes one mousedown/mouseup/click pair). Suspends map dragging for
+ * the duration of the gesture (map.dragging.disable/.enable) so panning
+ * doesn't fight with drawing, and prevents the browser's default touch
+ * behavior (page scroll/pinch-zoom) during a touch capture.
+ *
+ * mousemove/mouseup are bound on `document`, not the map container: the
+ * browser delivers `mouseup` to whichever element is under the cursor at
+ * release time, not the element that received `mousedown`. A fast drag that
+ * exits the map's bounds before the button is released would otherwise never
+ * reach `onMouseUp`, leaving `map.dragging` disabled and the trace truncated.
+ * Touch doesn't have this problem — a touch sequence implicitly target-locks
+ * to the element that received `touchstart` — so container binding is fine
+ * for touch.
+ *
+ * touchcancel (OS/browser-interrupted gesture: notification pull-down,
+ * edge-swipe back gesture, an extra finger touching the screen) is handled
+ * separately from touchend via cancelCapture, which resets state and
+ * re-enables dragging WITHOUT calling onComplete — an interrupted gesture is
+ * not a deliberately finished trace, so it shouldn't be saved as one. Without
+ * this handler, an interruption would leave dragging disabled indefinitely.
  */
 export function FreeformDrawTool({ active, missionOrigin, onComplete }: FreeformDrawToolProps) {
   const map = useMap()
@@ -1627,6 +1644,14 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
       onComplete(simplified)
     }
 
+    // Interrupted gesture (touchcancel): reset without saving anything.
+    function cancelCapture() {
+      if (!isDrawingRef.current) return
+      isDrawingRef.current = false
+      map.dragging.enable()
+      capturedPointsRef.current = []
+    }
+
     function onMouseDown(e: MouseEvent) {
       if (!active) return
       beginCapture(e)
@@ -1653,37 +1678,57 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
     function onTouchEnd() {
       endCapture()
     }
+    function onTouchCancel() {
+      cancelCapture()
+    }
 
+    // mousedown starts capture only when the gesture begins on the map itself.
     container.addEventListener('mousedown', onMouseDown)
-    container.addEventListener('mousemove', onMouseMove)
-    container.addEventListener('mouseup', onMouseUp)
+    // mousemove/mouseup on document: see the "mousemove/mouseup are bound on
+    // document" note above the component for why container binding drops
+    // the release event when a fast drag exits the map's bounds.
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
     // passive: false is required for touchmove's preventDefault() above to
     // actually take effect (browsers default touchmove listeners to passive).
     container.addEventListener('touchstart', onTouchStart)
     container.addEventListener('touchmove', onTouchMove, { passive: false })
     container.addEventListener('touchend', onTouchEnd)
+    container.addEventListener('touchcancel', onTouchCancel)
 
     return () => {
       container.removeEventListener('mousedown', onMouseDown)
-      container.removeEventListener('mousemove', onMouseMove)
-      container.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
       container.removeEventListener('touchstart', onTouchStart)
       container.removeEventListener('touchmove', onTouchMove)
       container.removeEventListener('touchend', onTouchEnd)
+      container.removeEventListener('touchcancel', onTouchCancel)
     }
-  }, [map, active, missionOrigin, onComplete])
+    // missionOrigin/onComplete are destructured to their stable primitive
+    // fields (lat/lng) rather than depended on as objects: SiteMapView.tsx
+    // (lines 210-218) already documents that MissionWorkspace constructs
+    // missionOrigin as a fresh object literal on every render, and this same
+    // trap was already paid for once in this file for a different effect —
+    // depending on the object here would tear down and rebuild all 7
+    // listeners on every unrelated re-render, including mid-drag. onComplete
+    // must be a useCallback-stabilized reference from the caller (see Task 12
+    // Step 2) for the same reason.
+  }, [map, active, missionOrigin.lat, missionOrigin.lng, onComplete])
 
   return null
 }
 ```
 
-**Why native `addEventListener` on `map.getContainer()` rather than `useMapEvents`:**
+**Why native `addEventListener` on `map.getContainer()`/`document` rather than `useMapEvents`:**
 `useMapEvents` only exposes Leaflet's own synthesized event names (`click`, `mousedown`,
 etc., re-fired by Leaflet's internal dispatch) — it has no `touchstart`/`touchmove`/
-`touchend` entries at all, because Leaflet's own touch handling (`Draggable.js`) is
-internal to its dragging/zooming handlers, not exposed as generic map events. Binding
-directly to the container's real DOM node with native listeners is the only way to
-observe raw touch events GEOBIO doesn't already have a purpose-built hook for.
+`touchend`/`touchcancel` entries at all, because Leaflet's own touch handling
+(`Draggable.js`) is internal to its dragging/zooming handlers, not exposed as generic map
+events. Binding directly to the container's real DOM node (and to `document` for the two
+listeners that must survive the pointer leaving the map) with native listeners is the
+only way to observe raw touch events GEOBIO doesn't already have a purpose-built hook
+for.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1741,6 +1786,7 @@ type PlacementMode =
 
 ```typescript
 // imports
+import { useCallback } from 'react' // add `useCallback` to the existing 'react' import
 import { FreeformDrawTool } from './FreeformDrawTool'
 import { FreeformNetworkLayer } from './FreeformNetworkLayer'
 import { FreeformMetadataForm, type FreeformMetadata } from './FreeformMetadataForm'
@@ -1776,14 +1822,28 @@ function handleStartFreeformTrace(kind: FreeformNetworkKind) {
   setPlacementMode({ kind: 'freeform', freeformKind: kind })
 }
 
-function handleFreeformTraceComplete(points: Point[]) {
-  if (placementMode?.kind !== 'freeform') return
-  // Capture is done — hand off to the metadata form rather than saving
-  // immediately (spec §3A step 3). placementMode stays 'freeform' so
-  // FreeformDrawTool.active goes false (draw finished) while the map still
-  // knows a freeform flow is in progress, until the form is submitted/cancelled.
-  setPendingFreeformTrace({ kind: placementMode.freeformKind, points })
-}
+// useCallback is required here, not just tidiness: FreeformDrawTool's effect
+// (Task 11) depends on this function reference to know when to rebind its
+// native listeners. An inline/unmemoized function would be a fresh reference
+// on every SiteMapView render, forcing FreeformDrawTool to tear down and
+// rebuild all 7 DOM listeners on every unrelated re-render, including
+// mid-drag. placementMode is read via its .kind/.freeformKind fields inside
+// the callback, but since placementMode itself can legitimately change
+// between drags (that's the point of the check on the next line), it stays
+// in the dependency array — this callback is only unstable across renders
+// where placementMode changes, which is fine since a drag can't be in
+// progress across a placementMode change anyway.
+const handleFreeformTraceComplete = useCallback(
+  (points: Point[]) => {
+    if (placementMode?.kind !== 'freeform') return
+    // Capture is done — hand off to the metadata form rather than saving
+    // immediately (spec §3A step 3). placementMode stays 'freeform' so
+    // FreeformDrawTool.active goes false (draw finished) while the map still
+    // knows a freeform flow is in progress, until the form is submitted/cancelled.
+    setPendingFreeformTrace({ kind: placementMode.freeformKind, points })
+  },
+  [placementMode]
+)
 
 async function handleSubmitFreeformMetadata(metadata: FreeformMetadata) {
   if (!pendingFreeformTrace) return
