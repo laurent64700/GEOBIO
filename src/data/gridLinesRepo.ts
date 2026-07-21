@@ -1,0 +1,69 @@
+import { supabase } from '../lib/supabaseClient'
+import type { GridLine, GridLineFamily, GridLinePolarity, Point } from '../domain/types'
+
+export interface CreateGridLineInput {
+  gridInstanceId: string
+  family: GridLineFamily
+  polarity: GridLinePolarity
+  reinforced: boolean
+  theoreticalPoints: Point[]
+}
+
+interface GridLineRow {
+  id: string
+  grid_instance_id: string
+  family: GridLineFamily
+  polarity: GridLinePolarity
+  reinforced: boolean
+  theoretical_points: Point[]
+  adjusted_points: Point[]
+}
+
+function mapRowToGridLine(row: GridLineRow): GridLine {
+  return {
+    id: row.id,
+    gridInstanceId: row.grid_instance_id,
+    family: row.family,
+    polarity: row.polarity,
+    reinforced: row.reinforced,
+    theoreticalPoints: row.theoretical_points,
+    adjustedPoints: row.adjusted_points,
+  }
+}
+
+export async function createGridLines(inputs: CreateGridLineInput[]): Promise<GridLine[]> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .insert(
+      inputs.map((i) => ({
+        grid_instance_id: i.gridInstanceId,
+        family: i.family,
+        polarity: i.polarity,
+        reinforced: i.reinforced,
+        theoretical_points: i.theoreticalPoints,
+        adjusted_points: i.theoreticalPoints,
+      }))
+    )
+    .select()
+
+  if (error) throw new Error(`Impossible de créer les lignes de grille : ${error.message}`)
+  return (data as GridLineRow[]).map(mapRowToGridLine)
+}
+
+export async function listGridLinesForInstance(gridInstanceId: string): Promise<GridLine[]> {
+  const { data, error } = await supabase.from('grid_line').select().eq('grid_instance_id', gridInstanceId)
+  if (error) throw new Error(`Impossible de charger les lignes de grille : ${error.message}`)
+  return (data as GridLineRow[]).map(mapRowToGridLine)
+}
+
+export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point[]): Promise<GridLine> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .update({ adjusted_points: adjustedPoints })
+    .eq('id', lineId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de mettre à jour la ligne : ${error.message}`)
+  return mapRowToGridLine(data as GridLineRow)
+}
