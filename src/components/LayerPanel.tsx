@@ -43,7 +43,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[FELT_POINTS_LAYER_ID] ?? true}
+          checked={visibility[FELT_POINTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FELT_POINTS_LAYER_ID)}
           onChange={() => onToggle(FELT_POINTS_LAYER_ID)}
         />
         Ressenti terrain
@@ -51,7 +51,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[FELT_SEGMENTS_LAYER_ID] ?? true}
+          checked={visibility[FELT_SEGMENTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FELT_SEGMENTS_LAYER_ID)}
           onChange={() => onToggle(FELT_SEGMENTS_LAYER_ID)}
         />
         Tiges (segments ressentis)

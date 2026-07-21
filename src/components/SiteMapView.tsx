@@ -428,13 +428,13 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           points={feltPoints}
           colorForNetwork={colorForNetwork}
           missionOrigin={missionOrigin}
-          visible={visibility[FELT_POINTS_LAYER_ID] ?? true}
+          visible={visibility[FELT_POINTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FELT_POINTS_LAYER_ID)}
         />
         <FeltSegmentsLayer
           segments={feltSegments}
           colorForNetwork={colorForNetwork}
           missionOrigin={missionOrigin}
-          visible={visibility[FELT_SEGMENTS_LAYER_ID] ?? true}
+          visible={visibility[FELT_SEGMENTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FELT_SEGMENTS_LAYER_ID)}
         />
         {instances.map((instance) =>
           editMode && (visibility[instance.id] ?? false) ? (
