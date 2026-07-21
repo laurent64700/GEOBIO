@@ -90,7 +90,10 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
     }
 
     function onMouseDown(e: MouseEvent) {
-      if (!active) return
+      // Left button only: a right/middle-click starting a capture would be
+      // low-impact (mouse is desktop-testing-only in real field use) but
+      // still worth excluding for a clean desktop testing experience.
+      if (!active || e.button !== 0) return
       beginCapture(e)
     }
     function onMouseMove(e: MouseEvent) {
@@ -101,7 +104,15 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
     }
 
     function onTouchStart(e: TouchEvent) {
-      if (!active || e.touches.length === 0) return
+      // isDrawingRef guard: a second touch point landing mid-gesture (a
+      // stray palm contact, or a second finger bracing the tablet — the
+      // same real scenario touchcancel above is meant to handle) must NOT
+      // re-trigger beginCapture. beginCapture unconditionally resets
+      // capturedPointsRef to a fresh single-point array; without this guard
+      // a second touchstart mid-drag silently discards every point captured
+      // so far. Ignoring the extra touch and letting the first touch's
+      // gesture keep capturing is the correct behavior here.
+      if (!active || isDrawingRef.current || e.touches.length === 0) return
       beginCapture(e.touches[0])
     }
     function onTouchMove(e: TouchEvent) {
@@ -141,16 +152,22 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
       container.removeEventListener('touchmove', onTouchMove)
       container.removeEventListener('touchend', onTouchEnd)
       container.removeEventListener('touchcancel', onTouchCancel)
+      // Unconditionally unwind an in-progress gesture on teardown (component
+      // unmounts mid-drag, or a future caller change churns active/missionOrigin
+      // mid-gesture): without this, map.dragging would stay disabled forever
+      // with no listener left alive to ever call .enable() again.
+      // cancelCapture() itself no-ops if no gesture was in progress.
+      cancelCapture()
     }
     // missionOrigin/onComplete are destructured to their stable primitive
-    // fields (lat/lng) rather than depended on as objects: SiteMapView.tsx
-    // (lines 210-218) already documents that MissionWorkspace constructs
-    // missionOrigin as a fresh object literal on every render, and this same
-    // trap was already paid for once in this file for a different effect —
-    // depending on the object here would tear down and rebuild all 7
-    // listeners on every unrelated re-render, including mid-drag. onComplete
-    // must be a useCallback-stabilized reference from the caller (see Task 12
-    // Step 2) for the same reason.
+    // fields (lat/lng) rather than depended on as objects: this file's
+    // effect depends only on primitives for the same reason documented on
+    // EditableNetworkLine.tsx's analogous effect — the caller may construct
+    // missionOrigin as a fresh object literal on every render, and depending
+    // on the object here would tear down and rebuild all 7 listeners on
+    // every unrelated re-render, including mid-drag. onComplete must be a
+    // useCallback-stabilized reference from the caller (see Task 12 Step 2)
+    // for the same reason.
   }, [map, active, missionOrigin.lat, missionOrigin.lng, onComplete])
 
   return null
