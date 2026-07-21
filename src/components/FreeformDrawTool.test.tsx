@@ -17,14 +17,24 @@ function renderTool(onComplete: (points: unknown) => void) {
 }
 
 // jsdom does not implement the `Touch`/`TouchEvent` constructors, so a real
-// touch gesture is synthesized as a plain `Event` with a `touches` array
-// attached as a plain property. FreeformDrawTool's handlers only ever read
-// `e.touches` and call `e.preventDefault()` — both work identically on this
-// synthesized event and on a real browser TouchEvent, so this is faithful to
-// what the component actually does at runtime.
-function fireTouch(target: EventTarget, type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel', touches: { clientX: number; clientY: number }[]) {
+// touch gesture is synthesized as a plain `Event` with `touches`/`changedTouches`
+// arrays attached as plain properties. FreeformDrawTool's handlers only ever read
+// `e.touches`, `e.changedTouches`, and call `e.preventDefault()` — all work
+// identically on this synthesized event and on a real browser TouchEvent.
+interface FakeTouch {
+  clientX: number
+  clientY: number
+  identifier: number
+}
+function fireTouch(
+  target: EventTarget,
+  type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel',
+  touches: FakeTouch[],
+  changedTouches: FakeTouch[] = touches
+) {
   const event = new Event(type, { bubbles: true, cancelable: true })
-  ;(event as unknown as { touches: { clientX: number; clientY: number }[] }).touches = touches
+  ;(event as unknown as { touches: FakeTouch[]; changedTouches: FakeTouch[] }).touches = touches
+  ;(event as unknown as { changedTouches: FakeTouch[] }).changedTouches = changedTouches
   target.dispatchEvent(event)
 }
 
@@ -73,9 +83,9 @@ describe('FreeformDrawTool', () => {
     const onComplete = vi.fn()
     const { mapContainer } = renderTool(onComplete)
 
-    fireTouch(mapContainer, 'touchstart', [{ clientX: 100, clientY: 100 }])
-    fireTouch(mapContainer, 'touchmove', [{ clientX: 110, clientY: 110 }])
-    fireTouch(mapContainer, 'touchcancel', [])
+    fireTouch(mapContainer, 'touchstart', [{ clientX: 100, clientY: 100, identifier: 0 }])
+    fireTouch(mapContainer, 'touchmove', [{ clientX: 110, clientY: 110, identifier: 0 }])
+    fireTouch(mapContainer, 'touchcancel', [], [{ clientX: 110, clientY: 110, identifier: 0 }])
 
     expect(onComplete).not.toHaveBeenCalled()
   })
@@ -89,20 +99,66 @@ describe('FreeformDrawTool', () => {
     const onComplete = vi.fn()
     const { mapContainer } = renderTool(onComplete)
 
-    fireTouch(mapContainer, 'touchstart', [{ clientX: 100, clientY: 100 }])
-    fireTouch(mapContainer, 'touchmove', [{ clientX: 110, clientY: 110 }])
+    fireTouch(mapContainer, 'touchstart', [{ clientX: 100, clientY: 100, identifier: 0 }])
+    fireTouch(mapContainer, 'touchmove', [{ clientX: 110, clientY: 110, identifier: 0 }])
     // Second finger lands mid-gesture: touches now reports two contact points.
     fireTouch(mapContainer, 'touchstart', [
-      { clientX: 111, clientY: 111 },
-      { clientX: 200, clientY: 200 },
+      { clientX: 111, clientY: 111, identifier: 0 },
+      { clientX: 200, clientY: 200, identifier: 1 },
     ])
-    fireTouch(mapContainer, 'touchend', [])
+    fireTouch(mapContainer, 'touchend', [], [{ clientX: 111, clientY: 111, identifier: 0 }])
 
     expect(onComplete).toHaveBeenCalledTimes(1)
     const points = onComplete.mock.calls[0][0] as unknown[]
     // Truncated-by-the-bug behavior would report exactly 1 point (only the
     // single point captured by the re-entrant beginCapture). The fix must
     // preserve both points captured before the second touchstart.
+    expect(points.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('ignores touchend from a bracing second finger, keeps capturing until the drawing finger lifts', () => {
+    // Regression test, mirror image of "ignores a second touchstart mid-gesture":
+    // a bracing second finger (identifier 1) touches down mid-gesture (already
+    // correctly ignored by the isDrawingRef guard in onTouchStart) and then
+    // lifts OFF before the drawing finger (identifier 0) does. The bracing
+    // finger's own touchend must NOT end the capture — only the drawing
+    // finger's touchend should.
+    const onComplete = vi.fn()
+    const { mapContainer } = renderTool(onComplete)
+
+    fireTouch(mapContainer, 'touchstart', [{ clientX: 100, clientY: 100, identifier: 0 }])
+    fireTouch(mapContainer, 'touchmove', [{ clientX: 110, clientY: 110, identifier: 0 }])
+    // Bracing second finger touches down — already ignored by the existing
+    // isDrawingRef guard (both touches now active).
+    fireTouch(
+      mapContainer,
+      'touchstart',
+      [{ clientX: 110, clientY: 110, identifier: 0 }, { clientX: 200, clientY: 200, identifier: 1 }]
+    )
+    // The BRACING finger (identifier 1) lifts off first. The drawing finger
+    // (identifier 0) is still down, reported in `touches`; `changedTouches`
+    // reports only the finger that just lifted (identifier 1).
+    fireTouch(
+      mapContainer,
+      'touchend',
+      [{ clientX: 110, clientY: 110, identifier: 0 }], // still-active touches
+      [{ clientX: 200, clientY: 200, identifier: 1 }]  // changedTouches: the lifted one
+    )
+
+    // The capture must still be in progress — onComplete must NOT have fired yet.
+    expect(onComplete).not.toHaveBeenCalled()
+
+    // Now the drawing finger itself continues and lifts — THIS must end the capture.
+    fireTouch(mapContainer, 'touchmove', [{ clientX: 120, clientY: 120, identifier: 0 }])
+    fireTouch(
+      mapContainer,
+      'touchend',
+      [],
+      [{ clientX: 120, clientY: 120, identifier: 0 }]
+    )
+
+    expect(onComplete).toHaveBeenCalledTimes(1)
+    const points = onComplete.mock.calls[0][0] as unknown[]
     expect(points.length).toBeGreaterThanOrEqual(2)
   })
 })

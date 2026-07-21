@@ -50,11 +50,24 @@ export interface FreeformDrawToolProps {
  * re-enables dragging WITHOUT calling onComplete — an interrupted gesture is
  * not a deliberately finished trace, so it shouldn't be saved as one. Without
  * this handler, an interruption would leave dragging disabled indefinitely.
+ *
+ * touchend/touchcancel additionally verify WHICH finger triggered the event
+ * via TouchEvent.changedTouches (the touch(es) that specifically caused this
+ * event — not .touches, which lists every still-active touch) against the
+ * drawing touch's tracked `identifier`. Without this, a bracing second finger
+ * (already correctly ignored on touchDOWN by the isDrawingRef guard in
+ * onTouchStart) would incorrectly end the capture the moment IT lifts off,
+ * even though the drawing finger never lifted — the mirror-image of the
+ * re-entrant-touchstart bug, just on lift-off instead of touch-down.
  */
 export function FreeformDrawTool({ active, missionOrigin, onComplete }: FreeformDrawToolProps) {
   const map = useMap()
   const isDrawingRef = useRef(false)
   const capturedPointsRef = useRef<Point[]>([])
+  // The identifier of the Touch currently driving capture — null when no
+  // touch-driven gesture is in progress (a mouse-driven gesture never sets
+  // this). Set in onTouchStart, cleared in endCapture/cancelCapture.
+  const drawingTouchIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     const container = map.getContainer()
@@ -75,6 +88,7 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
     function endCapture() {
       if (!isDrawingRef.current) return
       isDrawingRef.current = false
+      drawingTouchIdRef.current = null
       map.dragging.enable()
       const simplified = simplifyByMinDistance(capturedPointsRef.current, MIN_DISTANCE_M)
       capturedPointsRef.current = []
@@ -85,8 +99,20 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
     function cancelCapture() {
       if (!isDrawingRef.current) return
       isDrawingRef.current = false
+      drawingTouchIdRef.current = null
       map.dragging.enable()
       capturedPointsRef.current = []
+    }
+
+    // Finds the Touch in `touchList` matching the tracked drawing touch's
+    // identifier, or null if it isn't present (e.g. a different finger's
+    // event, or no touch-driven gesture is in progress).
+    function findDrawingTouch(touchList: { identifier: number; clientX: number; clientY: number }[]) {
+      if (drawingTouchIdRef.current === null) return null
+      for (let i = 0; i < touchList.length; i++) {
+        if (touchList[i].identifier === drawingTouchIdRef.current) return touchList[i]
+      }
+      return null
     }
 
     function onMouseDown(e: MouseEvent) {
@@ -113,20 +139,30 @@ export function FreeformDrawTool({ active, missionOrigin, onComplete }: Freeform
       // so far. Ignoring the extra touch and letting the first touch's
       // gesture keep capturing is the correct behavior here.
       if (!active || isDrawingRef.current || e.touches.length === 0) return
-      beginCapture(e.touches[0])
+      const touch = e.touches[0]
+      drawingTouchIdRef.current = touch.identifier
+      beginCapture(touch)
     }
     function onTouchMove(e: TouchEvent) {
-      if (!isDrawingRef.current || e.touches.length === 0) return
+      if (!isDrawingRef.current) return
       // Prevent the page from scrolling/zooming while a trace is being drawn —
       // without this, the browser's default touch-scroll behavior fights with
-      // the drag the moment the finger moves.
+      // the drag the moment the finger moves. This applies regardless of
+      // which finger moved (a bracing second finger moving shouldn't
+      // un-suppress scrolling either).
       e.preventDefault()
-      continueCapture(e.touches[0])
+      const touch = findDrawingTouch(Array.from(e.touches))
+      if (!touch) return // this move event isn't the drawing finger — ignore
+      continueCapture(touch)
     }
-    function onTouchEnd() {
+    function onTouchEnd(e: TouchEvent) {
+      const lifted = findDrawingTouch(Array.from(e.changedTouches))
+      if (!lifted) return // some other finger lifted, not the drawing one — ignore
       endCapture()
     }
-    function onTouchCancel() {
+    function onTouchCancel(e: TouchEvent) {
+      const cancelled = findDrawingTouch(Array.from(e.changedTouches))
+      if (!cancelled) return
       cancelCapture()
     }
 
