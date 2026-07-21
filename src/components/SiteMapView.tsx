@@ -336,7 +336,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     }
   }
 
-  function handleLineChanged(instanceId: string, updated: GridLine) {
+  function handleLineChanged(instanceId: string, updated: GridLine, changeKind: 'drag' | 'vertex-added') {
     setUndoStack((prev) => ({
       ...prev,
       [instanceId]: [...(prev[instanceId] ?? []), linesByInstance[instanceId].find((l) => l.id === updated.id)!],
@@ -349,7 +349,13 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
       setError(err instanceof Error ? err.message : String(err))
     )
     setLastChangedLine({ instanceId, lineId: updated.id })
-    setAwaitingOrthogonalityReview(updated.id)
+    if (changeKind === 'drag') {
+      setAwaitingOrthogonalityReview(updated.id)
+    }
+    // changeKind === 'vertex-added': deliberately does NOT set
+    // awaitingOrthogonalityReview — see design spec §3: offering to straighten a
+    // line the practitioner just deliberately bent to capture a real deviation
+    // would be actively confusing.
   }
 
   function handleUndo(instanceId: string) {
@@ -369,7 +375,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   function handleResetLine(instanceId: string, lineId: string) {
     const line = linesByInstance[instanceId]?.find((l) => l.id === lineId)
     if (!line) return
-    handleLineChanged(instanceId, resetToTheoretical(line))
+    handleLineChanged(instanceId, resetToTheoretical(line), 'drag')
   }
 
   function toggleLayer(id: string) {
@@ -440,7 +446,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                   color={instance.templateSnapshot.color}
                   missionOrigin={missionOrigin}
                   editable
-                  onChanged={(updated) => handleLineChanged(instance.id, updated)}
+                  onChanged={(updated, changeKind) => handleLineChanged(instance.id, updated, changeKind)}
                 />
               ))}
             </Fragment>
@@ -602,6 +608,9 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
             Mode édition (caler sur le ressenti)
           </label>
+          {editMode && (
+            <p>Glissez un point pour l'ajuster, cliquez le point central entre deux points pour ajouter un coude.</p>
+          )}
           <button
             onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
             disabled={
@@ -654,7 +663,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                   handleLineChanged(reviewTarget.instance.id, {
                     ...reviewTarget.line,
                     adjustedPoints: reviewSuggestion.suggestedPoints,
-                  })
+                  }, 'drag')
                   setAwaitingOrthogonalityReview(null)
                 }}
               >

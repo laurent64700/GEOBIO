@@ -65,10 +65,15 @@ vi.mock('./OrthogonalitySuggestion', () => ({
   OrthogonalitySuggestion: () => <div data-testid="orthogonality-preview" />,
 }))
 vi.mock('./EditableNetworkLine', () => ({
-  EditableNetworkLine: ({ line, onChanged }: { line: { id: string; adjustedPoints: { x: number; y: number }[] }; onChanged: (l: unknown) => void }) => (
-    <button onClick={() => onChanged({ ...line, adjustedPoints: [{ x: 0, y: -10 }, { x: 1, y: 10 }] })}>
-      simulate-line-change-{line.id}
-    </button>
+  EditableNetworkLine: ({ line, onChanged }: { line: { id: string; adjustedPoints: { x: number; y: number }[] }; onChanged: (l: unknown, changeKind: 'drag' | 'vertex-added') => void }) => (
+    <>
+      <button onClick={() => onChanged({ ...line, adjustedPoints: [{ x: 0, y: -10 }, { x: 1, y: 10 }] }, 'drag')}>
+        simulate-line-change-{line.id}
+      </button>
+      <button onClick={() => onChanged({ ...line, adjustedPoints: [{ x: 0, y: -10 }, { x: 0.5, y: 0 }, { x: 1, y: 10 }] }, 'vertex-added')}>
+        simulate-vertex-added-{line.id}
+      </button>
+    </>
   ),
 }))
 
@@ -366,6 +371,25 @@ describe('SiteMapView', () => {
     expect(screen.getByText(/écart à l'orthogonal théorique/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /redresser/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /ignorer/i })).toBeInTheDocument()
+  })
+
+  async function renderWithVertexAddedOnce() {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([hartmannLine])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(gridLinesRepo.updateAdjustedPoints).mockResolvedValue(hartmannLine)
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    fireEvent.click(screen.getByLabelText(/mode édition/i))
+    fireEvent.click(screen.getByLabelText('Hartmann'))
+    fireEvent.click(await screen.findByText('simulate-vertex-added-gl1'))
+  }
+
+  it('does not show the orthogonality-review panel after a vertex-added change', async () => {
+    await renderWithVertexAddedOnce()
+    expect(screen.queryByText(/écart à l'orthogonal théorique/i)).not.toBeInTheDocument()
   })
 
   it('dismisses the orthogonality panel without further changes when "Ignorer" is clicked', async () => {
