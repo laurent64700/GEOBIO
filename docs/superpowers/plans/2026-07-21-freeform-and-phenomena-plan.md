@@ -72,56 +72,68 @@ structurally impossible instead of manually prevented.
 **Read `src/components/SiteMapView.tsx` and `.test.tsx` in full before starting** — line
 numbers below are from this plan's writing; re-verify before editing.
 
-- [ ] **Step 1: Write a failing test proving the new state model preserves exact existing behavior**
+- [ ] **Step 1: Write a failing test for the one case existing coverage misses**
 
-Add to `SiteMapView.test.tsx`, near the existing guide-line/grid-origin tests (find
-them by searching for `awaitingGridOrigin`/`placingGuideLine`/`simulate-map-click` —
-this refactor must not change what these tests assert, only how the state is modeled
-internally):
+`SiteMapView.test.tsx` already has two tests directly exercising cross-cancellation
+between guide-line and grid-origin placement (search for
+`'does not let an in-progress guide-line placement leak into a grid-origin click, or
+vice versa'` and the "Placer ici cancels a pending grid-origin request" test) — those
+already pin the behavior this refactor must preserve for the "start X cancels Y" paths,
+and running the full suite after the refactor re-validates them for free. Don't
+duplicate them.
+
+**What's genuinely uncovered or (a real bug caught in plan review) forgotten by the
+current design's own `handleClearGuideLine`:** clearing an already-placed guide line
+(the "Effacer" button) must NOT cancel an unrelated PENDING grid-origin request that
+was started afterward. The original code's `handleClearGuideLine` never touched
+`awaitingGridOrigin` — a naive `PlacementMode` refactor could accidentally start doing
+so, since both "clear the guide line" and "cancel a pending mode" would otherwise
+collapse onto the same `setPlacementMode(null)` call. Add this test, placed right after
+the existing "does not let an in-progress guide-line placement leak..." test:
 
 ```tsx
-it('starting guide-line placement cancels an in-progress grid-origin placement (regression)', async () => {
+it('clearing an already-placed guide line does not cancel an unrelated pending grid-origin request', async () => {
   vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
   vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+  vi.mocked(createGridForPlan).mockResolvedValue({ instance: mockHartmannInstance, lines: [] })
 
   render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
   await screen.findByTestId('map-view')
 
-  // Start grid-origin placement (GridCreationPanel's "onOriginRequested" — the mocked
-  // GridTemplatePicker doesn't expose this directly; use the panel's own trigger if
-  // one exists in the current test file, or drive it via whatever this file's
-  // existing grid-origin tests already use to enter that mode).
-  // NOTE TO IMPLEMENTER: adapt this test to however the existing grid-origin tests in
-  // this file actually trigger awaitingGridOrigin — read them first, this is a
-  // regression test for existing behavior, not new behavior, so match the existing
-  // test's setup exactly rather than inventing a new one.
+  // 1. Place a guide line successfully — guideLineAnchor is now set, no mode pending.
+  fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+  fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+  fireEvent.click(screen.getByText('simulate-map-click'))
+  expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
 
-  // Then start guide-line placement
-  fireEvent.click(screen.getByRole('button', { name: /placer ici/i }))
-  // Simulate a map click — it should now be consumed by guide-line placement, not
-  // grid-origin (which was cancelled the moment "Placer ici" was clicked)
-  fireEvent.click(await screen.findByText('simulate-map-click'))
-  // A guide-line anchor should now be set; grid-origin should NOT have consumed the click
-  // (exact assertion depends on this file's existing conventions for checking guideLineAnchor
-  // vs pendingGridOrigin state — read the existing grid-origin/guide-line tests for the
-  // right assertion shape before writing this one for real)
+  // 2. Start a grid-origin request — pending, does NOT touch guideLineAnchor,
+  // so "Effacer" (disabled only when guideLineAnchor is null) stays enabled.
+  fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+  fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+
+  // 3. Clear the (old, already-placed) guide line.
+  fireEvent.click(screen.getByRole('button', { name: 'Effacer' }))
+  expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
+
+  // 4. The map click should STILL complete the grid-origin placement that was
+  // pending before step 3 — proving Effacer didn't silently cancel it. If it
+  // did, this click would do nothing and the polarity toggle would never appear.
+  fireEvent.click(screen.getByText('simulate-map-click'))
+  expect(await screen.findByRole('button', { name: '+' })).toBeInTheDocument()
 })
 ```
 
-**This step's exact test code is deliberately incomplete** — the existing grid-origin
-and guide-line tests in `SiteMapView.test.tsx` already assert this exclusivity
-indirectly (they predate this refactor). Read them, then write ONE new test (or adapt
-an existing one) that would fail if the refactor accidentally broke cross-cancellation.
-The bar: after the refactor, run the FULL existing test suite for this file — every
-pre-existing guide-line/grid-origin test must still pass unchanged, since this task
-changes internal state representation, not external behavior.
-
-- [ ] **Step 2: Run the full `SiteMapView.test.tsx` suite to confirm current (pre-refactor) baseline**
+- [ ] **Step 1b: Run the full existing suite to confirm nothing is broken yet (pre-refactor baseline)**
 
 Run: `node_modules/.bin/vitest.cmd run src/components/SiteMapView.test.tsx`
-Expected: PASS (all existing tests, establishing the baseline this refactor must not break)
+Expected: every pre-existing test PASSES (unmodified code); the new test from Step 1
+also PASSES already at this point — it exercises only pre-refactor code, so it's not a
+"red" TDD step in the usual sense. Its purpose is to fail LATER if Step 3's refactor is
+implemented naively (i.e. if `handleClearGuideLine` becomes an unconditional
+`setPlacementMode(null)` instead of the guarded version in Step 3 below) — run it again
+after Step 3 specifically to confirm this.
 
-- [ ] **Step 3: Replace the two booleans with one discriminated union**
+- [ ] **Step 2: Replace the two booleans with one discriminated union**
 
 ```typescript
 // src/components/SiteMapView.tsx — replace these two lines:
@@ -186,10 +198,28 @@ function handleMapClick(latlng: { lat: number; lng: number }) {
 
 ```typescript
 // handleClearGuideLine — was: ...; setPlacingGuideLine(false); ...
+//
+// BEHAVIOR-PRESERVATION TRAP (caught in plan review, must implement exactly
+// as written here): a naive `setPlacementMode(null)` here is NOT equivalent
+// to the original `setPlacingGuideLine(false)`. Reachable sequence: (1) place
+// a guide line — guideLineAnchor is set, no mode is pending; (2) start a
+// grid-origin request (placementMode becomes {kind:'grid-origin'}) — this
+// does NOT touch guideLineAnchor, which is still non-null, so "Effacer"
+// stays enabled; (3) click "Effacer" to clear the OLD guide line. The
+// original code's handleClearGuideLine never touched awaitingGridOrigin, so
+// step (2)'s pending grid-origin request survived step (3) and the next map
+// click still completed it correctly. An unconditional setPlacementMode(null)
+// would instead silently cancel that unrelated pending mode AND leave
+// GridCreationPanel showing a stale "cliquez l'origine" prompt for a click
+// that no longer does anything (nothing bumps gridCreationKey on this path).
+// Fix: only clear placementMode if it's currently 'guide-line' — clearing a
+// placed guide-line result must never cancel an unrelated pending mode.
 function handleClearGuideLine() {
   setGuideLineAnchor(null)
   setGuideLineBearing(null)
-  setPlacementMode(null)
+  if (placementMode?.kind === 'guide-line') {
+    setPlacementMode(null)
+  }
   setCustomBearingInput('')
 }
 ```
@@ -202,12 +232,15 @@ onMapClick={placementMode !== null ? handleMapClick : undefined}
 Remove the now-unused `handleGuideLineMapClick` function if its body was folded
 directly into `handleMapClick` above (check whether anything else still calls it).
 
-- [ ] **Step 4: Run the full suite to confirm the refactor is behavior-preserving**
+- [ ] **Step 3: Run the full suite to confirm the refactor is behavior-preserving**
 
 Run: `node_modules/.bin/vitest.cmd run src/components/SiteMapView.test.tsx`
-Expected: PASS (same tests as Step 2's baseline, plus the new regression test from Step 1)
+Expected: PASS (every pre-existing test, plus both new tests from Step 1 — critically,
+the "clearing an already-placed guide line does not cancel an unrelated pending
+grid-origin request" test must still pass here, proving `handleClearGuideLine`'s
+`placementMode?.kind === 'guide-line'` guard was implemented, not skipped)
 
-- [ ] **Step 5: Type-check and commit**
+- [ ] **Step 4: Type-check and commit**
 
 Run: `node_modules/.bin/tsc.cmd -b --noEmit`
 
