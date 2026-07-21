@@ -66,7 +66,9 @@ Geoman) et peut être construit dans n'importe quel ordre par rapport au composa
 
 **A. Tracé eau/faille**
 1. Laurent clique "Tracer l'eau" (ou "Tracer une faille") dans le panneau
-2. Mode dessin actif (Geoman, ligne libre) — Laurent trace au doigt/stylet sur l'écran
+2. Mode dessin actif (capture main-levée maison, voir §2 — décision verrouillée, pas
+   Geoman) — Laurent trace au doigt/stylet sur l'écran, la carte suspend son
+   déplacement/zoom le temps du tracé
 3. Une fois le tracé terminé, un petit formulaire apparaît : sens du courant (ex. une
    flèche à orienter, ou un angle en degrés — **hypothèse à confirmer**, je pars sur un
    angle simple), profondeur (mètres), débit (texte libre ou échelle — **hypothèse à
@@ -91,7 +93,16 @@ Geoman) et peut être construit dans n'importe quel ordre par rapport au composa
 - Migration : `alter table freeform_network add column current_bearing_deg double precision, add column depth_m double precision, add column flow_rate text;` (tous nullables — un tracé peut être posé avant que Laurent n'ait mesuré le détail). **Correction post-revue** : `double precision`, pas `numeric` — convention dominante de ce codebase pour les mesures/angles de géométrie (`declination_deg`, `angle_true_north_deg`, `spacing_x_m`...). `numeric` existe ailleurs pour un cas différent (les curseurs 0-10/Bovis du bilan global, `0008_global_assessment.sql`) mais pas pour ce type de donnée géométrique.
 - `src/domain/types.ts` — `FreeformNetwork` élargi : `currentBearingDeg: number | null`, `depthM: number | null`, `flowRate: string | null`, **et `createdAt: string`** (le type actuel ne l'a pas alors que la table a `created_at` — à harmoniser en même temps que cet élargissement, incohérence pré-existante sans rapport avec ce sous-projet)
 - `src/data/freeformNetworksRepo.ts` (nouveau) — `createFreeformNetwork`, `listFreeformNetworksForPlan`, suivant exactement le pattern déjà établi (`feltPointsRepo.ts` comme référence la plus proche : create+list, erreurs françaises)
-- `src/components/FreeformDrawTool.tsx` (nouveau) — glue pour le mode dessin (voir §2 pour le choix du mécanisme, encore ouvert) ; **si l'option Geoman est retenue**, même traitement d'incertitude que `EditableNetworkLine.tsx` (isoler l'API dans un module fin) ; **si l'option capture maison est retenue**, ce module gère directement les événements pointeur. Dans les deux cas, **conversion de coordonnées explicite requise** : les points capturés (souris/tactile ou latlng Leaflet) doivent passer par `latLngToLocal` avant stockage — `FreeformNetwork.points` est en coordonnées métriques locales de la mission, pas en latlng brut (piège déjà rencontré, voir `EditableNetworkLine.tsx` qui fait cette conversion).
+- `src/components/FreeformDrawTool.tsx` (nouveau) — capture main-levée maison (décision
+  verrouillée §2, pas Geoman) : écoute directement les événements pointeur sur la carte
+  (mousedown/pointerdown → accumulation au fil du mousemove/pointermove →
+  mouseup/pointerup pour terminer), suspend le déplacement/zoom de la carte pendant la
+  capture, simplifie la ligne à la fin (seuil de distance minimale entre points
+  consécutifs, ou Douglas-Peucker) pour éviter un nombre de points excessif.
+  **Conversion de coordonnées explicite requise** : les points capturés (latlng
+  Leaflet) doivent passer par `latLngToLocal` avant stockage — `FreeformNetwork.points`
+  est en coordonnées métriques locales de la mission, pas en latlng brut (piège déjà
+  rencontré, voir `EditableNetworkLine.tsx` qui fait cette conversion).
 - `src/components/FreeformMetadataForm.tsx` (nouveau) — le petit formulaire post-tracé
 - `src/components/FreeformNetworkLayer.tsx` (nouveau) — rendu, même famille que `NetworkLinesLayer`
 
@@ -146,8 +157,8 @@ déjà résolu pour ligne-guide vs création-de-grille, Task 33).
   tel quel, sans dépendance réseau réelle
 - `FreeformNetworkLayer.tsx`/`PhenomenaLayer.tsx` : rendu réel dans un `MapContainer`
 - `FreeformDrawTool.tsx` : test de fumée seulement (comme `EditableNetworkLine.tsx`) —
-  la vraie précision de l'interaction Geoman se valide en conditions réelles, pas par
-  des tests automatisés
+  la vraie précision de la capture pointeur (glissement doigt/stylet réel) se valide en
+  conditions réelles sur appareil tactile, pas par des tests automatisés jsdom
 
 ## 7. Hors périmètre explicite
 
@@ -164,6 +175,9 @@ déjà résolu pour ligne-guide vs création-de-grille, Task 33).
 
 **Note pour le futur plan d'implémentation** : les composants A (tracé eau/faille) et B
 (phénomènes ponctuels) doivent être des chantiers **indépendants**, pas entrelacés — B
-n'a aucune dépendance à Geoman et est immédiatement buildable, tandis que A est
-bloqué tant que le mécanisme de tracé (§2, 3 options) n'est pas tranché avec Laurent.
-Traiter B en premier serait raisonnable si Laurent n'a pas encore répondu sur A.
+n'a aucune dépendance à Geoman et est immédiatement buildable ; A a désormais aussi son
+mécanisme tranché (§2, capture main-levée maison, décision verrouillée) et n'est donc
+plus bloqué non plus, mais reste un chantier plus lourd (nouvel écouteur d'événements
+pointeur, simplification de tracé) que B. Les deux peuvent être menés dans n'importe
+quel ordre ; ce plan traite B en premier car strictement plus simple (clic-pour-placer,
+même mécanique de mode exclusif déjà résolue) et livre de la valeur plus vite.
