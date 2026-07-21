@@ -512,6 +512,36 @@ describe('SiteMapView', () => {
     expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
   })
 
+  it('clearing an already-placed guide line does not cancel an unrelated pending grid-origin request', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({ instance: mockHartmannInstance, lines: [] })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // 1. Place a guide line successfully — guideLineAnchor is now set, no mode pending.
+    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
+    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
+
+    // 2. Start a grid-origin request — pending, does NOT touch guideLineAnchor,
+    // so "Effacer" (disabled only when guideLineAnchor is null) stays enabled.
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+
+    // 3. Clear the (old, already-placed) guide line.
+    fireEvent.click(screen.getByRole('button', { name: 'Effacer' }))
+    expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
+
+    // 4. The map click should STILL complete the grid-origin placement that was
+    // pending before step 3 — proving Effacer didn't silently cancel it. If it
+    // did, this click would do nothing and the polarity toggle would never appear.
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    expect(await screen.findByRole('button', { name: '+' })).toBeInTheDocument()
+  })
+
   it('resets GridCreationPanel back to collapsed after a successful "Générer", so a second grid can be created', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])

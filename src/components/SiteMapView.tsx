@@ -72,6 +72,15 @@ function BaguaLegendCollapsed() {
   )
 }
 
+// Discriminated union for the single map-click "mode" that's currently
+// active. Replaces two independent booleans (awaitingGridOrigin,
+// placingGuideLine) that had to be manually kept mutually exclusive by every
+// "start X" handler clearing the other flag — see handleGridOriginRequested,
+// the "Placer ici" button, and handleMapClick below. A later task extends
+// this with `{kind: 'phenomenon', ...}` and `{kind: 'freeform', ...}`
+// variants; keep it a plain discriminated union on `kind`.
+type PlacementMode = { kind: 'grid-origin' } | { kind: 'guide-line' } | null
+
 export interface SiteMapViewProps {
   planId: string
   missionId: string
@@ -131,7 +140,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [error, setError] = useState<string | null>(null)
   const [guideLineBearing, setGuideLineBearing] = useState<number | null>(null)
   const [guideLineAnchor, setGuideLineAnchor] = useState<Point | null>(null)
-  const [placingGuideLine, setPlacingGuideLine] = useState(false)
   const [customBearingInput, setCustomBearingInput] = useState('')
   // Single global edit-mode toggle (not per-layer) — Laurent works on one
   // network at a time in the field, so whichever grid layer is currently
@@ -147,17 +155,18 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // knows which line to preview/offer straightening for. Cleared on accept
   // or dismiss.
   const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
-  // Grid-origin placement (Task 33): mutually exclusive with placingGuideLine
-  // below, since both modes want MapView's single onMapClick slot. See
-  // handleGridOriginRequested, the "Placer ici" button, and handleMapClick
-  // for how that exclusivity is actively enforced rather than assumed.
+  // Which map-click mode (if any) is currently active — see PlacementMode's
+  // doc comment above. Grid-origin placement (Task 33) and guide-line
+  // placement both want MapView's single onMapClick slot, so only one can be
+  // active at a time; the union makes that structurally true instead of
+  // manually enforced across two independent booleans.
+  const [placementMode, setPlacementMode] = useState<PlacementMode>(null)
   const [pendingGridOrigin, setPendingGridOrigin] = useState<Point | null>(null)
-  const [awaitingGridOrigin, setAwaitingGridOrigin] = useState(false)
   // Bumped (via the GridCreationPanel `key` prop below) whenever the panel's
   // own internal step-machine state (expanded/template/polarity) needs to be
   // force-reset from outside: after a successful "Générer" (so a second grid
   // can be created — otherwise the panel's derived step falls back to
-  // "awaiting-origin" forever, since pendingGridOrigin/awaitingGridOrigin are
+  // "awaiting-origin" forever, since pendingGridOrigin/placementMode are
   // reset but the panel's own `expanded`/`template` aren't), and when
   // "Placer ici" cancels a pending grid-origin request (otherwise the panel
   // keeps showing a stale "cliquez l'origine" prompt for a click that will
@@ -274,20 +283,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // null again (it's in the dependency array), re-running the fetch.
   }
 
-  function handleGuideLineMapClick(latlng: { lat: number; lng: number }) {
-    setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
-    setPlacingGuideLine(false)
-  }
-
-  // Starting one map-click mode must actively cancel the other — leaving the
-  // opposite flag untouched would let both end up true at once, and a stale
-  // flag could silently consume a later, unrelated click. Both directions are
-  // explicit: this cancels placingGuideLine, and the "Placer ici" button
-  // below cancels awaitingGridOrigin.
+  // Setting placementMode to a new value structurally replaces whatever mode
+  // (if any) was previously active — see PlacementMode's doc comment above.
   function handleGridOriginRequested() {
-    setAwaitingGridOrigin(true)
+    setPlacementMode({ kind: 'grid-origin' })
     setPendingGridOrigin(null)
-    setPlacingGuideLine(false)
   }
 
   async function handleGenerateGrid(template: GridTemplate, origin: Point, polarity: GridLinePolarity) {
@@ -295,7 +295,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
       const { instance, lines } = await createGridForPlan(planId, template, origin, polarity)
       setInstances((prev) => [...prev, instance])
       setLinesByInstance((prev) => ({ ...prev, [instance.id]: lines }))
-      setAwaitingGridOrigin(false)
+      setPlacementMode(null)
       setPendingGridOrigin(null)
       // Force-remount GridCreationPanel so its own expanded/template state
       // resets to "collapsed" — otherwise the panel's derived step would fall
@@ -308,27 +308,34 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   // Single MapView onMapClick dispatcher: dispatches by whichever mode is
-  // active. Because both "start" handlers (handleGridOriginRequested above,
-  // and the "Placer ici" button below) clear the other flag,
-  // awaitingGridOrigin and placingGuideLine are genuinely mutually exclusive
-  // at every point in time, not just in the common case.
+  // active. Since placementMode is a single discriminated union, "grid-origin"
+  // and "guide-line" are structurally mutually exclusive at every point in
+  // time, not just in the common case.
   function handleMapClick(latlng: { lat: number; lng: number }) {
-    if (awaitingGridOrigin) {
+    if (placementMode?.kind === 'grid-origin') {
       setPendingGridOrigin(latLngToLocal(latlng, missionOrigin))
-      setAwaitingGridOrigin(false)
+      setPlacementMode(null)
       return
     }
-    if (placingGuideLine) {
-      handleGuideLineMapClick(latlng)
+    if (placementMode?.kind === 'guide-line') {
+      setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
+      setPlacementMode(null)
     }
   }
 
   function handleClearGuideLine() {
-    // Reset the whole tool, not just the placed anchor, so the practitioner
-    // starts clean rather than keeping a stale bearing selected with no line shown.
+    // Reset the placed guide line and its bearing, so the practitioner starts
+    // clean rather than keeping a stale bearing selected with no line shown.
+    // Deliberately does NOT unconditionally clear placementMode: an unrelated
+    // PENDING grid-origin request started after this guide line was placed
+    // must survive "Effacer" — only cancel placementMode if it's currently
+    // the guide-line mode itself (e.g. a re-armed "Placer ici" that hasn't
+    // yet received its map click).
     setGuideLineAnchor(null)
     setGuideLineBearing(null)
-    setPlacingGuideLine(false)
+    if (placementMode?.kind === 'guide-line') {
+      setPlacementMode(null)
+    }
     setCustomBearingInput('')
   }
 
@@ -455,7 +462,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     <div style={{ position: 'relative', height: '100%', width: '100%' }}>
       <MapView
         center={[missionOrigin.lat, missionOrigin.lng]}
-        onMapClick={awaitingGridOrigin || placingGuideLine ? handleMapClick : undefined}
+        onMapClick={placementMode !== null ? handleMapClick : undefined}
       >
         <FeltPointsLayer
           points={feltPoints}
@@ -580,9 +587,9 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           <button onClick={handleValidateCustomBearing}>Valider</button>
           <button
             onClick={() => {
-              setPlacingGuideLine(true)
-              if (awaitingGridOrigin) {
-                setAwaitingGridOrigin(false)
+              const wasAwaitingGridOrigin = placementMode?.kind === 'grid-origin'
+              setPlacementMode({ kind: 'guide-line' })
+              if (wasAwaitingGridOrigin) {
                 // GridCreationPanel was mid-flow (showing "cliquez l'origine")
                 // when this cancelled its pending request out from under it —
                 // force-remount it back to collapsed so it doesn't keep
