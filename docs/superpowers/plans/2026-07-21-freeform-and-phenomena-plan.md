@@ -1485,16 +1485,40 @@ git commit -m "Add FreeformMetadataForm: current bearing/depth/flow rate, all fi
 **Files:**
 - Create: `src/components/FreeformDrawTool.tsx` + `.test.tsx`
 
-**The core new mechanism.** Rendered as a child of `<MapView>` (same pattern as
-`EditableNetworkLine.tsx` — a component that calls `useMap()`/`useMapEvents()` directly,
-not routed through `MapView`'s single `onMapClick` prop, since this needs continuous
-`mousedown`→`mousemove`→`mouseup` capture, not a single click). Suspends map dragging
-during capture (`map.dragging.disable()`/`.enable()` — a standard Leaflet primitive,
-not a Geoman dependency) so panning the map doesn't fight with drawing on it.
+**The core new mechanism — and the one genuine risk in this whole plan, caught in plan
+review: mouse events alone do not work on touch devices.** Leaflet's map-level event
+system (what `useMapEvents` taps into) binds the literal native `mousedown`/
+`mousemove`/`mouseup` DOM events — verified by reading Leaflet's own source
+(`Map.js`/`DomEvent.js`). Mobile/tablet browsers only synthesize a single
+`mousedown`+`mouseup`(+`click`) pair at the END of a tap or drag; they do **not** fire
+continuous synthetic `mousemove` events for a `touchmove` drag. A version of this
+component built on `mousedown`/`mousemove`/`mouseup` alone would work perfectly in a
+desktop browser (including simulated mouse-drag tests) while **silently capturing
+nothing** on the real finger/stylus input this whole feature exists for (spec §2/§3A:
+"Laurent trace au doigt/stylet"). This must listen for real `touchstart`/`touchmove`/
+`touchend` too, not just mouse events — Leaflet doesn't merge these into its generic map
+event API, so they need their own native listeners on the map's DOM container.
+
+Rendered as a child of `<MapView>` (same pattern as `EditableNetworkLine.tsx` — a
+component that calls `useMap()` directly, not routed through `MapView`'s single
+`onMapClick` prop, since this needs continuous multi-event capture, not a single
+click). Suspends map dragging during capture (`map.dragging.disable()`/`.enable()` — a
+standard Leaflet primitive, not a Geoman dependency, confirmed present on Leaflet's
+`Map.dragging: Handler` in the installed package's types) so panning the map doesn't
+fight with drawing on it. `map.mouseEventToLatLng(ev)` (a real Leaflet API — confirmed
+in `node_modules/leaflet/src/map/Map.js`) only reads `ev.clientX`/`ev.clientY`
+internally, so it works identically for a `MouseEvent` or a `Touch` object at runtime;
+its TypeScript signature is narrowly typed to `MouseEvent`, so a `Touch` needs an
+explicit cast (`as unknown as MouseEvent`) at the call site — not a workaround for
+missing functionality, just satisfying a type signature that's stricter than the
+runtime implementation requires.
 
 Per spec §6, this component gets only a smoke test (renders without crashing) — real
-pointer-drag precision is validated on a real touch device, not jsdom, matching the
-existing precedent for `EditableNetworkLine.tsx`'s Geoman wiring.
+pointer-drag precision, on BOTH a mouse (desktop) and a real touch device (tablet/
+phone — these are genuinely different code paths here, unlike most of this app's
+click-based tools, so both must be checked separately in Task 12 Step 5's manual
+verification, not treated as interchangeable), is validated manually, not in jsdom,
+matching the existing precedent for `EditableNetworkLine.tsx`'s Geoman wiring.
 
 - [ ] **Step 1: Write a failing smoke test**
 
@@ -1538,9 +1562,8 @@ Expected: FAIL — `Cannot find module './FreeformDrawTool'`
 
 ```tsx
 // src/components/FreeformDrawTool.tsx
-import { useRef, useState } from 'react'
-import { useMapEvents } from 'react-leaflet'
-import type { LeafletMouseEvent } from 'leaflet'
+import { useEffect, useRef } from 'react'
+import { useMap } from 'react-leaflet'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { simplifyByMinDistance } from '../geometry/polylineSimplify'
 import type { Point } from '../domain/types'
@@ -1554,7 +1577,7 @@ export interface FreeformDrawToolProps {
   /** Whether this tool should currently be capturing pointer input. */
   active: boolean
   missionOrigin: LatLng
-  /** Called once, with the simplified point list, when the gesture ends (mouseup). */
+  /** Called once, with the simplified point list, when the gesture ends. */
   onComplete: (points: Point[]) => void
 }
 
@@ -1562,39 +1585,105 @@ export interface FreeformDrawToolProps {
  * Continuous freehand capture — GEOBIO's own mechanism, not Geoman (see design
  * spec §2: leaflet-geoman-free has no freehand LINE mode in its free tier,
  * and Laurent explicitly rejected the click-to-place-vertex alternative as
- * "pas pratique"). Listens for mousedown/mousemove/mouseup directly on the
- * Leaflet map (same `useMapEvents` mechanism MapView.tsx's own ClickHandler
- * already uses for single clicks), suspending map dragging for the duration
- * of the gesture so panning doesn't fight with drawing.
+ * "pas pratique"). Listens for BOTH mouse (mousedown/mousemove/mouseup, for
+ * desktop testing) and touch (touchstart/touchmove/touchend, for the real
+ * field-use finger/stylus input) events, bound directly on the map's DOM
+ * container via native addEventListener — NOT via react-leaflet's
+ * useMapEvents, which only forwards Leaflet's own map-level event names and
+ * does not merge touch gestures into them (verified against Leaflet's source:
+ * a touchmove drag does not synthesize continuous mousemove events the way a
+ * simple tap synthesizes one mousedown/mouseup/click pair). Suspends map
+ * dragging for the duration of the gesture (map.dragging.disable/.enable) so
+ * panning doesn't fight with drawing, and prevents the browser's default
+ * touch behavior (page scroll/pinch-zoom) during a touch capture.
  */
 export function FreeformDrawTool({ active, missionOrigin, onComplete }: FreeformDrawToolProps) {
-  const [isDrawing, setIsDrawing] = useState(false)
+  const map = useMap()
+  const isDrawingRef = useRef(false)
   const capturedPointsRef = useRef<Point[]>([])
 
-  const map = useMapEvents({
-    mousedown(e: LeafletMouseEvent) {
-      if (!active) return
-      setIsDrawing(true)
-      capturedPointsRef.current = [latLngToLocal(e.latlng, missionOrigin)]
+  useEffect(() => {
+    const container = map.getContainer()
+
+    function beginCapture(clientEvent: { clientX: number; clientY: number }) {
+      isDrawingRef.current = true
+      const latlng = map.mouseEventToLatLng(clientEvent as unknown as MouseEvent)
+      capturedPointsRef.current = [latLngToLocal(latlng, missionOrigin)]
       map.dragging.disable()
-    },
-    mousemove(e: LeafletMouseEvent) {
-      if (!isDrawing) return
-      capturedPointsRef.current.push(latLngToLocal(e.latlng, missionOrigin))
-    },
-    mouseup() {
-      if (!isDrawing) return
-      setIsDrawing(false)
+    }
+
+    function continueCapture(clientEvent: { clientX: number; clientY: number }) {
+      if (!isDrawingRef.current) return
+      const latlng = map.mouseEventToLatLng(clientEvent as unknown as MouseEvent)
+      capturedPointsRef.current.push(latLngToLocal(latlng, missionOrigin))
+    }
+
+    function endCapture() {
+      if (!isDrawingRef.current) return
+      isDrawingRef.current = false
       map.dragging.enable()
       const simplified = simplifyByMinDistance(capturedPointsRef.current, MIN_DISTANCE_M)
       capturedPointsRef.current = []
       onComplete(simplified)
-    },
-  })
+    }
+
+    function onMouseDown(e: MouseEvent) {
+      if (!active) return
+      beginCapture(e)
+    }
+    function onMouseMove(e: MouseEvent) {
+      continueCapture(e)
+    }
+    function onMouseUp() {
+      endCapture()
+    }
+
+    function onTouchStart(e: TouchEvent) {
+      if (!active || e.touches.length === 0) return
+      beginCapture(e.touches[0])
+    }
+    function onTouchMove(e: TouchEvent) {
+      if (!isDrawingRef.current || e.touches.length === 0) return
+      // Prevent the page from scrolling/zooming while a trace is being drawn —
+      // without this, the browser's default touch-scroll behavior fights with
+      // the drag the moment the finger moves.
+      e.preventDefault()
+      continueCapture(e.touches[0])
+    }
+    function onTouchEnd() {
+      endCapture()
+    }
+
+    container.addEventListener('mousedown', onMouseDown)
+    container.addEventListener('mousemove', onMouseMove)
+    container.addEventListener('mouseup', onMouseUp)
+    // passive: false is required for touchmove's preventDefault() above to
+    // actually take effect (browsers default touchmove listeners to passive).
+    container.addEventListener('touchstart', onTouchStart)
+    container.addEventListener('touchmove', onTouchMove, { passive: false })
+    container.addEventListener('touchend', onTouchEnd)
+
+    return () => {
+      container.removeEventListener('mousedown', onMouseDown)
+      container.removeEventListener('mousemove', onMouseMove)
+      container.removeEventListener('mouseup', onMouseUp)
+      container.removeEventListener('touchstart', onTouchStart)
+      container.removeEventListener('touchmove', onTouchMove)
+      container.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [map, active, missionOrigin, onComplete])
 
   return null
 }
 ```
+
+**Why native `addEventListener` on `map.getContainer()` rather than `useMapEvents`:**
+`useMapEvents` only exposes Leaflet's own synthesized event names (`click`, `mousedown`,
+etc., re-fired by Leaflet's internal dispatch) — it has no `touchstart`/`touchmove`/
+`touchend` entries at all, because Leaflet's own touch handling (`Draggable.js`) is
+internal to its dragging/zooming handlers, not exposed as generic map events. Binding
+directly to the container's real DOM node with native listeners is the only way to
+observe raw touch events GEOBIO doesn't already have a purpose-built hook for.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1817,16 +1906,30 @@ Expected: FAIL first, then PASS once Step 2 lands.
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, clean, no regression in prior test counts
 
-- [ ] **Step 5: Manually verify in the browser**
+- [ ] **Step 5: Manually verify in the browser — mouse AND touch separately**
 
-Run: `npm run dev`. On a real touch device or with mouse drag simulation, click "Tracer
-l'eau", drag a curved line on the map, release, fill (or skip) the metadata form,
-validate. Expected: a blue polyline appears matching the dragged path; map panning is
-suspended during the drag and resumes after; toggling "Tracés eau/faille" shows/hides
-it. This is the one piece of this plan that automated tests cannot substitute for
-(spec §6) — flag any rough edges in the capture feel (simplification threshold too
-aggressive/not aggressive enough) back to Laurent rather than silently tuning
-`MIN_DISTANCE_M`.
+Run: `npm run dev`. **These are two genuinely different code paths (Task 11) — verify
+both, don't treat one as a stand-in for the other:**
+
+1. **Desktop mouse:** click "Tracer l'eau", click-and-drag a curved line on the map with
+   the mouse, release, fill (or skip) the metadata form, validate. Expected: a blue
+   polyline appears matching the dragged path; map panning is suspended during the drag
+   and resumes after.
+2. **Real touch device (phone/tablet, not a desktop browser's touch emulation mode,
+   which simulates touch geometry but still delivers input through the same
+   mouse-event pipeline as a real mouse — the point of this check is to exercise the
+   actual `touchstart`/`touchmove`/`touchend` listeners):** same flow, but drag with a
+   finger or stylus. Expected: the same result — a continuous traced polyline, not a
+   single point or a straight line between start/end (which is what you'd see if the
+   touch listeners weren't actually firing/capturing intermediate points). Also confirm
+   the page itself doesn't scroll/bounce while tracing (the `touchmove` handler's
+   `preventDefault()` should stop that).
+
+This is the one piece of this plan that automated tests cannot substitute for (spec
+§6) — flag any rough edges in the capture feel (simplification threshold too
+aggressive/not aggressive enough, touch capture feeling laggy or dropping the start of
+a stroke) back to Laurent rather than silently tuning `MIN_DISTANCE_M` or the event
+wiring.
 
 - [ ] **Step 6: Commit**
 
