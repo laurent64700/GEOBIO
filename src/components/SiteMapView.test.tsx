@@ -855,4 +855,46 @@ describe('SiteMapView', () => {
       expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
     ))
   })
+
+  it('shows only N/S and E/O guide-line presets while Hartmann is armed for felt-point placement', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
+
+    expect(screen.getByRole('button', { name: 'N/S' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'E/O' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '45°' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '135°' })).not.toBeInTheDocument()
+    // Custom angle field + its Valider button always remain available:
+    expect(screen.getByLabelText('Angle personnalisé')).toBeInTheDocument()
+  })
+
+  it('shows only 45° and 135° guide-line presets while Curry is armed', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Curry' }))
+
+    expect(screen.getByRole('button', { name: '45°' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '135°' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'N/S' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'E/O' })).not.toBeInTheDocument()
+  })
+
+  it('shows all 4 guide-line presets when no felt-point network is armed', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    expect(await screen.findByRole('button', { name: 'N/S' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'E/O' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '45°' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '135°' })).toBeInTheDocument()
+  })
 })

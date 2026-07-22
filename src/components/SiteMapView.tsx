@@ -43,6 +43,7 @@ import { listPhenomenaForPlan } from '../data/phenomenaRepo'
 import { listFreeformNetworksForPlan } from '../data/freeformNetworksRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
+import { allowedBearingsForNetwork } from '../domain/networkBearings'
 import type { CompassDirection } from '../geometry/bagua'
 import type {
   GridInstance,
@@ -217,6 +218,9 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     onFeltPointCreated: (created) => setFeltPoints((prev) => [...prev, created]),
     onError: (message) => setError(message),
   })
+
+  const armedFeltPointNetwork = placementMode?.kind === 'felt-point' ? placementMode.networkName : null
+  const allowedBearings = allowedBearingsForNetwork(armedFeltPointNetwork)
 
   useEffect(() => {
     async function load() {
@@ -676,38 +680,46 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             defaultOpen: false,
             content: (
               <div style={CARD_CHROME_STYLE}>
-                <button
-                  onClick={() => {
-                    setGuideLineBearing(0)
-                    setCustomBearingInput('')
-                  }}
-                >
-                  N/S
-                </button>
-                <button
-                  onClick={() => {
-                    setGuideLineBearing(90)
-                    setCustomBearingInput('')
-                  }}
-                >
-                  E/O
-                </button>
-                <button
-                  onClick={() => {
-                    setGuideLineBearing(45)
-                    setCustomBearingInput('')
-                  }}
-                >
-                  45°
-                </button>
-                <button
-                  onClick={() => {
-                    setGuideLineBearing(135)
-                    setCustomBearingInput('')
-                  }}
-                >
-                  135°
-                </button>
+                {(allowedBearings === null || allowedBearings.includes(0)) && (
+                  <button
+                    onClick={() => {
+                      setGuideLineBearing(0)
+                      setCustomBearingInput('')
+                    }}
+                  >
+                    N/S
+                  </button>
+                )}
+                {(allowedBearings === null || allowedBearings.includes(90)) && (
+                  <button
+                    onClick={() => {
+                      setGuideLineBearing(90)
+                      setCustomBearingInput('')
+                    }}
+                  >
+                    E/O
+                  </button>
+                )}
+                {(allowedBearings === null || allowedBearings.includes(45)) && (
+                  <button
+                    onClick={() => {
+                      setGuideLineBearing(45)
+                      setCustomBearingInput('')
+                    }}
+                  >
+                    45°
+                  </button>
+                )}
+                {(allowedBearings === null || allowedBearings.includes(135)) && (
+                  <button
+                    onClick={() => {
+                      setGuideLineBearing(135)
+                      setCustomBearingInput('')
+                    }}
+                  >
+                    135°
+                  </button>
+                )}
                 <input
                   type="number"
                   step="1"
