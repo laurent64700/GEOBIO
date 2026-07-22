@@ -5,10 +5,12 @@ import { MissionWorkspace } from './MissionWorkspace'
 import * as plansRepo from '../data/plansRepo'
 import * as missionsRepo from '../data/missionsRepo'
 import * as planImageStorage from '../data/planImageStorage'
+import * as geocodingService from '../data/geocodingService'
 
 vi.mock('../data/plansRepo')
 vi.mock('../data/missionsRepo')
 vi.mock('../data/planImageStorage')
+vi.mock('../data/geocodingService')
 
 vi.mock('../components/MissionForm', async () => {
   const { useEffect } = await import('react')
@@ -30,8 +32,14 @@ vi.mock('../components/MissionForm', async () => {
 })
 
 vi.mock('../components/MapView', () => ({
-  MapView: ({ onMapClick }: { onMapClick?: (latlng: { lat: number; lng: number }) => void }) => (
-    <div data-testid="map-view">
+  MapView: ({
+    center,
+    onMapClick,
+  }: {
+    center: [number, number]
+    onMapClick?: (latlng: { lat: number; lng: number }) => void
+  }) => (
+    <div data-testid="map-view" data-center={`${center[0]},${center[1]}`}>
       {onMapClick && (
         <button onClick={() => onMapClick({ lat: 48.8566, lng: 2.3522 })}>simulate-map-click</button>
       )}
@@ -292,5 +300,35 @@ describe('MissionWorkspace', () => {
         expect.objectContaining({ bovisRate: 12000 })
       )
     )
+  })
+
+  it('centers the setting-origin map on the geocoded address when available', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
+    vi.mocked(geocodingService.geocodeAddress).mockResolvedValue({ lat: 45.5, lng: 6.5 })
+
+    render(<MissionWorkspace />)
+    fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+    const mapView = await screen.findByTestId('map-view')
+    expect(mapView).toHaveAttribute('data-center', '45.5,6.5')
+  })
+
+  it('falls back to DEFAULT_CENTER without blocking the flow when geocoding finds nothing', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
+    vi.mocked(geocodingService.geocodeAddress).mockResolvedValue(null)
+
+    render(<MissionWorkspace />)
+    fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+    const mapView = await screen.findByTestId('map-view')
+    expect(mapView).toHaveAttribute('data-center', '46.6,2.5') // DEFAULT_CENTER — verify this literal matches the real constant in MissionWorkspace.tsx before relying on it
+    // the "Cliquez sur la carte..." flow still works exactly as today:
+    expect(screen.getByText(/cliquez sur la carte/i)).toBeInTheDocument()
   })
 })

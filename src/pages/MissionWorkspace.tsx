@@ -10,6 +10,7 @@ import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
+import { geocodeAddress } from '../data/geocodingService'
 import type { AffineTransform, Mission, Plan } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
 
@@ -30,7 +31,7 @@ type WorkspacePhase =
   | { name: 'creating-mission' }
   | { name: 'creating-exterior-plan'; mission: Mission }
   | { name: 'global-assessment'; mission: Mission; exteriorPlan: Plan }
-  | { name: 'setting-origin'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'setting-origin'; mission: Mission; exteriorPlan: Plan; mapCenter: [number, number] }
   | { name: 'ready-no-interior'; mission: Mission; exteriorPlan: Plan }
   | { name: 'calibrating-interior'; mission: Mission; exteriorPlan: Plan; imageUrl: string }
   | { name: 'error'; message: string }
@@ -56,7 +57,9 @@ export function MissionWorkspace() {
     if (phase.name !== 'global-assessment') return
     try {
       const updated = await setGlobalAssessment(phase.mission.id, input)
-      setPhase({ name: 'setting-origin', mission: updated, exteriorPlan: phase.exteriorPlan })
+      const geocoded = await geocodeAddress(updated.address)
+      const mapCenter: [number, number] = geocoded ? [geocoded.lat, geocoded.lng] : DEFAULT_CENTER
+      setPhase({ name: 'setting-origin', mission: updated, exteriorPlan: phase.exteriorPlan, mapCenter })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -119,7 +122,7 @@ export function MissionWorkspace() {
         <div>
           <p>Cliquez sur la carte à l'endroit qui servira d'origine du site.</p>
           <div style={MAP_WRAPPER_STYLE}>
-            <MapView center={DEFAULT_CENTER} onMapClick={handleOriginClick} />
+            <MapView center={phase.mapCenter} onMapClick={handleOriginClick} />
           </div>
         </div>
       )
