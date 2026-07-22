@@ -168,7 +168,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([
-      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z' },
+      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z' },
     ])
 
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
@@ -186,7 +186,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([
-      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z' },
+      { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z' },
     ])
 
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)

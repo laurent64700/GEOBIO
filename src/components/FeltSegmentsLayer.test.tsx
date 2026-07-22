@@ -6,8 +6,8 @@ import type { FeltSegment } from '../domain/types'
 
 const missionOrigin = { lat: 48.8566, lng: 2.3522 }
 const segments: FeltSegment[] = [
-  { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z' },
-  { id: 'fs2', planId: 'p1', networkName: 'Curry', pointA: { x: -1, y: -1 }, pointB: { x: 1, y: 1 }, createdAt: '2026-07-20T10:01:00Z' },
+  { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: '+', polarityB: '-', createdAt: '2026-07-20T10:00:00Z' },
+  { id: 'fs2', planId: 'p1', networkName: 'Curry', pointA: { x: -1, y: -1 }, pointB: { x: 1, y: 1 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:01:00Z' },
 ]
 
 describe('FeltSegmentsLayer', () => {

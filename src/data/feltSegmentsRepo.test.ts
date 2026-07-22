@@ -8,11 +8,11 @@ vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 describe('feltSegmentsRepo', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('creates a felt segment', async () => {
+  it('creates a felt segment with no polarity given (defaults to null — the ArUco-detection path)', async () => {
     const { from, chain } = createSupabaseChainMock({
       data: {
         id: 'fs1', plan_id: 'p1', network_name: 'Hartmann',
-        ax: 1, ay: 2, bx: 3, by: 4, created_at: '2026-07-20T10:00:00Z',
+        ax: 1, ay: 2, bx: 3, by: 4, polarity_a: null, polarity_b: null, created_at: '2026-07-20T10:00:00Z',
       },
       error: null,
     })
@@ -25,9 +25,35 @@ describe('feltSegmentsRepo', () => {
     expect(from).toHaveBeenCalledWith('felt_segment')
     expect(chain.insert).toHaveBeenCalledWith({
       plan_id: 'p1', network_name: 'Hartmann', ax: 1, ay: 2, bx: 3, by: 4,
+      polarity_a: null, polarity_b: null,
     })
     expect(segment.pointA).toEqual({ x: 1, y: 2 })
     expect(segment.pointB).toEqual({ x: 3, y: 4 })
+    expect(segment.polarityA).toBeNull()
+    expect(segment.polarityB).toBeNull()
+  })
+
+  it('creates a felt segment with explicit polarity at each end (the manual network felt-point tool)', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'fs1', plan_id: 'p1', network_name: 'Hartmann',
+        ax: 1, ay: 2, bx: 3, by: 4, polarity_a: '+', polarity_b: '-', created_at: '2026-07-20T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const segment = await createFeltSegment({
+      planId: 'p1', networkName: 'Hartmann', pointA: { x: 1, y: 2 }, pointB: { x: 3, y: 4 },
+      polarityA: '+', polarityB: '-',
+    })
+
+    expect(chain.insert).toHaveBeenCalledWith({
+      plan_id: 'p1', network_name: 'Hartmann', ax: 1, ay: 2, bx: 3, by: 4,
+      polarity_a: '+', polarity_b: '-',
+    })
+    expect(segment.polarityA).toBe('+')
+    expect(segment.polarityB).toBe('-')
   })
 
   it('throws a descriptive French error when creation fails', async () => {

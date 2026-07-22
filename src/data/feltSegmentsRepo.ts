@@ -1,11 +1,16 @@
 import { supabase } from '../lib/supabaseClient'
-import type { FeltSegment, Point } from '../domain/types'
+import type { FeltSegment, GridLinePolarity, Point } from '../domain/types'
 
 export interface CreateFeltSegmentInput {
   planId: string
   networkName: string
   pointA: Point
   pointB: Point
+  /** Optional — manual placement always provides both, ArUco rod-marker
+   * detection (RodDetectionPanel) omits them (see FeltSegment's own doc
+   * comment for why). Omitted fields are stored as null. */
+  polarityA?: GridLinePolarity
+  polarityB?: GridLinePolarity
 }
 
 interface FeltSegmentRow {
@@ -16,6 +21,8 @@ interface FeltSegmentRow {
   ay: number
   bx: number
   by: number
+  polarity_a: GridLinePolarity | null
+  polarity_b: GridLinePolarity | null
   created_at: string
 }
 
@@ -26,6 +33,8 @@ function mapRowToFeltSegment(row: FeltSegmentRow): FeltSegment {
     networkName: row.network_name,
     pointA: { x: row.ax, y: row.ay },
     pointB: { x: row.bx, y: row.by },
+    polarityA: row.polarity_a,
+    polarityB: row.polarity_b,
     createdAt: row.created_at,
   }
 }
@@ -40,6 +49,8 @@ export async function createFeltSegment(input: CreateFeltSegmentInput): Promise<
       ay: input.pointA.y,
       bx: input.pointB.x,
       by: input.pointB.y,
+      polarity_a: input.polarityA ?? null,
+      polarity_b: input.polarityB ?? null,
     })
     .select()
     .single()

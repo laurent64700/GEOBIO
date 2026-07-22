@@ -130,6 +130,13 @@ export interface FeltSegment {
   networkName: string
   pointA: Point
   pointB: Point
+  /** Polarity sensed at each end (reuses GridLinePolarity's '+'/'-'), chosen
+   * manually when placed via the network felt-point tool. Null for segments
+   * created via ArUco rod-marker detection (RodDetectionPanel) — polarity
+   * can't be inferred from marker position alone, so it's left unset rather
+   * than defaulted to a value nobody actually sensed. */
+  polarityA: GridLinePolarity | null
+  polarityB: GridLinePolarity | null
   createdAt: string
 }
 

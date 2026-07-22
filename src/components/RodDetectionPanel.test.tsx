@@ -146,7 +146,7 @@ describe('RodDetectionPanel', () => {
       points: [],
     })
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
-      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z',
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z',
     })
 
     render(
@@ -195,7 +195,7 @@ describe('RodDetectionPanel', () => {
       points: [{ markerId: 103, rodNumber: 2, networkName: 'Curry', x: 9, y: 9 }],
     })
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
-      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, createdAt: '2026-07-20T10:00:00Z',
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z',
     })
     vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
       id: 'fp1', planId: 'p1', networkName: 'Curry', x: 9, y: 9, createdAt: '2026-07-20T10:00:00Z',
