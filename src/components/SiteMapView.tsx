@@ -19,6 +19,7 @@ import {
 } from './LayerPanel'
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
+import { Sidebar } from './Sidebar'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
@@ -523,225 +524,259 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           visible={visibility[FREEFORM_NETWORK_LAYER_ID] ?? false}
         />
       </MapView>
-      {/* Top-right — LayerPanel and GridCreationPanel share this corner
-          instead of each claiming one of their own; see OverlayPanel.tsx for
-          why the stacking/overflow treatment is needed. */}
-      <OverlayPanel corner="top-right">
-        <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />
-        <div style={GRID_CREATION_WRAPPER_STYLE}>
-          <GridCreationPanel
-            key={gridCreationKey}
-            pendingOrigin={pendingGridOrigin}
-            onOriginRequested={handleGridOriginRequested}
-            onGenerate={handleGenerateGrid}
-          />
-        </div>
-      </OverlayPanel>
-      {/* Top-left — kept clear of LayerPanel's top-right checkboxes. */}
-      <OverlayPanel corner="top-left">
-        <div style={CARD_CHROME_STYLE}>
-          <button
-            onClick={() => {
-              setGuideLineBearing(0)
-              setCustomBearingInput('')
-            }}
-          >
-            N/S
-          </button>
-          <button
-            onClick={() => {
-              setGuideLineBearing(90)
-              setCustomBearingInput('')
-            }}
-          >
-            E/O
-          </button>
-          <button
-            onClick={() => {
-              setGuideLineBearing(45)
-              setCustomBearingInput('')
-            }}
-          >
-            45°
-          </button>
-          <button
-            onClick={() => {
-              setGuideLineBearing(135)
-              setCustomBearingInput('')
-            }}
-          >
-            135°
-          </button>
-          <input
-            type="number"
-            step="1"
-            aria-label="Angle personnalisé"
-            value={customBearingInput}
-            onChange={(e) => setCustomBearingInput(e.target.value)}
-          />
-          <button onClick={handleValidateCustomBearing}>Valider</button>
-          <button
-            onClick={() => startPlacementMode({ kind: 'guide-line' })}
-            disabled={guideLineBearing === null}
-          >
-            Placer ici
-          </button>
-          <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
-            Effacer
-          </button>
-        </div>
-        {/* Stacked as another card in the same top-left corner — the legend
-            of 8 point-phenomenon kinds plus the "click the map to place"
-            affordance. Selecting a kind arms placementMode the same way the
-            guide-line "Placer ici" button does. */}
-        <div style={CARD_CHROME_STYLE}>
-          <PhenomenonPicker
-            activeKind={placementMode?.kind === 'phenomenon' ? placementMode.phenomenonKind : null}
-            onSelectKind={handleSelectPhenomenonKind}
-          />
-        </div>
-        {/* Stacked as another card in the same top-left corner — starts a
-            freeform eau/faille trace (FreeformDrawTool, rendered inside
-            <MapView> above). Each button is only disabled while a DIFFERENT
-            mode (including the OTHER freeform kind) is active — not while its
-            OWN kind is armed, so it can be clicked again to self-cancel (see
-            handleStartFreeformTrace's toggle logic above). This is the only
-            way to back out of an armed-but-not-yet-dragging freeform mode now
-            that startPlacementMode's freeform guard blocks every OTHER
-            mode-start control from interrupting it. Also hard-disabled
-            whenever pendingFreeformTrace !== null — once a trace is captured,
-            the metadata form (below) is the only valid way to resolve it
-            (submit or cancel); re-clicking the trace-start button while the
-            form is open must not be able to touch placementMode out from
-            under it (see handleStartFreeformTrace's doc comment for the bug
-            this prevents). aria-pressed mirrors PhenomenonPicker's own
-            toggle-button convention. */}
-        <div style={CARD_CHROME_STYLE}>
-          <button
-            onClick={() => handleStartFreeformTrace('eau')}
-            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'eau'}
-            disabled={
-              pendingFreeformTrace !== null ||
-              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau'))
-            }
-          >
-            Tracer l'eau
-          </button>
-          <button
-            onClick={() => handleStartFreeformTrace('faille')}
-            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'faille'}
-            disabled={
-              pendingFreeformTrace !== null ||
-              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille'))
-            }
-          >
-            Tracer une faille
-          </button>
-        </div>
-        {pendingFreeformTrace && (
-          <div style={CARD_CHROME_STYLE}>
-            {freeformSaveError !== null && (
+      {/* Full-height left sidebar (spec §3) — replaces the former 4 floating
+          OverlayPanel corners (top-right, top-left, bottom-left) with one
+          pinned band + collapsible accordion. Pure relocation: every section
+          below holds the exact same JSX that used to live in one of those
+          corners, unchanged. Only the orthogonality-review card (below,
+          still a floating bottom-right OverlayPanel) and the new
+          CompassIndicator (future chunk) stay outside the sidebar. */}
+      <Sidebar
+        pinned={<p>Point ressenti — à venir (Chunk 2)</p>}
+        sections={[
+          {
+            id: 'grille',
+            title: 'Grille / Réseaux',
+            defaultOpen: true,
+            content: (
               <>
-                <p role="alert">{freeformSaveError}</p>
-                <button onClick={() => setFreeformSaveError(null)}>Fermer</button>
+                <div style={GRID_CREATION_WRAPPER_STYLE}>
+                  <GridCreationPanel
+                    key={gridCreationKey}
+                    pendingOrigin={pendingGridOrigin}
+                    onOriginRequested={handleGridOriginRequested}
+                    onGenerate={handleGenerateGrid}
+                  />
+                </div>
+                {/* Edit-mode card, moved verbatim from the former bottom-left
+                    corner. A single global "Mode édition" toggle, not a
+                    per-layer one: Laurent edits one visible network at a time
+                    in the field, so whichever grid layer is currently toggled
+                    visible becomes draggable while this is on.
+                    "Annuler"/"Réinitialiser" act on the line most recently
+                    dragged or reset (lastChangedLine) rather than through a
+                    per-line picker, since that line is always the one
+                    Laurent just touched. */}
+                <div style={CARD_CHROME_STYLE}>
+                  <label>
+                    <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
+                    Mode édition (caler sur le ressenti)
+                  </label>
+                  {editMode && (
+                    <p>Glissez un point pour l'ajuster, cliquez le point central entre deux points pour ajouter un coude.</p>
+                  )}
+                  <button
+                    onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
+                    disabled={
+                      !editMode ||
+                      !lastChangedLine ||
+                      !(visibility[lastChangedLine.instanceId] ?? false) ||
+                      (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
+                    }
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
+                    disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}
+                  >
+                    Réinitialiser
+                  </button>
+                </div>
               </>
-            )}
-            <FreeformMetadataForm onSubmit={handleSubmitFreeformMetadata} onCancel={handleCancelFreeformMetadata} />
-          </div>
-        )}
-        {/* Stacked as a second card in the same top-left corner (see
-            OverlayPanel.tsx for why a corner can hold more than one item) —
-            only shown once there's something to say about the building
-            footprint: it's confirmed (offer "Changer de bâtiment"), the
-            search came up empty even after widening, or the optional
-            building/Bagua flow failed (dismissible, never replacing the map —
-            spec §7's "pas de blocage du reste du relevé"; see buildingError's
-            declaration comment). */}
-        {(buildingFootprint !== null || buildingSearchExhausted || buildingError !== null) && (
-          <div style={CARD_CHROME_STYLE}>
-            {buildingError !== null && (
+            ),
+          },
+          {
+            id: 'calques',
+            title: 'Calques',
+            defaultOpen: false,
+            content: <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />,
+          },
+          {
+            id: 'phenomenes',
+            title: 'Phénomènes',
+            defaultOpen: false,
+            content: (
+              <PhenomenonPicker
+                activeKind={placementMode?.kind === 'phenomenon' ? placementMode.phenomenonKind : null}
+                onSelectKind={handleSelectPhenomenonKind}
+              />
+            ),
+          },
+          {
+            id: 'freeform',
+            title: 'Tracés eau/faille',
+            defaultOpen: false,
+            content: (
               <>
-                <p role="alert">{buildingError}</p>
+                {/* Starts a freeform eau/faille trace (FreeformDrawTool,
+                    rendered inside <MapView> above). Each button is only
+                    disabled while a DIFFERENT mode (including the OTHER
+                    freeform kind) is active — not while its OWN kind is
+                    armed, so it can be clicked again to self-cancel (see
+                    handleStartFreeformTrace's toggle logic above). This is
+                    the only way to back out of an armed-but-not-yet-dragging
+                    freeform mode now that startPlacementMode's freeform guard
+                    blocks every OTHER mode-start control from interrupting
+                    it. Also hard-disabled whenever pendingFreeformTrace !==
+                    null — once a trace is captured, the metadata form
+                    (below) is the only valid way to resolve it (submit or
+                    cancel); re-clicking the trace-start button while the form
+                    is open must not be able to touch placementMode out from
+                    under it (see handleStartFreeformTrace's doc comment for
+                    the bug this prevents). aria-pressed mirrors
+                    PhenomenonPicker's own toggle-button convention. */}
+                <div style={CARD_CHROME_STYLE}>
+                  <button
+                    onClick={() => handleStartFreeformTrace('eau')}
+                    aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'eau'}
+                    disabled={
+                      pendingFreeformTrace !== null ||
+                      (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau'))
+                    }
+                  >
+                    Tracer l'eau
+                  </button>
+                  <button
+                    onClick={() => handleStartFreeformTrace('faille')}
+                    aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'faille'}
+                    disabled={
+                      pendingFreeformTrace !== null ||
+                      (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille'))
+                    }
+                  >
+                    Tracer une faille
+                  </button>
+                </div>
+                {pendingFreeformTrace && (
+                  <div style={CARD_CHROME_STYLE}>
+                    {freeformSaveError !== null && (
+                      <>
+                        <p role="alert">{freeformSaveError}</p>
+                        <button onClick={() => setFreeformSaveError(null)}>Fermer</button>
+                      </>
+                    )}
+                    <FreeformMetadataForm onSubmit={handleSubmitFreeformMetadata} onCancel={handleCancelFreeformMetadata} />
+                  </div>
+                )}
+              </>
+            ),
+          },
+          {
+            id: 'ligne-guide',
+            title: 'Ligne guide',
+            defaultOpen: false,
+            content: (
+              <div style={CARD_CHROME_STYLE}>
                 <button
                   onClick={() => {
-                    setBuildingError(null)
-                    setBuildingFetchNonce((n) => n + 1)
+                    setGuideLineBearing(0)
+                    setCustomBearingInput('')
                   }}
                 >
-                  Réessayer
+                  N/S
                 </button>
-                <button onClick={() => setBuildingError(null)}>Fermer</button>
-              </>
-            )}
-            {buildingFootprint !== null && (
-              <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
-            )}
-            {buildingSearchExhausted && buildingFootprint === null && (
-              <p>Aucun bâtiment détecté à proximité de l'origine.</p>
-            )}
-          </div>
-        )}
-      </OverlayPanel>
-      {/* Bottom-left, the third corner — clear of LayerPanel top-right and
-          the guide-line controls top-left. A single global "Mode édition"
-          toggle, not a per-layer one: Laurent edits one visible network at a
-          time in the field, so whichever grid layer is currently toggled
-          visible becomes draggable while this is on. "Annuler"/"Réinitialiser"
-          act on the line most recently dragged or reset (lastChangedLine)
-          rather than through a per-line picker, since that line is always
-          the one Laurent just touched. */}
-      <OverlayPanel corner="bottom-left">
-        <div style={CARD_CHROME_STYLE}>
-          <label>
-            <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
-            Mode édition (caler sur le ressenti)
-          </label>
-          {editMode && (
-            <p>Glissez un point pour l'ajuster, cliquez le point central entre deux points pour ajouter un coude.</p>
-          )}
-          <button
-            onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
-            disabled={
-              !editMode ||
-              !lastChangedLine ||
-              !(visibility[lastChangedLine.instanceId] ?? false) ||
-              (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
-            }
-          >
-            Annuler
-          </button>
-          <button
-            onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
-            disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}
-          >
-            Réinitialiser
-          </button>
-        </div>
-      </OverlayPanel>
-      {/* Bottom-right, the fourth and last free corner — ONE OverlayPanel
-          shared by the orthogonality-review card and the Bagua legend,
-          mirroring how top-right stacks LayerPanel + GridCreationPanel in a
-          single panel. Two sibling <OverlayPanel corner="bottom-right">
-          instances would each sit at bottom:8/right:8 independently and
-          overlap whenever both were visible at once (Bagua layer toggled on
-          + a line just adjusted); only children of the SAME panel get
-          flex-column stacking (see OverlayPanel.tsx).
-
-          Orthogonality card: see OrthogonalitySuggestion.tsx's doc comment
-          for why the text and buttons are rendered here rather than
-          alongside the <Polyline> preview (OrthogonalitySuggestion, rendered
-          inside <MapView> above). Shown after every line adjustment
-          (handleLineChanged sets awaitingOrthogonalityReview); "Redresser"
-          replaces the line's adjustedPoints with the suggested straightened
-          points (going through handleLineChanged itself, so it's
-          undoable/persisted the same way a drag or reset is); "Ignorer"
-          just dismisses the card.
-
-          Bagua legend card: bottom-right is the safest pairing — the
-          orthogonality review only appears transiently right after a drag,
-          while the Bagua legend is viewed at leisure once the layer is
-          toggled on. */}
-      {(reviewTarget !== null || (visibility[BAGUA_LAYER_ID] ?? false)) && (
+                <button
+                  onClick={() => {
+                    setGuideLineBearing(90)
+                    setCustomBearingInput('')
+                  }}
+                >
+                  E/O
+                </button>
+                <button
+                  onClick={() => {
+                    setGuideLineBearing(45)
+                    setCustomBearingInput('')
+                  }}
+                >
+                  45°
+                </button>
+                <button
+                  onClick={() => {
+                    setGuideLineBearing(135)
+                    setCustomBearingInput('')
+                  }}
+                >
+                  135°
+                </button>
+                <input
+                  type="number"
+                  step="1"
+                  aria-label="Angle personnalisé"
+                  value={customBearingInput}
+                  onChange={(e) => setCustomBearingInput(e.target.value)}
+                />
+                <button onClick={handleValidateCustomBearing}>Valider</button>
+                <button
+                  onClick={() => startPlacementMode({ kind: 'guide-line' })}
+                  disabled={guideLineBearing === null}
+                >
+                  Placer ici
+                </button>
+                <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
+                  Effacer
+                </button>
+              </div>
+            ),
+          },
+          ...(buildingFootprint !== null || buildingSearchExhausted || buildingError !== null
+            ? [
+                {
+                  id: 'batiment',
+                  title: 'Bâtiment',
+                  defaultOpen: false,
+                  content: (
+                    <div style={CARD_CHROME_STYLE}>
+                      {buildingError !== null && (
+                        <>
+                          <p role="alert">{buildingError}</p>
+                          <button
+                            onClick={() => {
+                              setBuildingError(null)
+                              setBuildingFetchNonce((n) => n + 1)
+                            }}
+                          >
+                            Réessayer
+                          </button>
+                          <button onClick={() => setBuildingError(null)}>Fermer</button>
+                        </>
+                      )}
+                      {buildingFootprint !== null && (
+                        <button onClick={handleChangeBuilding}>Changer de bâtiment</button>
+                      )}
+                      {buildingSearchExhausted && buildingFootprint === null && (
+                        <p>Aucun bâtiment détecté à proximité de l'origine.</p>
+                      )}
+                    </div>
+                  ),
+                },
+              ]
+            : []),
+          ...((visibility[BAGUA_LAYER_ID] ?? false)
+            ? [
+                {
+                  id: 'bagua',
+                  title: 'Bagua',
+                  defaultOpen: false,
+                  content: (
+                    <div style={CARD_CHROME_STYLE}>
+                      <BaguaLegendCollapsed />
+                    </div>
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
+      {/* Bottom-right — the orthogonality-review card is transient/contextual
+          (appears right after a line drag/reset), unlike the sidebar's
+          browsable tools, so it stays a small floating OverlayPanel directly
+          on the map rather than moving into the accordion (spec §3/§12). The
+          Bagua legend that used to share this corner now lives in the
+          sidebar's "Bagua" section above, so this panel's visibility no
+          longer needs to account for the Bagua layer at all. */}
+      {reviewTarget !== null && reviewSuggestion !== null && (
         <OverlayPanel corner="bottom-right">
           {reviewTarget && reviewSuggestion && (
             <div style={CARD_CHROME_STYLE}>
@@ -758,11 +793,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                 Redresser
               </button>
               <button onClick={() => setAwaitingOrthogonalityReview(null)}>Ignorer</button>
-            </div>
-          )}
-          {(visibility[BAGUA_LAYER_ID] ?? false) && (
-            <div style={CARD_CHROME_STYLE}>
-              <BaguaLegendCollapsed />
             </div>
           )}
         </OverlayPanel>

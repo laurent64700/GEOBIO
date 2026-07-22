@@ -678,30 +678,28 @@ describe('SiteMapView', () => {
     }
   })
 
-  it('stacks the orthogonality panel and the Bagua legend in a single bottom-right overlay when both are visible', async () => {
-    // Regression test for the two-sibling-<OverlayPanel corner="bottom-right">
-    // bug: each instance is absolutely positioned at bottom:8/right:8, so two
-    // sibling instances overlap instead of stacking. Both cards must live in
-    // ONE bottom-right OverlayPanel (whose flex column stacks its children).
+  it('renders the orthogonality-review card inside the lone remaining bottom-right overlay', async () => {
+    // Was a regression test for the OLD two-sibling-<OverlayPanel
+    // corner="bottom-right"> bug, where the orthogonality card and the Bagua
+    // legend shared one bottom-right panel to avoid overlapping absolutely-
+    // positioned siblings. That premise is gone now that Bagua moved into
+    // the sidebar accordion (spec §3) — there is only ever one bottom-right
+    // OverlayPanel left (the orthogonality card), so the thing worth
+    // asserting is simply that it renders inside it; Bagua's presence in the
+    // sidebar is covered elsewhere (the "shows the Bagua legend collapsed by
+    // default..." test below), not here.
     await renderWithLineChangedOnce()
     await screen.findByText(/écart à l'orthogonal théorique/i)
 
-    fireEvent.click(screen.getByLabelText(/bagua/i))
-    await screen.findByText(/bagua : 8 secteurs/i)
-
-    // Both pieces of content are on screen simultaneously...
-    expect(screen.getByText(/écart à l'orthogonal théorique/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /redresser/i })).toBeInTheDocument()
-    // ...inside exactly ONE bottom-right-positioned wrapper, not two
-    // overlapping ones. OverlayPanel is the only thing rendering
+    // Exactly ONE bottom-right-positioned wrapper exists, and it contains the
+    // orthogonality card. OverlayPanel is the only thing rendering
     // absolutely-positioned bottom/right offsets in this tree.
     const bottomRightWrappers = Array.from(document.querySelectorAll('div')).filter(
       (div) => div.style.position === 'absolute' && div.style.bottom !== '' && div.style.right !== ''
     )
     expect(bottomRightWrappers).toHaveLength(1)
-    // And that single wrapper contains both cards.
     expect(bottomRightWrappers[0]).toContainElement(screen.getByText(/écart à l'orthogonal théorique/i))
-    expect(bottomRightWrappers[0]).toContainElement(screen.getByText(/bagua : 8 secteurs/i))
   })
 
   it('shows the Bagua legend collapsed by default when the layer is toggled visible, expanding only on "Détails"', async () => {
