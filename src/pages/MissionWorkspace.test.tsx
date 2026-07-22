@@ -87,6 +87,20 @@ vi.mock('../components/GlobalAssessmentForm', () => ({
   ),
 }))
 
+vi.mock('../components/GlobalAssessmentBar', () => ({
+  GlobalAssessmentBar: ({
+    values,
+    onChange,
+  }: {
+    values: { causeArchitectural: number; causeElectromagnetique: number; causeGeobiologique: number; causeParanormale: number; causeAutres: number; bovisRate: number }
+    onChange: (v: typeof values) => void
+  }) => (
+    <div data-testid="global-assessment-bar" data-bovis-rate={values.bovisRate}>
+      <button onClick={() => onChange({ ...values, bovisRate: 12000 })}>simulate-bar-change</button>
+    </div>
+  ),
+}))
+
 const missionWithOrigin = {
   id: 'm1', address: 'x', missionDate: '2026-07-20', declinationDeg: null,
   originLat: 48.8566, originLng: 2.3522,
@@ -242,5 +256,41 @@ describe('MissionWorkspace', () => {
       })
     )
     expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+  })
+
+  it('renders GlobalAssessmentBar (pre-filled from the mission) during ready-no-interior, and calls setGlobalAssessment on change', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    // setMissionOrigin only updates origin fields on the real (Supabase) row —
+    // it still returns the cause/Bovis values already saved by the earlier
+    // setGlobalAssessment call, not the origin-only-populated missionWithOrigin
+    // fixture (which other tests use precisely because they don't care about
+    // those fields). This test does care — it asserts the bar is pre-filled
+    // from the mission — so its origin-set mission must carry them forward.
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue({
+      ...missionAfterGlobalAssessment, originLat: missionWithOrigin.originLat, originLng: missionWithOrigin.originLng,
+    })
+    vi.mocked(missionsRepo.setGlobalAssessment)
+      .mockResolvedValueOnce(missionAfterGlobalAssessment) // the initial mandatory step
+      .mockResolvedValueOnce({ ...missionWithOrigin, bovisRate: 12000 }) // the bar's own change
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    await screen.findByTestId('site-map-view') // confirms ready-no-interior was reached
+
+    const bar = screen.getByTestId('global-assessment-bar')
+    expect(bar).toHaveAttribute('data-bovis-rate', '9500') // pre-filled from missionAfterGlobalAssessment
+
+    fireEvent.click(screen.getByText('simulate-bar-change'))
+
+    await waitFor(() =>
+      expect(missionsRepo.setGlobalAssessment).toHaveBeenNthCalledWith(
+        2,
+        'm1',
+        expect.objectContaining({ bovisRate: 12000 })
+      )
+    )
   })
 })

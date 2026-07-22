@@ -5,6 +5,7 @@ import { MapView } from '../components/MapView'
 import { SiteMapView } from '../components/SiteMapView'
 import { PlanCalibrationTool } from '../components/PlanCalibrationTool'
 import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
+import { GlobalAssessmentBar } from '../components/GlobalAssessmentBar'
 import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
@@ -151,6 +152,20 @@ export function MissionWorkspace() {
             missionId={phase.mission.id}
             planId={phase.exteriorPlan.id}
             missionOrigin={{ lat: originLat!, lng: originLng! }}
+          />
+          <GlobalAssessmentBar
+            values={{
+              causeArchitectural: phase.mission.causeArchitectural ?? 0,
+              causeElectromagnetique: phase.mission.causeElectromagnetique ?? 0,
+              causeGeobiologique: phase.mission.causeGeobiologique ?? 0,
+              causeParanormale: phase.mission.causeParanormale ?? 0,
+              causeAutres: phase.mission.causeAutres ?? 0,
+              bovisRate: phase.mission.bovisRate ?? 0,
+            }}
+            onChange={async (values) => {
+              const updated = await setGlobalAssessment(phase.mission.id, values)
+              setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan })
+            }}
           />
         </div>
       )
