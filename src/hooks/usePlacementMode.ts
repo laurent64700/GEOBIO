@@ -1,9 +1,10 @@
 import { useCallback, useState } from 'react'
 import { createPhenomenon } from '../data/phenomenaRepo'
 import { createFreeformNetwork } from '../data/freeformNetworksRepo'
+import { createFeltPoint } from '../data/feltPointsRepo'
 import type { FreeformMetadata } from '../components/FreeformMetadataForm'
 import type {
-  Point, PhenomenonKind, Phenomenon, FreeformNetworkKind, FreeformNetwork,
+  Point, PhenomenonKind, Phenomenon, FreeformNetworkKind, FreeformNetwork, FeltPoint,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 
@@ -18,6 +19,7 @@ export type PlacementMode =
   | { kind: 'guide-line' }
   | { kind: 'phenomenon'; phenomenonKind: PhenomenonKind }
   | { kind: 'freeform'; freeformKind: FreeformNetworkKind }
+  | { kind: 'felt-point'; networkName: string }
   | null
 
 export interface UsePlacementModeArgs {
@@ -25,6 +27,7 @@ export interface UsePlacementModeArgs {
   missionOrigin: LatLng
   onPhenomenonCreated: (phenomenon: Phenomenon) => void
   onFreeformNetworkCreated: (network: FreeformNetwork) => void
+  onFeltPointCreated: (feltPoint: FeltPoint) => void
   // Only for handlePlacePhenomenon's failure path (a real load/action failure
   // with no better place to go) — NOT for handleSubmitFreeformMetadata's
   // failure path, which uses its own internal freeformSaveError instead.
@@ -36,6 +39,7 @@ export function usePlacementMode({
   missionOrigin,
   onPhenomenonCreated,
   onFreeformNetworkCreated,
+  onFeltPointCreated,
   onError,
 }: UsePlacementModeArgs) {
   const [placementMode, setPlacementMode] = useState<PlacementMode>(null)
@@ -140,6 +144,35 @@ export function usePlacementMode({
     try {
       const created = await createPhenomenon({ planId, kind, x: local.x, y: local.y })
       onPhenomenonCreated(created)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // Arms/disarms felt-point placement mode — mirrors handleSelectPhenomenonKind:
+  // selecting a network arms placement for the next map click; selecting the
+  // already-armed network again (or passing null, e.g. FeltPointPicker's own
+  // click-active-network-again toggle) cancels it directly. Deselecting is NOT
+  // routed through startPlacementMode for the same reason as
+  // handleSelectPhenomenonKind: cancelling out of felt-point mode can't ever
+  // be interrupting a freeform drag (placementMode is 'felt-point' at that
+  // point, not 'freeform'), so there's nothing to guard against.
+  function handleSelectFeltPointNetwork(networkName: string | null) {
+    if (networkName === null) {
+      setPlacementMode(null)
+      return
+    }
+    if (placementMode?.kind === 'felt-point' && placementMode.networkName === networkName) {
+      setPlacementMode(null)
+      return
+    }
+    startPlacementMode({ kind: 'felt-point', networkName })
+  }
+
+  async function handlePlaceFeltPoint(local: Point, networkName: string) {
+    try {
+      const created = await createFeltPoint({ planId, networkName, x: local.x, y: local.y })
+      onFeltPointCreated(created)
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err))
     }
@@ -263,6 +296,10 @@ export function usePlacementMode({
       // click. Laurent explicitly deselects via PhenomenonPicker (clicking
       // the active kind again) or by selecting a different kind.
     }
+    if (placementMode?.kind === 'felt-point') {
+      const local = latLngToLocal(latlng, missionOrigin)
+      handlePlaceFeltPoint(local, placementMode.networkName)
+    }
   }
 
   function handleClearGuideLine() {
@@ -321,6 +358,7 @@ export function usePlacementMode({
     handleClearGuideLine,
     handleValidateCustomBearing,
     handleSelectPhenomenonKind,
+    handleSelectFeltPointNetwork,
     handleStartFreeformTrace,
     handleFreeformTraceComplete,
     handleSubmitFreeformMetadata,

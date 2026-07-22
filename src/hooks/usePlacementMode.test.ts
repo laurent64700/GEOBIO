@@ -3,9 +3,11 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 import { usePlacementMode } from './usePlacementMode'
 import * as phenomenaRepo from '../data/phenomenaRepo'
 import * as freeformNetworksRepo from '../data/freeformNetworksRepo'
+import * as feltPointsRepo from '../data/feltPointsRepo'
 
 vi.mock('../data/phenomenaRepo')
 vi.mock('../data/freeformNetworksRepo')
+vi.mock('../data/feltPointsRepo')
 
 const MISSION_ORIGIN = { lat: 48.8566, lng: 2.3522 }
 const MAP_CLICK_LATLNG = { lat: 48.8567, lng: 2.3523 }
@@ -13,6 +15,7 @@ const MAP_CLICK_LATLNG = { lat: 48.8567, lng: 2.3523 }
 function setup() {
   const onPhenomenonCreated = vi.fn()
   const onFreeformNetworkCreated = vi.fn()
+  const onFeltPointCreated = vi.fn()
   const onError = vi.fn()
   const rendered = renderHook(() =>
     usePlacementMode({
@@ -20,10 +23,11 @@ function setup() {
       missionOrigin: MISSION_ORIGIN,
       onPhenomenonCreated,
       onFreeformNetworkCreated,
+      onFeltPointCreated,
       onError,
     })
   )
-  return { ...rendered, onPhenomenonCreated, onFreeformNetworkCreated, onError }
+  return { ...rendered, onPhenomenonCreated, onFreeformNetworkCreated, onFeltPointCreated, onError }
 }
 
 describe('usePlacementMode', () => {
@@ -353,5 +357,57 @@ describe('usePlacementMode', () => {
     expect(result.current.pendingFreeformTrace).toBeNull()
     expect(result.current.placementMode).toBeNull()
     expect(onFreeformNetworkCreated).toHaveBeenCalledTimes(1)
+  })
+
+  it('arms felt-point placement mode when a network is selected, and creates a FeltPoint on map click', async () => {
+    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
+      id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 0, y: 0, createdAt: '2026-07-22T10:00:00Z',
+    })
+    const onFeltPointCreated = vi.fn()
+    const { result } = renderHook(() =>
+      usePlacementMode({
+        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
+        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
+        onFeltPointCreated, onError: vi.fn(),
+      })
+    )
+
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann' })
+
+    await act(async () => result.current.handleMapClick({ lat: 48.8567, lng: 2.3523 }))
+
+    expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
+    )
+    expect(onFeltPointCreated).toHaveBeenCalledWith(expect.objectContaining({ networkName: 'Hartmann' }))
+  })
+
+  it('selecting the same felt-point network again deselects it', () => {
+    const { result } = renderHook(() =>
+      usePlacementMode({
+        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
+        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
+        onFeltPointCreated: vi.fn(), onError: vi.fn(),
+      })
+    )
+    act(() => result.current.handleSelectFeltPointNetwork('Curry'))
+    act(() => result.current.handleSelectFeltPointNetwork('Curry'))
+    expect(result.current.placementMode).toBeNull()
+  })
+
+  it('routes a failed FeltPoint save through onError', async () => {
+    vi.mocked(feltPointsRepo.createFeltPoint).mockRejectedValue(new Error('network down'))
+    const onError = vi.fn()
+    const { result } = renderHook(() =>
+      usePlacementMode({
+        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
+        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
+        onFeltPointCreated: vi.fn(), onError,
+      })
+    )
+    act(() => result.current.handleSelectFeltPointNetwork('Palm'))
+    await act(async () => result.current.handleMapClick({ lat: 48.8567, lng: 2.3523 }))
+    expect(onError).toHaveBeenCalledWith('network down')
   })
 })
