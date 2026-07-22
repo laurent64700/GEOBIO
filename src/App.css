@@ -1,3 +1,15 @@
+/* Leaflet defaults the map container to a "grab hand" cursor (its own
+   .leaflet-grab class), signalling "drag to pan" — misleading for GEOBIO's
+   click-to-place tools (felt points, phenomena, guide line, freeform
+   traces), where precise clicking matters more than panning. A plain
+   pointer/crosshair reads more like a precision tool. */
+.leaflet-container.leaflet-grab {
+  cursor: crosshair;
+}
+.leaflet-container.leaflet-grab.leaflet-dragging {
+  cursor: grabbing;
+}
+
 .counter {
   font-size: 16px;
   padding: 5px 10px;

@@ -23,10 +23,17 @@ const DEFAULT_CENTER: [number, number] = [46.6, 2.5]
 
 // MapView's root element is styled height: '100%', which resolves against its
 // parent's actual (not content-derived) height. Every wrapper that directly
-// contains a <MapView> must therefore give it an explicit concrete height, or
-// the map collapses to ~0px in a real browser (invisible in tests, where
-// MapView is always mocked to a placeholder div).
-const MAP_WRAPPER_STYLE = { height: 400 }
+// contains a <MapView> must therefore give it an explicit concrete height —
+// a flex child with flex:1 inside a definite-height flex column satisfies
+// this the same way a fixed pixel height would (both resolve to a real,
+// non-auto computed height), and additionally lets the map use whatever
+// vertical space the browser window actually has instead of being capped at
+// an arbitrary fixed size regardless of window height. minHeight: 0
+// overrides flexbox's default min-height:auto, which would otherwise let
+// the map refuse to shrink below its content size and break the flex
+// layout on a short window.
+const MAP_WRAPPER_STYLE = { flex: 1, minHeight: 0 }
+const FLEX_COLUMN_FULL_HEIGHT_STYLE = { display: 'flex', flexDirection: 'column' as const, height: '100%' }
 
 type WorkspacePhase =
   | { name: 'creating-mission' }
@@ -130,7 +137,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
 
     case 'setting-origin':
       return (
-        <div>
+        <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
           <p>Cliquez sur la carte à l'endroit qui servira d'origine du site.</p>
           <div style={MAP_WRAPPER_STYLE}>
             <MapView center={phase.mapCenter} onMapClick={handleOriginClick} />
@@ -145,7 +152,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       // passed through here first).
       const { originLat, originLng } = phase.mission
       return (
-        <div>
+        <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView
               planId={phase.exteriorPlan.id}

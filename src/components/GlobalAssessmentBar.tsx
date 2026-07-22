@@ -10,20 +10,20 @@ export interface GlobalAssessmentBarProps {
 }
 
 const BAR_STYLE = {
-  position: 'absolute' as const,
-  left: 280, // clears the Sidebar's fixed 280px width (Chunk 1) — not
+  marginLeft: 280, // clears the Sidebar's fixed 280px width (Chunk 1) — not
   // rendered inside SiteMapView itself (spec §7: lives at the
   // MissionWorkspace level, present only during ready-no-interior, absent
   // during calibrating-interior), but still needs to sit beside the sidebar
-  // rather than under it when both are visible on the same screen.
-  right: 0,
-  bottom: 0,
+  // rather than under it when both are visible on the same screen. A normal
+  // flex child (not position:absolute) so it sits right after the map
+  // instead of pinning to the true viewport bottom, which used to leave a
+  // large empty gap on any window taller than the map's minimum content.
   background: 'white',
   borderTop: '2px solid #ccc',
   display: 'flex',
   gap: 12,
   padding: 8,
-  zIndex: 1000,
+  flexShrink: 0,
 }
 
 const DEBOUNCE_MS = 500
