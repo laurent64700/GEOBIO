@@ -221,6 +221,13 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // of reloading the page (field networks are flaky; spec §7 makes the flow
   // optional, not unrecoverable).
   const [buildingFetchNonce, setBuildingFetchNonce] = useState(0)
+  // Mirrors buildingError above, same reasoning: a failed freeform-network
+  // save is an optional, retryable action, not a fatal load failure, so it
+  // must never blank the entire map via the page-blocking `error` state
+  // below. Dismissible via its own "Fermer" button; also cleared on a
+  // successful save or on cancelling the metadata form, so a later new trace
+  // doesn't start with a stale error message showing.
+  const [freeformSaveError, setFreeformSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -489,11 +496,18 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         ...metadata,
       })
       setFreeformNetworks((prev) => [...prev, created])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
+      // Only clear the pending trace / exit placement mode / clear any stale
+      // error on SUCCESS — a failed save must leave the trace and the form
+      // alone so the user can retry without redrawing from scratch.
       setPendingFreeformTrace(null)
       setPlacementMode(null)
+      setFreeformSaveError(null)
+    } catch (err) {
+      // Routed through freeformSaveError, NOT the page-blocking `error` state
+      // (see buildingError's declaration comment for the same reasoning) —
+      // this is an optional, retryable action, not a fatal load failure; the
+      // map/form/everything else must stay usable.
+      setFreeformSaveError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -503,6 +517,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // simply discarding the pending state is enough, no delete call needed.
     setPendingFreeformTrace(null)
     setPlacementMode(null)
+    setFreeformSaveError(null)
   }
 
   // Single MapView onMapClick dispatcher: dispatches by whichever mode is
@@ -868,6 +883,12 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         </div>
         {pendingFreeformTrace && (
           <div style={CARD_CHROME_STYLE}>
+            {freeformSaveError !== null && (
+              <>
+                <p role="alert">{freeformSaveError}</p>
+                <button onClick={() => setFreeformSaveError(null)}>Fermer</button>
+              </>
+            )}
             <FreeformMetadataForm onSubmit={handleSubmitFreeformMetadata} onCancel={handleCancelFreeformMetadata} />
           </div>
         )}

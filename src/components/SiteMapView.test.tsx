@@ -1108,4 +1108,46 @@ describe('SiteMapView', () => {
     expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /tracer l'eau/i })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('keeps the pending freeform trace and metadata form open (with a dismissible error, not a page-blocking one) when saving fails, so the user can retry', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.createFreeformNetwork)
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({
+        id: 'fn1', planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+        currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
+      })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    fireEvent.click(await screen.findByText('simulate-freeform-complete'))
+
+    // First submit attempt fails.
+    fireEvent.click(await screen.findByRole('button', { name: /valider le tracé/i }))
+    await waitFor(() => expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledTimes(1))
+
+    // The failure must surface as a dismissible message, NOT the page-blocking
+    // `error` state — the map/overlay must still be present, proving the whole
+    // view wasn't replaced by <p role="alert">.
+    expect(screen.getByText('network down')).toBeInTheDocument()
+    expect(screen.getByTestId('map-view')).toBeInTheDocument()
+
+    // The metadata form must still be present — the trace was NOT discarded.
+    expect(screen.getByRole('button', { name: /valider le tracé/i })).toBeInTheDocument()
+
+    // Retry, without redrawing — this must call createFreeformNetwork again with
+    // the SAME points, proving pendingFreeformTrace survived the failure.
+    fireEvent.click(screen.getByRole('button', { name: /valider le tracé/i }))
+    await waitFor(() => expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledTimes(2))
+    expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] })
+    )
+
+    // Second attempt succeeds — NOW the form and the error message should both be gone.
+    await waitFor(() => expect(screen.queryByRole('button', { name: /valider le tracé/i })).not.toBeInTheDocument())
+    expect(screen.queryByText('network down')).not.toBeInTheDocument()
+  })
 })
