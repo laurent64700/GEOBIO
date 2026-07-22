@@ -336,19 +336,43 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   //      GridCreationPanel doesn't keep showing a stale "cliquez l'origine"
   //      prompt for a click that will now go to the newly-started mode
   //      instead.
-  function startPlacementMode(mode: PlacementMode) {
+  // Returns whether the switch actually happened — callers whose OWN control
+  // has independent, uncontrolled internal state that already advanced
+  // synchronously before calling in (GridCreationPanel's `template`, set by
+  // handleTemplateSelected before onOriginRequested fires — see
+  // handleGridOriginRequested below) must check this and reset that state
+  // themselves when the switch is refused, since a refusal here means
+  // placementMode never actually became the new mode and nothing else will
+  // ever satisfy/clear the child's own advanced-but-orphaned step.
+  // PhenomenonPicker and the guide-line bearing controls don't need this:
+  // PhenomenonPicker is fully controlled (activeKind is derived straight from
+  // placementMode, no internal state to strand), and guideLineBearing /
+  // customBearingInput are state owned by SiteMapView itself, independent of
+  // placementMode, so a refusal here leaves them unaffected either way.
+  function startPlacementMode(mode: PlacementMode): boolean {
     if (placementMode?.kind === 'freeform' && pendingFreeformTrace === null) {
-      return // a freeform drag may be in progress — refuse to interrupt it
+      return false // a freeform drag may be in progress — refuse to interrupt it
     }
     const wasAwaitingGridOrigin = placementMode?.kind === 'grid-origin'
     setPlacementMode(mode)
     if (wasAwaitingGridOrigin) {
       setGridCreationKey((k) => k + 1)
     }
+    return true
   }
 
   function handleGridOriginRequested() {
-    startPlacementMode({ kind: 'grid-origin' })
+    const started = startPlacementMode({ kind: 'grid-origin' })
+    if (!started) {
+      // The freeform-drag guard refused this switch, but GridCreationPanel's
+      // own internal step-machine already advanced past "collapsed" (its
+      // handleTemplateSelected calls setTemplate before calling this
+      // callback) — force it back to collapsed via the same gridCreationKey
+      // remount mechanism used elsewhere, so it doesn't strand on "Cliquez
+      // l'origine sur la carte" for a mode that was never actually armed.
+      setGridCreationKey((k) => k + 1)
+      return
+    }
     setPendingGridOrigin(null)
   }
 
@@ -396,15 +420,36 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   // A toggle, mirroring PhenomenonPicker's own "click the active kind again
-  // to deselect" pattern: clicking the kind that's ALREADY armed cancels it
-  // directly (a deliberate self-cancel — safe even if a drag might be in
-  // progress, since the user is explicitly targeting the freeform tool
-  // itself, not switching to something unrelated). Clicking a NEW kind (or
-  // the same kind while a DIFFERENT mode is active) still goes through
-  // startPlacementMode, which still correctly refuses to interrupt an
-  // in-progress drag when switching AWAY to something else.
+  // to deselect" pattern: clicking the kind that's ALREADY armed AND genuinely
+  // idle (no drag captured yet, pendingFreeformTrace === null) cancels it
+  // directly — a deliberate self-cancel, safe in that specific state since the
+  // user is explicitly targeting the freeform tool itself, not switching to
+  // something unrelated.
+  //
+  // The `pendingFreeformTrace === null` check is required, not incidental:
+  // placementMode.kind stays 'freeform' (and freeformKind stays the captured
+  // kind) for as long as the metadata form is open too — see
+  // handleFreeformTraceComplete's comment ("placementMode stays 'freeform' so
+  // FreeformDrawTool.active goes false... until the form is
+  // submitted/cancelled"). Without this check, re-clicking the SAME trace
+  // button while its own metadata form is showing would self-cancel by
+  // setting placementMode to null while leaving pendingFreeformTrace (and the
+  // form) untouched — silently un-blocking the OTHER freeform button (whose
+  // disabled condition only looks at placementMode) to arm a different kind,
+  // and a subsequent submit would then save the still-pending trace under the
+  // ORIGINAL kind while the UI implied the new one had just been armed. The
+  // buttons' own `disabled` props (below) additionally hard-disable BOTH
+  // freeform buttons whenever a trace is pending, so in practice this branch
+  // only needs to handle the armed-but-not-yet-dragging case — but the guard
+  // is kept here too so this function stays correct even if that disabled
+  // condition ever changes independently.
+  //
+  // Clicking a NEW kind (or the same kind while a DIFFERENT mode is active,
+  // or while a trace is pending) still goes through startPlacementMode, which
+  // correctly refuses to interrupt an in-progress drag when switching AWAY to
+  // something else.
   function handleStartFreeformTrace(kind: FreeformNetworkKind) {
-    if (placementMode?.kind === 'freeform' && placementMode.freeformKind === kind) {
+    if (placementMode?.kind === 'freeform' && placementMode.freeformKind === kind && pendingFreeformTrace === null) {
       setPlacementMode(null)
       return
     }
@@ -791,17 +836,32 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             handleStartFreeformTrace's toggle logic above). This is the only
             way to back out of an armed-but-not-yet-dragging freeform mode now
             that startPlacementMode's freeform guard blocks every OTHER
-            mode-start control from interrupting it. */}
+            mode-start control from interrupting it. Also hard-disabled
+            whenever pendingFreeformTrace !== null — once a trace is captured,
+            the metadata form (below) is the only valid way to resolve it
+            (submit or cancel); re-clicking the trace-start button while the
+            form is open must not be able to touch placementMode out from
+            under it (see handleStartFreeformTrace's doc comment for the bug
+            this prevents). aria-pressed mirrors PhenomenonPicker's own
+            toggle-button convention. */}
         <div style={CARD_CHROME_STYLE}>
           <button
             onClick={() => handleStartFreeformTrace('eau')}
-            disabled={placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau')}
+            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'eau'}
+            disabled={
+              pendingFreeformTrace !== null ||
+              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau'))
+            }
           >
             Tracer l'eau
           </button>
           <button
             onClick={() => handleStartFreeformTrace('faille')}
-            disabled={placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille')}
+            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'faille'}
+            disabled={
+              pendingFreeformTrace !== null ||
+              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille'))
+            }
           >
             Tracer une faille
           </button>

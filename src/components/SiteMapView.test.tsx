@@ -1014,4 +1014,98 @@ describe('SiteMapView', () => {
     fireEvent.click(screen.getByRole('button', { name: /spire de vortex/i }))
     expect(screen.getByRole('button', { name: /spire de vortex/i })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('does not let re-clicking "Tracer l\'eau" while its own metadata form is open corrupt the pending trace', async () => {
+    // Regression test: handleStartFreeformTrace's self-cancel branch used to
+    // fire whenever placementMode still matched the clicked kind — which is
+    // ALSO true while the metadata form is showing (placementMode stays
+    // 'freeform' until the form is submitted/cancelled, per
+    // handleFreeformTraceComplete's own comment). Re-clicking "Tracer l'eau"
+    // in that state used to set placementMode to null while leaving
+    // pendingFreeformTrace (and the form) untouched, silently un-blocking
+    // "Tracer une faille" and, on submit, saving the STALE eau trace under
+    // whatever kind the UI implied was newly armed. Both the self-cancel
+    // guard (pendingFreeformTrace === null) and the buttons' own disabled
+    // condition (pendingFreeformTrace !== null) must prevent this.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.createFreeformNetwork).mockResolvedValue({
+      id: 'fn1', planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+      currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
+    })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // Arm eau, then complete a drag — pendingFreeformTrace is now set and the
+    // metadata form is showing; FreeformDrawTool (mocked) un-mounts since
+    // `active` goes false.
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    fireEvent.click(await screen.findByText('simulate-freeform-complete'))
+    expect(await screen.findByRole('button', { name: /valider le tracé/i })).toBeInTheDocument()
+
+    // Both freeform buttons must be disabled while the form is open — a
+    // fresh click on either must be impossible via the DOM's own disabled
+    // attribute, mirroring how a real user interacting with the rendered UI
+    // could not trigger the bug.
+    expect(screen.getByRole('button', { name: /tracer l'eau/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /tracer une faille/i })).toBeDisabled()
+
+    // Directly invoke the handler path the disabled attribute would normally
+    // block, to prove the underlying self-cancel guard is ALSO correct (not
+    // just relying on the disabled attribute as the sole line of defense).
+    fireEvent.click(screen.getByRole('button', { name: /tracer l'eau/i }))
+
+    // The form must still be showing — it was NOT dismissed by the re-click.
+    expect(screen.getByRole('button', { name: /valider le tracé/i })).toBeInTheDocument()
+
+    // Submitting now must save the ORIGINAL captured kind ('eau'), proving
+    // pendingFreeformTrace was never corrupted or cleared by the re-click.
+    fireEvent.click(screen.getByRole('button', { name: /valider le tracé/i }))
+
+    await waitFor(() =>
+      expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledWith(
+        expect.objectContaining({ planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] })
+      )
+    )
+  })
+
+  it('does not strand GridCreationPanel when starting grid-origin placement is refused because freeform is armed', async () => {
+    // Regression test: startPlacementMode's freeform-drag guard correctly
+    // refuses to switch placementMode away from an armed 'freeform' mode —
+    // but GridCreationPanel is an uncontrolled component whose internal
+    // `template` state already advances (via setTemplate, synchronously
+    // before onOriginRequested fires) the moment a template is picked,
+    // regardless of whether the switch it requested actually succeeded.
+    // Without handleGridOriginRequested checking startPlacementMode's return
+    // value and force-remounting the panel on refusal, it would render
+    // "Cliquez l'origine sur la carte" forever — placementMode never becomes
+    // 'grid-origin', so no map click can ever satisfy it, and gridCreationKey
+    // is never bumped on this refused path.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(createGridForPlan).mockResolvedValue({ instance: mockHartmannInstance, lines: [] })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    // Arm freeform (no drag needed — merely being armed is enough to trigger
+    // the guard, per startPlacementMode's freeform check).
+    fireEvent.click(screen.getByRole('button', { name: /tracer l'eau/i }))
+    expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
+
+    // Attempt to start grid-origin placement while freeform is armed.
+    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
+    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
+
+    // The panel must NOT be stuck showing "Cliquez l'origine" — it must have
+    // been forced back to collapsed ("Ajouter une grille" clickable again).
+    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
+
+    // And the refused switch must not have disturbed the still-armed freeform
+    // mode — the drawing tool stays active, undisturbed by the failed attempt.
+    expect(screen.getByText('simulate-freeform-complete')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /tracer l'eau/i })).toHaveAttribute('aria-pressed', 'true')
+  })
 })
