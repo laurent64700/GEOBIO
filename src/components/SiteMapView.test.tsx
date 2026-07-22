@@ -491,78 +491,6 @@ describe('SiteMapView', () => {
     )
   })
 
-  it('does not let an in-progress guide-line placement leak into a grid-origin click, or vice versa', async () => {
-    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
-    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
-    vi.mocked(createGridForPlan).mockResolvedValue({
-      instance: mockHartmannInstance,
-      lines: [],
-    })
-
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
-    await screen.findByTestId('map-view')
-
-    // Arm the guide-line tool (bearing selected, "Placer ici" pressed) —
-    // onMapClick is now wired up for the guide-line mode.
-    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
-    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
-
-    // Starting grid-origin placement must cancel the guide-line mode instead
-    // of letting both flags be true — this is exactly the race the plan
-    // calls out (handleGridOriginRequested clearing placingGuideLine).
-    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
-    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
-    fireEvent.click(screen.getByText('simulate-map-click'))
-
-    // The click should have been consumed as the grid origin (polarity toggle
-    // appears), not as a guide-line placement (no guide-line layer rendered).
-    expect(await screen.findByRole('button', { name: '+' })).toBeInTheDocument()
-    expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
-
-    // Symmetrically: re-arming the guide-line tool after a grid origin is
-    // pending must cancel the grid-origin wait, so a subsequent click is
-    // consumed as the guide-line anchor, not silently mis-set as an origin.
-    fireEvent.click(screen.getByRole('button', { name: '+' }))
-    fireEvent.click(screen.getByRole('button', { name: /générer/i }))
-    await waitFor(() => expect(createGridForPlan).toHaveBeenCalled())
-
-    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
-    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
-    fireEvent.click(screen.getByText('simulate-map-click'))
-
-    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
-  })
-
-  it('clearing an already-placed guide line does not cancel an unrelated pending grid-origin request', async () => {
-    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
-    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
-    vi.mocked(createGridForPlan).mockResolvedValue({ instance: mockHartmannInstance, lines: [] })
-
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
-    await screen.findByTestId('map-view')
-
-    // 1. Place a guide line successfully — guideLineAnchor is now set, no mode pending.
-    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
-    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
-    fireEvent.click(screen.getByText('simulate-map-click'))
-    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
-
-    // 2. Start a grid-origin request — pending, does NOT touch guideLineAnchor,
-    // so "Effacer" (disabled only when guideLineAnchor is null) stays enabled.
-    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
-    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
-
-    // 3. Clear the (old, already-placed) guide line.
-    fireEvent.click(screen.getByRole('button', { name: 'Effacer' }))
-    expect(screen.queryByTestId('guide-line')).not.toBeInTheDocument()
-
-    // 4. The map click should STILL complete the grid-origin placement that was
-    // pending before step 3 — proving Effacer didn't silently cancel it. If it
-    // did, this click would do nothing and the polarity toggle would never appear.
-    fireEvent.click(screen.getByText('simulate-map-click'))
-    expect(await screen.findByRole('button', { name: '+' })).toBeInTheDocument()
-  })
-
   it('resets GridCreationPanel back to collapsed after a successful "Générer", so a second grid can be created', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
@@ -591,38 +519,6 @@ describe('SiteMapView', () => {
     expect(await screen.findByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
     expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /générer/i })).not.toBeInTheDocument()
-  })
-
-  it('routes a map click to the guide-line tool, not grid-origin placement, when "Placer ici" cancels a pending grid-origin request', async () => {
-    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
-    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
-
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
-    await screen.findByTestId('map-view')
-
-    // Start grid creation and pick a template — this sets awaitingGridOrigin
-    // and shows "Cliquez l'origine sur la carte", but deliberately don't
-    // click the map yet.
-    fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
-    fireEvent.click(await screen.findByText('simulate-select-hartmann'))
-    expect(screen.getByText(/cliquez l'origine sur la carte/i)).toBeInTheDocument()
-
-    // Arm the guide-line tool instead and press "Placer ici" — this must
-    // cancel the pending grid-origin request AND reset GridCreationPanel so
-    // it doesn't keep showing a stale "cliquez l'origine" prompt for a click
-    // that will actually place a guide-line anchor.
-    fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
-    fireEvent.click(screen.getByRole('button', { name: /placer/i }))
-
-    expect(screen.queryByText(/cliquez l'origine/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /ajouter une grille/i })).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('simulate-map-click'))
-
-    // The click must land on the guide-line tool, not be silently swallowed
-    // as a grid origin (which would show the polarity toggle instead).
-    expect(await screen.findByTestId('guide-line')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '+' })).not.toBeInTheDocument()
   })
 
   it('shows the building footprint picker when none is stored yet, and confirms one into place', async () => {
@@ -868,54 +764,6 @@ describe('SiteMapView', () => {
     expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('1')
   })
 
-  it('places several phenomena of the same kind in a row without needing to reselect the kind', async () => {
-    // Regression test for handleMapClick's phenomenon branch deliberately NOT
-    // clearing placementMode (see SiteMapView.tsx) — the exact behavior this
-    // task was flagged for during review, since it's easy for a future
-    // refactor of the PlacementMode union (Task 1's consolidation, or the
-    // upcoming Chunk 2 'freeform' variant) to silently reintroduce a
-    // clear-after-every-click regression that no other test would catch.
-    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
-    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
-    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
-    vi.mocked(phenomenaRepo.createPhenomenon)
-      .mockResolvedValueOnce({
-        id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-21T10:00:00Z',
-      })
-      .mockResolvedValueOnce({
-        id: 'ph2', planId: 'p1', kind: 'spire-vortex', x: 2, y: 2, createdAt: '2026-07-21T10:01:00Z',
-      })
-
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
-
-    fireEvent.click(await screen.findByRole('button', { name: /spire de vortex/i }))
-    fireEvent.click(await screen.findByText('simulate-map-click'))
-
-    await waitFor(() => expect(phenomenaRepo.createPhenomenon).toHaveBeenCalledTimes(1))
-
-    // The kind must still be armed after the first placement — no reselection —
-    // proving placementMode survived the click instead of being cleared.
-    expect(screen.getByRole('button', { name: /spire de vortex/i })).toHaveAttribute('aria-pressed', 'true')
-    // The map-click affordance must also still be wired up (onMapClick isn't
-    // undefined) — if placementMode had been cleared, this button wouldn't render.
-    expect(screen.getByText('simulate-map-click')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('simulate-map-click'))
-
-    await waitFor(() => expect(phenomenaRepo.createPhenomenon).toHaveBeenCalledTimes(2))
-    expect(phenomenaRepo.createPhenomenon).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
-    )
-    expect(phenomenaRepo.createPhenomenon).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
-    )
-
-    fireEvent.click(screen.getByLabelText(/phénomènes ponctuels/i))
-    expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('2')
-  })
-
   it('captures a freeform trace, submits metadata, and saves it', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
@@ -943,5 +791,47 @@ describe('SiteMapView', () => {
     )
     fireEvent.click(screen.getByLabelText(/tracés eau\/faille/i))
     expect(await screen.findByTestId('freeform-count')).toHaveTextContent('1')
+  })
+
+  it('renders a dismissible error card and keeps the metadata form open when the hook reports a freeformSaveError', async () => {
+    // Thin rendering-only counterpart to the hook-state test now covering
+    // handleSubmitFreeformMetadata's failure path in
+    // usePlacementMode.test.ts ("keeps freeformSaveError and
+    // pendingFreeformTrace across a failed save..."). This test only checks
+    // that SiteMapView renders correctly off the hook's exposed
+    // freeformSaveError/pendingFreeformTrace values — not the hook's own
+    // state-transition logic.
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(freeformNetworksRepo.createFreeformNetwork)
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({
+        id: 'fn1', planId: 'p1', kind: 'eau', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+        currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
+      })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
+    fireEvent.click(await screen.findByText('simulate-freeform-complete'))
+
+    // First submit attempt fails.
+    fireEvent.click(await screen.findByRole('button', { name: /valider le tracé/i }))
+    await waitFor(() => expect(freeformNetworksRepo.createFreeformNetwork).toHaveBeenCalledTimes(1))
+
+    // The failure must surface as a dismissible message, NOT the page-blocking
+    // `error` state — the map/overlay must still be present, proving the whole
+    // view wasn't replaced by <p role="alert">.
+    expect(screen.getByText('network down')).toBeInTheDocument()
+    expect(screen.getByTestId('map-view')).toBeInTheDocument()
+
+    // The metadata form must still be present — the trace was NOT discarded.
+    expect(screen.getByRole('button', { name: /valider le tracé/i })).toBeInTheDocument()
+
+    // Retry, without redrawing — succeeds this time, and both the form and
+    // the error message should now be gone.
+    fireEvent.click(screen.getByRole('button', { name: /valider le tracé/i }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: /valider le tracé/i })).not.toBeInTheDocument())
+    expect(screen.queryByText('network down')).not.toBeInTheDocument()
   })
 })

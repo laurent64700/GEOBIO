@@ -12,8 +12,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { detectMarkers } from './arucoDetector'
-// @ts-expect-error — js-aruco2 ships no TypeScript types (see arucoDetector.ts).
-import { AR } from 'js-aruco2'
+import { AR } from './jsAruco2Shim'
 
 // A real, minimal 2x2 white PNG (base64) — small enough to inline, but with
 // genuine non-zero pixel dimensions once decoded, unlike a bare `new Image()`.

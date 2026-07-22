@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { MapView } from './MapView'
 import { NetworkLinesLayer } from './NetworkLinesLayer'
 import { EditableNetworkLine } from './EditableNetworkLine'
@@ -26,7 +26,8 @@ import { PhenomenonPicker } from './PhenomenonPicker'
 import { PhenomenaLayer } from './PhenomenaLayer'
 import { FreeformDrawTool } from './FreeformDrawTool'
 import { FreeformNetworkLayer } from './FreeformNetworkLayer'
-import { FreeformMetadataForm, type FreeformMetadata } from './FreeformMetadataForm'
+import { FreeformMetadataForm } from './FreeformMetadataForm'
+import { usePlacementMode } from '../hooks/usePlacementMode'
 import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
 import { listGridInstancesForPlan } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints } from '../data/gridLinesRepo'
@@ -36,8 +37,8 @@ import { listGridTemplates } from '../data/gridTemplatesRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { fetchBuildingsInBounds, type BuildingFootprint } from '../data/buildingFootprintService'
 import { setBuildingFootprint } from '../data/missionsRepo'
-import { createPhenomenon, listPhenomenaForPlan } from '../data/phenomenaRepo'
-import { createFreeformNetwork, listFreeformNetworksForPlan } from '../data/freeformNetworksRepo'
+import { listPhenomenaForPlan } from '../data/phenomenaRepo'
+import { listFreeformNetworksForPlan } from '../data/freeformNetworksRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
 import type { CompassDirection } from '../geometry/bagua'
@@ -50,9 +51,7 @@ import type {
   GridTemplate,
   GridLinePolarity,
   Phenomenon,
-  PhenomenonKind,
   FreeformNetwork,
-  FreeformNetworkKind,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
@@ -92,21 +91,6 @@ function BaguaLegendCollapsed() {
     </div>
   )
 }
-
-// Discriminated union for the single map-click "mode" that's currently
-// active. Replaces two independent booleans (awaitingGridOrigin,
-// placingGuideLine) that had to be manually kept mutually exclusive by every
-// "start X" handler clearing the other flag — see handleGridOriginRequested,
-// the "Placer ici" button, and handleMapClick below. Extended with the
-// 'phenomenon' variant (PhenomenonPicker below) and, here, the 'freeform'
-// variant (Tracer l'eau / Tracer une faille — FreeformDrawTool below). Keep
-// it a plain discriminated union on `kind`.
-type PlacementMode =
-  | { kind: 'grid-origin' }
-  | { kind: 'guide-line' }
-  | { kind: 'phenomenon'; phenomenonKind: PhenomenonKind }
-  | { kind: 'freeform'; freeformKind: FreeformNetworkKind }
-  | null
 
 export interface SiteMapViewProps {
   planId: string
@@ -164,15 +148,9 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [feltSegments, setFeltSegments] = useState<FeltSegment[]>([])
   const [phenomena, setPhenomena] = useState<Phenomenon[]>([])
   const [freeformNetworks, setFreeformNetworks] = useState<FreeformNetwork[]>([])
-  // Holds the captured (not-yet-saved) points between FreeformDrawTool.onComplete
-  // and the metadata form being submitted/cancelled — null means no pending trace.
-  const [pendingFreeformTrace, setPendingFreeformTrace] = useState<{ kind: FreeformNetworkKind; points: Point[] } | null>(null)
   const [templates, setTemplates] = useState<GridTemplate[]>([])
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
-  const [guideLineBearing, setGuideLineBearing] = useState<number | null>(null)
-  const [guideLineAnchor, setGuideLineAnchor] = useState<Point | null>(null)
-  const [customBearingInput, setCustomBearingInput] = useState('')
   // Single global edit-mode toggle (not per-layer) — Laurent works on one
   // network at a time in the field, so whichever grid layer is currently
   // visible becomes editable; see the bottom-left OverlayPanel usage below.
@@ -187,23 +165,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // knows which line to preview/offer straightening for. Cleared on accept
   // or dismiss.
   const [awaitingOrthogonalityReview, setAwaitingOrthogonalityReview] = useState<string | null>(null)
-  // Which map-click mode (if any) is currently active — see PlacementMode's
-  // doc comment above. Grid-origin placement (Task 33) and guide-line
-  // placement both want MapView's single onMapClick slot, so only one can be
-  // active at a time; the union makes that structurally true instead of
-  // manually enforced across two independent booleans.
-  const [placementMode, setPlacementMode] = useState<PlacementMode>(null)
-  const [pendingGridOrigin, setPendingGridOrigin] = useState<Point | null>(null)
-  // Bumped (via the GridCreationPanel `key` prop below) whenever the panel's
-  // own internal step-machine state (expanded/template/polarity) needs to be
-  // force-reset from outside: after a successful "Générer" (so a second grid
-  // can be created — otherwise the panel's derived step falls back to
-  // "awaiting-origin" forever, since pendingGridOrigin/placementMode are
-  // reset but the panel's own `expanded`/`template` aren't), and when
-  // "Placer ici" cancels a pending grid-origin request (otherwise the panel
-  // keeps showing a stale "cliquez l'origine" prompt for a click that will
-  // actually place a guide-line anchor instead).
-  const [gridCreationKey, setGridCreationKey] = useState(0)
   const [buildingFootprint, setBuildingFootprintState] = useState<Point[] | null>(initialBuildingFootprint)
   const [buildingCandidates, setBuildingCandidates] = useState<BuildingFootprint[]>([])
   const [buildingSearchExhausted, setBuildingSearchExhausted] = useState(false)
@@ -221,6 +182,37 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // of reloading the page (field networks are flaky; spec §7 makes the flow
   // optional, not unrecoverable).
   const [buildingFetchNonce, setBuildingFetchNonce] = useState(0)
+
+  const {
+    placementMode,
+    pendingGridOrigin,
+    guideLineAnchor,
+    guideLineBearing,
+    customBearingInput,
+    gridCreationKey,
+    pendingFreeformTrace,
+    freeformSaveError,
+    setFreeformSaveError,
+    setCustomBearingInput,
+    setGuideLineBearing,
+    startPlacementMode,
+    handleGridOriginRequested,
+    handleMapClick,
+    handleClearGuideLine,
+    handleValidateCustomBearing,
+    handleSelectPhenomenonKind,
+    handleStartFreeformTrace,
+    handleFreeformTraceComplete,
+    handleSubmitFreeformMetadata,
+    handleCancelFreeformMetadata,
+    clearGridOriginPlacement,
+  } = usePlacementMode({
+    planId,
+    missionOrigin,
+    onPhenomenonCreated: (created) => setPhenomena((prev) => [...prev, created]),
+    onFreeformNetworkCreated: (created) => setFreeformNetworks((prev) => [...prev, created]),
+    onError: (message) => setError(message),
+  })
 
   useEffect(() => {
     async function load() {
@@ -319,147 +311,18 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // null again (it's in the dependency array), re-running the fetch.
   }
 
-  // Setting placementMode to a new value structurally replaces whatever mode
-  // (if any) was previously active — see PlacementMode's doc comment above.
-  function handleGridOriginRequested() {
-    setPlacementMode({ kind: 'grid-origin' })
-    setPendingGridOrigin(null)
-  }
-
+  // Grid CREATION itself (not a placement-mode "start X" handler — fires once
+  // pendingOrigin and a polarity are both chosen). See usePlacementMode's
+  // clearGridOriginPlacement for the placement-mode cleanup this delegates to
+  // on success.
   async function handleGenerateGrid(template: GridTemplate, origin: Point, polarity: GridLinePolarity) {
     try {
       const { instance, lines } = await createGridForPlan(planId, template, origin, polarity)
       setInstances((prev) => [...prev, instance])
       setLinesByInstance((prev) => ({ ...prev, [instance.id]: lines }))
-      setPlacementMode(null)
-      setPendingGridOrigin(null)
-      // Force-remount GridCreationPanel so its own expanded/template state
-      // resets to "collapsed" — otherwise the panel's derived step would fall
-      // back to "awaiting-origin" and permanently show a stale prompt (see
-      // gridCreationKey's doc comment above).
-      setGridCreationKey((k) => k + 1)
+      clearGridOriginPlacement()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  // Arms/disarms phenomenon-placement mode — mirrors handleGridOriginRequested
-  // and the guide-line "Placer ici" button's use of setPlacementMode to
-  // structurally replace whatever mode was previously active. Passing null
-  // (PhenomenonPicker's own click-active-kind-again toggle) cancels placement
-  // mode entirely, same as clearing the other two modes.
-  function handleSelectPhenomenonKind(kind: PhenomenonKind | null) {
-    setPlacementMode(kind ? { kind: 'phenomenon', phenomenonKind: kind } : null)
-  }
-
-  async function handlePlacePhenomenon(local: Point, kind: PhenomenonKind) {
-    try {
-      const created = await createPhenomenon({ planId, kind, x: local.x, y: local.y })
-      setPhenomena((prev) => [...prev, created])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
-
-  function handleStartFreeformTrace(kind: FreeformNetworkKind) {
-    setPlacementMode({ kind: 'freeform', freeformKind: kind })
-  }
-
-  // useCallback is required here, not just tidiness: FreeformDrawTool's effect
-  // (Task 11) depends on this function reference to know when to rebind its
-  // native listeners. An inline/unmemoized function would be a fresh reference
-  // on every SiteMapView render, forcing FreeformDrawTool to tear down and
-  // rebuild all 7 DOM listeners on every unrelated re-render, including
-  // mid-drag. placementMode is read via its .kind/.freeformKind fields inside
-  // the callback, but since placementMode itself can legitimately change
-  // between drags (that's the point of the check on the next line), it stays
-  // in the dependency array — this callback is only unstable across renders
-  // where placementMode changes, which is fine since a drag can't be in
-  // progress across a placementMode change anyway.
-  const handleFreeformTraceComplete = useCallback(
-    (points: Point[]) => {
-      if (placementMode?.kind !== 'freeform') return
-      // Capture is done — hand off to the metadata form rather than saving
-      // immediately (spec §3A step 3). placementMode stays 'freeform' so
-      // FreeformDrawTool.active goes false (draw finished) while the map still
-      // knows a freeform flow is in progress, until the form is submitted/cancelled.
-      setPendingFreeformTrace({ kind: placementMode.freeformKind, points })
-    },
-    [placementMode]
-  )
-
-  async function handleSubmitFreeformMetadata(metadata: FreeformMetadata) {
-    if (!pendingFreeformTrace) return
-    try {
-      const created = await createFreeformNetwork({
-        planId,
-        kind: pendingFreeformTrace.kind,
-        points: pendingFreeformTrace.points,
-        ...metadata,
-      })
-      setFreeformNetworks((prev) => [...prev, created])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPendingFreeformTrace(null)
-      setPlacementMode(null)
-    }
-  }
-
-  function handleCancelFreeformMetadata() {
-    // Spec §5: a cancelled trace must leave no orphaned FreeformNetwork — since
-    // nothing was persisted yet at this point (creation only happens on submit),
-    // simply discarding the pending state is enough, no delete call needed.
-    setPendingFreeformTrace(null)
-    setPlacementMode(null)
-  }
-
-  // Single MapView onMapClick dispatcher: dispatches by whichever mode is
-  // active. Since placementMode is a single discriminated union, "grid-origin",
-  // "guide-line" and "phenomenon" are structurally mutually exclusive at every
-  // point in time, not just in the common case.
-  function handleMapClick(latlng: { lat: number; lng: number }) {
-    if (placementMode?.kind === 'grid-origin') {
-      setPendingGridOrigin(latLngToLocal(latlng, missionOrigin))
-      setPlacementMode(null)
-      return
-    }
-    if (placementMode?.kind === 'guide-line') {
-      setGuideLineAnchor(latLngToLocal(latlng, missionOrigin))
-      setPlacementMode(null)
-      return
-    }
-    if (placementMode?.kind === 'phenomenon') {
-      const local = latLngToLocal(latlng, missionOrigin)
-      handlePlacePhenomenon(local, placementMode.phenomenonKind)
-      // Deliberately does NOT clear placementMode — placing several phenomena
-      // of the same kind in a row (e.g. multiple telluric chimneys along a
-      // wall) shouldn't require re-selecting the kind after every single
-      // click. Laurent explicitly deselects via PhenomenonPicker (clicking
-      // the active kind again) or by selecting a different kind.
-    }
-  }
-
-  function handleClearGuideLine() {
-    // Reset the placed guide line and its bearing, so the practitioner starts
-    // clean rather than keeping a stale bearing selected with no line shown.
-    // Deliberately does NOT unconditionally clear placementMode: an unrelated
-    // PENDING grid-origin request started after this guide line was placed
-    // must survive "Effacer" — only cancel placementMode if it's currently
-    // the guide-line mode itself (e.g. a re-armed "Placer ici" that hasn't
-    // yet received its map click).
-    setGuideLineAnchor(null)
-    setGuideLineBearing(null)
-    if (placementMode?.kind === 'guide-line') {
-      setPlacementMode(null)
-    }
-    setCustomBearingInput('')
-  }
-
-  function handleValidateCustomBearing() {
-    const parsed = Number(customBearingInput)
-    if (customBearingInput.trim() !== '' && !Number.isNaN(parsed)) {
-      setGuideLineBearing(parsed)
     }
   }
 
@@ -718,18 +581,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           />
           <button onClick={handleValidateCustomBearing}>Valider</button>
           <button
-            onClick={() => {
-              const wasAwaitingGridOrigin = placementMode?.kind === 'grid-origin'
-              setPlacementMode({ kind: 'guide-line' })
-              if (wasAwaitingGridOrigin) {
-                // GridCreationPanel was mid-flow (showing "cliquez l'origine")
-                // when this cancelled its pending request out from under it —
-                // force-remount it back to collapsed so it doesn't keep
-                // showing a stale prompt for a click that will now go to the
-                // guide-line tool instead.
-                setGridCreationKey((k) => k + 1)
-              }
-            }}
+            onClick={() => startPlacementMode({ kind: 'guide-line' })}
             disabled={guideLineBearing === null}
           >
             Placer ici
@@ -750,19 +602,50 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         </div>
         {/* Stacked as another card in the same top-left corner — starts a
             freeform eau/faille trace (FreeformDrawTool, rendered inside
-            <MapView> above). Disabled while any OTHER placement mode is
-            active, matching the single-active-placement-mode invariant that
-            grid-origin/guide-line/phenomenon already share. */}
+            <MapView> above). Each button is only disabled while a DIFFERENT
+            mode (including the OTHER freeform kind) is active — not while its
+            OWN kind is armed, so it can be clicked again to self-cancel (see
+            handleStartFreeformTrace's toggle logic above). This is the only
+            way to back out of an armed-but-not-yet-dragging freeform mode now
+            that startPlacementMode's freeform guard blocks every OTHER
+            mode-start control from interrupting it. Also hard-disabled
+            whenever pendingFreeformTrace !== null — once a trace is captured,
+            the metadata form (below) is the only valid way to resolve it
+            (submit or cancel); re-clicking the trace-start button while the
+            form is open must not be able to touch placementMode out from
+            under it (see handleStartFreeformTrace's doc comment for the bug
+            this prevents). aria-pressed mirrors PhenomenonPicker's own
+            toggle-button convention. */}
         <div style={CARD_CHROME_STYLE}>
-          <button onClick={() => handleStartFreeformTrace('eau')} disabled={placementMode !== null}>
+          <button
+            onClick={() => handleStartFreeformTrace('eau')}
+            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'eau'}
+            disabled={
+              pendingFreeformTrace !== null ||
+              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau'))
+            }
+          >
             Tracer l'eau
           </button>
-          <button onClick={() => handleStartFreeformTrace('faille')} disabled={placementMode !== null}>
+          <button
+            onClick={() => handleStartFreeformTrace('faille')}
+            aria-pressed={placementMode?.kind === 'freeform' && placementMode.freeformKind === 'faille'}
+            disabled={
+              pendingFreeformTrace !== null ||
+              (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille'))
+            }
+          >
             Tracer une faille
           </button>
         </div>
         {pendingFreeformTrace && (
           <div style={CARD_CHROME_STYLE}>
+            {freeformSaveError !== null && (
+              <>
+                <p role="alert">{freeformSaveError}</p>
+                <button onClick={() => setFreeformSaveError(null)}>Fermer</button>
+              </>
+            )}
             <FreeformMetadataForm onSubmit={handleSubmitFreeformMetadata} onCancel={handleCancelFreeformMetadata} />
           </div>
         )}
