@@ -13,8 +13,11 @@ field test the week of 2026-07-27.
 **Architecture:** 8 ordered chunks, one per package from the design spec, each
 independently committed/tested/shippable. Chunk 1 (sidebar shell) is foundational; Chunk
 2 (felt-point tool) fills its pinned band; Chunk 3 (guide-line constraint) depends on
-Chunk 2's `placementMode.kind === 'felt-point'`. Chunks 4-8 are independent of each other
-and of Chunks 1-3 except where noted.
+Chunk 2's `placementMode.kind === 'felt-point'`. Chunk 7 (mission list/resume) depends on
+Chunk 6 (geocoding) having already added the required `mapCenter` field to
+`WorkspacePhase`'s `'setting-origin'` variant — Chunk 7's `MissionWorkspace` prop wiring
+constructs that variant and needs the field to already exist. Chunks 4, 5, 8, and 6
+itself are independent of each other and of Chunks 1-3.
 
 **Tech Stack:** Same as the rest of GEOBIO — Vite, React, TypeScript, react-leaflet,
 Vitest + Testing Library, Supabase. No new dependencies except a plain `fetch` call to
@@ -283,6 +286,19 @@ existing tests query by accessible role/name/label and should be unaffected by t
 relocation — if you find one that isn't, note it, fix its query, and list it in your
 final report. Do not weaken any assertion's actual behavioral check to make it pass.
 
+**One test needs a substantive rewrite, not just a selector fix — find it by name:**
+`'stacks the orthogonality panel and the Bagua legend in a single bottom-right overlay
+when both are visible'` (around line 681). It's a regression test for the OLD
+requirement that the orthogonality-review card and the Bagua legend share one
+`bottom-right` `OverlayPanel` wrapper (asserts both via `toContainElement` plus an
+exact-count-1 check on absolutely-positioned bottom+right divs). Once Bagua moves into
+the sidebar accordion (this task), that premise is gone — the scenario it guards against
+(two overlapping bottom-right `OverlayPanel` siblings) can no longer happen once Bagua
+isn't in that corner at all. Rewrite it to assert only that the orthogonality card
+renders inside the lone remaining `bottom-right` `OverlayPanel`; drop the Bagua-presence
+assertion here (Bagua's presence in the sidebar accordion is covered by wherever this
+task's new sidebar-content tests land, not by this test).
+
 - [ ] **Step 3: Replace the 3 relocated `OverlayPanel` usages with one `<Sidebar>` in `SiteMapView.tsx`**
 
 Build the `sections` array as described above, each `content` being the exact JSX
@@ -377,8 +393,16 @@ JSX from Step 1, this is the skeleton only):
 />
 ```
 
-Keep the map's own `<OverlayPanel corner="bottom-right">` for the orthogonality card
-exactly as it is today, unchanged, alongside the new `<Sidebar>`.
+Keep the map's own `<OverlayPanel corner="bottom-right">` for the orthogonality card,
+alongside the new `<Sidebar>` — but its outer visibility condition must change from
+today's `{(reviewTarget !== null || (visibility[BAGUA_LAYER_ID] ?? false)) && (...)}` to
+just `{reviewTarget !== null && reviewSuggestion !== null && (...)}` (drop the Bagua half
+of the condition entirely, along with the Bagua legend JSX that used to live inside this
+same wrapper — it moves to the sidebar's Bagua accordion section per Step 3 above).
+Today's condition only makes sense because the Bagua card renders inside this same
+panel; once it's removed, leaving the old condition would render an empty absolutely-
+positioned wrapper whenever the Bagua layer is visible with no pending review — dead,
+misleading behavior, not "unchanged."
 
 - [ ] **Step 4: Run the full suite, fix any breakage**
 
@@ -468,6 +492,19 @@ describe('FeltPointPicker', () => {
 
     expect(onSelectNetwork).not.toHaveBeenCalled()
   })
+
+  it('shows "Autre" as pressed and lets a single click deselect an already-armed custom network (no reopened text field)', () => {
+    const onSelectNetwork = vi.fn()
+    render(<FeltPointPicker activeNetworkName="Réseau X" onSelectNetwork={onSelectNetwork} />)
+
+    const autreButton = screen.getByRole('button', { name: 'Autre' })
+    expect(autreButton).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(autreButton)
+
+    expect(onSelectNetwork).toHaveBeenCalledWith(null)
+    expect(screen.queryByLabelText(/nom du réseau/i)).not.toBeInTheDocument()
+  })
 })
 ```
 
@@ -496,12 +533,26 @@ const KNOWN_NETWORKS = ['Hartmann', 'Curry', 'Palm', 'Peyré', 'Wissmann']
 // Same select/toggle-off pattern as PhenomenonPicker: clicking a network arms
 // placement mode for the next map click; clicking the already-active network
 // again deselects it (aria-pressed mirrors PhenomenonPicker's convention).
+// activeNetworkName is fully controlled by the parent (mirrors placementMode
+// in usePlacementMode) — any value not in KNOWN_NETWORKS is treated as an
+// armed custom ("Autre") network, so "Autre" can be deselected the same way
+// a known network can, not just closed back to an empty text field.
 export function FeltPointPicker({ activeNetworkName, onSelectNetwork }: FeltPointPickerProps) {
   const [showCustomInput, setShowCustomInput] = useState(false)
   const [customName, setCustomName] = useState('')
 
+  const isCustomActive = activeNetworkName !== null && !KNOWN_NETWORKS.includes(activeNetworkName)
+
   function handleSelect(name: string) {
     onSelectNetwork(activeNetworkName === name ? null : name)
+  }
+
+  function handleToggleCustom() {
+    if (isCustomActive) {
+      onSelectNetwork(null)
+      return
+    }
+    setShowCustomInput((v) => !v)
   }
 
   function handleSubmitCustom() {
@@ -520,10 +571,10 @@ export function FeltPointPicker({ activeNetworkName, onSelectNetwork }: FeltPoin
           {name}
         </button>
       ))}
-      <button aria-pressed={showCustomInput} onClick={() => setShowCustomInput((v) => !v)}>
+      <button aria-pressed={isCustomActive || showCustomInput} onClick={handleToggleCustom}>
         Autre
       </button>
-      {showCustomInput && (
+      {showCustomInput && !isCustomActive && (
         <>
           <input
             aria-label="Nom du réseau"
@@ -615,11 +666,17 @@ it('routes a failed FeltPoint save through onError', async () => {
 })
 ```
 
-Add `import { createFeltPoint } from '../data/feltPointsRepo'` and
-`vi.mock('../data/feltPointsRepo')` at the top of the test file (mirroring the existing
-`vi.mock('../data/phenomenaRepo')`/`vi.mock('../data/freeformNetworksRepo')` calls
-already there), plus `import * as feltPointsRepo from '../data/feltPointsRepo'` for the
-`vi.mocked(...)` calls above.
+Add `vi.mock('../data/feltPointsRepo')` at the top of the test file (mirroring the
+existing `vi.mock('../data/phenomenaRepo')`/`vi.mock('../data/freeformNetworksRepo')`
+calls already there) plus `import * as feltPointsRepo from '../data/feltPointsRepo'` for
+the `vi.mocked(...)` calls above — **only the namespace import**, matching the existing
+pattern for the other two repos in this exact file. Do NOT also add a named
+`import { createFeltPoint } from '../data/feltPointsRepo'` — this project's `tsconfig`
+has `noUnusedLocals: true`, and the snippets above only ever call
+`feltPointsRepo.createFeltPoint` through the namespace import, never the bare name; an
+unused named import would fail typecheck and produce a SECOND error in Step 5's
+type-check gate below, which must see exactly one error (the missing
+`onFeltPointCreated` argument), not two.
 
 - [ ] **Step 2: Run to verify the new tests fail**
 
@@ -742,18 +799,19 @@ it('places a felt point via FeltPointPicker: select a network, click the map, po
   render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
   fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
-  fireEvent.click(screen.getByTestId('map-view')) // MapView's test mock fires onMapClick with a fixed test lat/lng — see existing tests in this file for the exact simulated-click mechanism used elsewhere
+  // MapView's test mock (this file's own top-of-file vi.mock('./MapView', ...))
+  // renders a plain <div data-testid="map-view"> with NO click handler of its
+  // own — onMapClick only fires from a nested
+  // <button>simulate-map-click</button>, rendered when onMapClick is truthy.
+  // Every other map-click-driven test in this file (e.g. the guide-line
+  // placement test) clicks that button, not the outer div — do the same here.
+  fireEvent.click(screen.getByText('simulate-map-click'))
 
   await waitFor(() => expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith(
     expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
   ))
 })
 ```
-
-Before finalizing this test, check how existing tests in this file simulate a map click
-through `MapView`'s mock (several already do this for grid-origin/guide-line/phenomenon
-placement) and match that exact mechanism rather than clicking `map-view` directly if
-the real pattern differs — read 2-3 existing "map click" tests in this file first.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1034,6 +1092,20 @@ export const COMPASS_ORDER: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW
 Check every existing usage of `COMPASS_ORDER` inside `bagua.ts` still compiles (it's the
 same identifier, just now exported — should be a no-op change for existing callers).
 
+**Also remove the now-stale duplicate this export makes redundant:**
+`src/components/SiteMapView.tsx:60-63` has its own local
+`const COMPASS_DIRECTIONS: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']`
+with a comment explaining it's "kept in sync manually since that constant isn't
+exported" — that comment becomes false the moment this step exports `COMPASS_ORDER`.
+Replace `SiteMapView.tsx`'s local constant with
+`import { COMPASS_ORDER } from '../geometry/bagua'` (this file already imports the
+`CompassDirection` *type* from the same module, so this just adds the value import
+alongside it), remove the now-obsolete comment and local `const`, and update
+`BaguaLegendCollapsed`'s `.map()` call to iterate `COMPASS_ORDER` instead of
+`COMPASS_DIRECTIONS` (or keep the local name `COMPASS_DIRECTIONS` as an import alias —
+either is fine, just don't leave a hand-duplicated array next to an exported original of
+the same data).
+
 - [ ] **Step 2: Write a failing test for `CompassIndicator`**
 
 ```tsx
@@ -1108,29 +1180,51 @@ Run: `node_modules/.bin/vitest.cmd run src/components/CompassIndicator.test.tsx`
 Run: `node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: both pass/clean.
 
-- [ ] **Step 6: Wire it into `SiteMapView.tsx`, top-right of the map**
+- [ ] **Step 6: Write a failing test asserting `CompassIndicator` actually renders inside `SiteMapView`**
+
+Unlike a component-in-isolation test, this confirms the wiring itself — matching the
+same TDD-before-wiring approach Chunks 2/3 already use for their own `SiteMapView.tsx`
+integration points, rather than relying only on the full-suite rerun in Step 8 (which
+would still pass even if this wiring were accidentally omitted).
+
+```tsx
+// append to src/components/SiteMapView.test.tsx
+it('always renders the permanent compass indicator', async () => {
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+  render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+  expect(await screen.findByTestId('compass-indicator')).toBeInTheDocument()
+})
+```
+
+Run: `node_modules/.bin/vitest.cmd run src/components/SiteMapView.test.tsx`
+Expected: FAIL — `compass-indicator` testid doesn't exist yet.
+
+- [ ] **Step 7: Wire it into `SiteMapView.tsx`, top-right of the map**
 
 ```tsx
 {/* src/components/SiteMapView.tsx — new fixed overlay, top-right, distinct
     from the Sidebar (which is now full-height left) and from the
     bottom-right orthogonality OverlayPanel. Not wrapped in <OverlayPanel> —
     it needs no stacking/scroll behavior, just a fixed corner position. */}
-<div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000 }}>
+<div data-testid="compass-indicator" style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000 }}>
   <CompassIndicator />
 </div>
 ```
 
 Add `import { CompassIndicator } from './CompassIndicator'`.
 
-- [ ] **Step 7: Run the full suite, typecheck**
+- [ ] **Step 8: Run the full suite, typecheck**
 
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, clean (this is additive — no existing test should be affected).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/geometry/bagua.ts src/components/CompassIndicator.tsx src/components/CompassIndicator.test.tsx src/components/SiteMapView.tsx
+git add src/geometry/bagua.ts src/components/CompassIndicator.tsx src/components/CompassIndicator.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx
 git commit -m "Add permanent 8-point CompassIndicator, top-right of the map (spec §6)"
 ```
 
@@ -1377,30 +1471,74 @@ git add src/components/GlobalAssessmentBar.tsx src/components/GlobalAssessmentBa
 git commit -m "Add GlobalAssessmentBar: permanent auto-saving duplicate of the 6 global-assessment sliders (spec §7), not yet wired"
 ```
 
-- [ ] **Step 6: Write a failing test for wiring it into `MissionWorkspace`'s `ready-no-interior` phase**
+- [ ] **Step 6: Mock `GlobalAssessmentBar` in the test file, matching every other child component's existing mock convention**
+
+`MissionWorkspace.test.tsx` already mocks every child component it renders
+(`MissionForm`, `MapView`, `SiteMapView`, `MissionPhotosGallery`, `PlanCalibrationTool`,
+`GlobalAssessmentForm`) with a minimal stub exposing a `simulate-X` button/attribute —
+never the real component. Follow that exact convention for `GlobalAssessmentBar` too,
+rather than exercising its real debounce timing inside this integration test (the
+debounce itself is already covered in isolation by Chunk 5 Task 8's
+`useDebouncedCallback.test.ts` and Task 9's own `GlobalAssessmentBar.test.tsx` — this
+test only needs to verify `MissionWorkspace`'s wiring, not re-prove the debounce works).
+
+```tsx
+// add near the top of src/pages/MissionWorkspace.test.tsx, alongside the
+// other vi.mock(...) component stubs
+vi.mock('../components/GlobalAssessmentBar', () => ({
+  GlobalAssessmentBar: ({
+    values,
+    onChange,
+  }: {
+    values: { causeArchitectural: number; causeElectromagnetique: number; causeGeobiologique: number; causeParanormale: number; causeAutres: number; bovisRate: number }
+    onChange: (v: typeof values) => void
+  }) => (
+    <div data-testid="global-assessment-bar" data-bovis-rate={values.bovisRate}>
+      <button onClick={() => onChange({ ...values, bovisRate: 12000 })}>simulate-bar-change</button>
+    </div>
+  ),
+}))
+```
+
+- [ ] **Step 7: Write the failing test**
 
 ```tsx
 // append to src/pages/MissionWorkspace.test.tsx
 it('renders GlobalAssessmentBar (pre-filled from the mission) during ready-no-interior, and calls setGlobalAssessment on change', async () => {
-  // Drive the workspace through mission creation, global assessment, and
-  // origin-setting exactly as an existing end-to-end test in this file
-  // already does — reuse that same setup sequence rather than re-deriving
-  // it, then assert the bar is present once ready-no-interior is reached
-  // with the just-saved values, and that changing it calls
-  // missionsRepo.setGlobalAssessment again.
+  vi.mocked(plansRepo.createPlan).mockResolvedValue({
+    id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+  })
+  vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+  vi.mocked(missionsRepo.setGlobalAssessment)
+    .mockResolvedValueOnce(missionAfterGlobalAssessment) // the initial mandatory step
+    .mockResolvedValueOnce({ ...missionWithOrigin, bovisRate: 12000 }) // the bar's own change
+
+  render(<MissionWorkspace />)
+  await advanceToOriginSetting()
+  fireEvent.click(screen.getByText('simulate-map-click'))
+  await screen.findByTestId('site-map-view') // confirms ready-no-interior was reached
+
+  const bar = screen.getByTestId('global-assessment-bar')
+  expect(bar).toHaveAttribute('data-bovis-rate', '9500') // pre-filled from missionAfterGlobalAssessment
+
+  fireEvent.click(screen.getByText('simulate-bar-change'))
+
+  await waitFor(() =>
+    expect(missionsRepo.setGlobalAssessment).toHaveBeenNthCalledWith(
+      2,
+      'm1',
+      expect.objectContaining({ bovisRate: 12000 })
+    )
+  )
 })
 ```
 
-Before writing this test's body, read `MissionWorkspace.test.tsx` in full for its
-existing end-to-end "reaches ready-no-interior" test and copy its exact setup sequence
-(mocked repo calls, phase-advancing interactions) rather than guessing at the flow.
-
-- [ ] **Step 7: Run to verify it fails**
+- [ ] **Step 8: Run to verify it fails**
 
 Run: `node_modules/.bin/vitest.cmd run src/pages/MissionWorkspace.test.tsx`
 Expected: FAIL — `GlobalAssessmentBar` not rendered yet.
 
-- [ ] **Step 8: Wire `GlobalAssessmentBar` into the `ready-no-interior` case**
+- [ ] **Step 9: Wire `GlobalAssessmentBar` into the `ready-no-interior` case**
 
 ```tsx
 {/* src/pages/MissionWorkspace.tsx — inside the 'ready-no-interior' case,
@@ -1425,12 +1563,12 @@ Add `import { GlobalAssessmentBar } from '../components/GlobalAssessmentBar'`. D
 render it in `calibrating-interior` (spec §7 — that case already renders
 `PlanCalibrationTool` on its own, unrelated to this bar; leave it untouched).
 
-- [ ] **Step 9: Run the full suite, typecheck**
+- [ ] **Step 10: Run the full suite, typecheck**
 
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, clean.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
@@ -1459,8 +1597,13 @@ failure.
 - [ ] **Step 1: Write failing tests for `geocodeAddress`**
 
 Read `src/data/cadastreService.ts` first for this codebase's established pattern of
-wrapping a `fetch` call to a public geo API (error handling, response parsing) and mirror
-it, rather than inventing a new style.
+wrapping a `fetch` call to a public geo API — the request-building/response-parsing
+shape below mirrors it. One deliberate deviation: `cadastreService.ts`/
+`buildingFootprintService.ts` both *throw* on failure and leave catching to the caller,
+but `geocodeAddress` below swallows all errors and returns `null` instead — this is
+intentional, not an oversight, because spec §8 requires geocoding failure to never block
+the flow (silent fallback to `DEFAULT_CENTER`), unlike the building-footprint flow which
+surfaces its errors to a dismissible UI card.
 
 ```typescript
 // src/data/geocodingService.test.ts
@@ -1541,35 +1684,96 @@ git add src/data/geocodingService.ts src/data/geocodingService.test.ts
 git commit -m "Add geocodeAddress via the free BAN API (spec §8), not yet wired"
 ```
 
-- [ ] **Step 6: Write a failing test for wiring it into `MissionWorkspace`'s `setting-origin` phase**
+- [ ] **Step 6: Mock `geocodingService` and expose `MapView`'s `center` prop in the test file**
+
+Wiring a real `geocodeAddress` call into `handleGlobalAssessmentSaved` means every
+existing test that reaches `setting-origin` via this file's `advanceToOriginSetting()`
+helper would otherwise trigger a real, unmocked outbound `fetch` — mock the module, the
+same way `vi.mock('../data/plansRepo')`/`vi.mock('../data/missionsRepo')` already do for
+this file's other data dependencies.
+
+```typescript
+// add near the top of src/pages/MissionWorkspace.test.tsx, alongside the
+// other vi.mock(...) data-layer calls
+vi.mock('../data/geocodingService')
+```
+
+```typescript
+// add near the top of the test file, alongside the other `import * as ...` lines
+import * as geocodingService from '../data/geocodingService'
+```
+
+The existing `MapView` mock (this file's own top-of-file `vi.mock('../components/MapView', ...)`)
+only surfaces `onMapClick` on the rendered stub — it has no way to observe what `center`
+value it was given. Extend it to also expose `center`:
+
+```tsx
+// src/pages/MissionWorkspace.test.tsx — replace the existing MapView mock
+vi.mock('../components/MapView', () => ({
+  MapView: ({
+    center,
+    onMapClick,
+  }: {
+    center: [number, number]
+    onMapClick?: (latlng: { lat: number; lng: number }) => void
+  }) => (
+    <div data-testid="map-view" data-center={`${center[0]},${center[1]}`}>
+      {onMapClick && (
+        <button onClick={() => onMapClick({ lat: 48.8566, lng: 2.3522 })}>simulate-map-click</button>
+      )}
+    </div>
+  ),
+}))
+```
+
+Every EXISTING test in this file that already asserts on `map-view`/`simulate-map-click`
+must keep passing unchanged after this edit — it's additive (`data-center` is a new
+attribute, nothing existing is removed or renamed).
+
+- [ ] **Step 7: Write the failing tests**
 
 ```tsx
 // append to src/pages/MissionWorkspace.test.tsx
 it('centers the setting-origin map on the geocoded address when available', async () => {
-  // Reuse this file's existing setup to reach the 'setting-origin' phase
-  // (mission created with a known address, global assessment saved), mock
-  // geocodingService.geocodeAddress to resolve a specific LatLng, and assert
-  // MapView receives that LatLng as its `center` prop instead of
-  // DEFAULT_CENTER — read the existing 'setting-origin' test in this file
-  // first and follow its exact setup sequence.
+  vi.mocked(plansRepo.createPlan).mockResolvedValue({
+    id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+  })
+  vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
+  vi.mocked(geocodingService.geocodeAddress).mockResolvedValue({ lat: 45.5, lng: 6.5 })
+
+  render(<MissionWorkspace />)
+  fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+  const mapView = await screen.findByTestId('map-view')
+  expect(mapView).toHaveAttribute('data-center', '45.5,6.5')
 })
 
 it('falls back to DEFAULT_CENTER without blocking the flow when geocoding finds nothing', async () => {
-  // Same setup, but geocodeAddress mocked to resolve null — assert MapView
-  // still receives DEFAULT_CENTER and the "Cliquez sur la carte..." flow
-  // still works exactly as today.
+  vi.mocked(plansRepo.createPlan).mockResolvedValue({
+    id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+  })
+  vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
+  vi.mocked(geocodingService.geocodeAddress).mockResolvedValue(null)
+
+  render(<MissionWorkspace />)
+  fireEvent.click(await screen.findByText('simulate-global-assessment'))
+
+  const mapView = await screen.findByTestId('map-view')
+  expect(mapView).toHaveAttribute('data-center', '46.6,2.5') // DEFAULT_CENTER — verify this literal matches the real constant in MissionWorkspace.tsx before relying on it
+  // the "Cliquez sur la carte..." flow still works exactly as today:
+  expect(screen.getByText(/cliquez sur la carte/i)).toBeInTheDocument()
 })
 ```
 
-Read `MissionWorkspace.test.tsx`'s existing `'setting-origin'`-phase test(s) first and
-mirror their setup exactly.
-
-- [ ] **Step 7: Run to verify these fail**
+- [ ] **Step 8: Run to verify these fail**
 
 Run: `node_modules/.bin/vitest.cmd run src/pages/MissionWorkspace.test.tsx`
-Expected: FAIL — the map always gets `DEFAULT_CENTER` today.
+Expected: FAIL — the map always gets `DEFAULT_CENTER` today (and `geocodingService`
+doesn't exist as a module for `vi.mock` to target until Step 5 of this same task lands
+it — if this task is executed in order, Step 5 already happened by the time this step
+runs).
 
-- [ ] **Step 8: Geocode on entering `setting-origin`**
+- [ ] **Step 9: Geocode on entering `setting-origin`**
 
 ```typescript
 // src/pages/MissionWorkspace.tsx — add the import
@@ -1618,12 +1822,12 @@ case 'setting-origin':
   )
 ```
 
-- [ ] **Step 9: Run the full suite, typecheck**
+- [ ] **Step 10: Run the full suite, typecheck**
 
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, clean.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
@@ -1641,6 +1845,11 @@ otherwise; origin placement itself is still always a deliberate click.
 **Goal:** A mission-list screen in `App.tsx` before `MissionWorkspace`; selecting an
 existing mission resumes it at the correct derived phase, including the orphaned-mission
 retry case from spec §9.
+
+**Depends on Chunk 6 being committed first** — Task 12 constructs a `'setting-origin'`
+`WorkspacePhase` for the resumed-mission path and needs the `mapCenter` field Chunk 6
+adds to that variant to already exist; building this chunk before Chunk 6 would fail to
+typecheck.
 
 ### Task 11: Create `MissionList` and the phase-derivation helper
 
@@ -1871,7 +2080,51 @@ If it doesn't, this task creates the first test file for `App.tsx` — follow th
 codebase's established `render`/`screen`/`vi.mock` conventions from any other page-level
 test file (e.g. `MissionWorkspace.test.tsx`) for consistency.
 
-- [ ] **Step 2: Give `MissionWorkspace` an optional `initialResumePhase` prop**
+- [ ] **Step 2: Write failing tests for `MissionWorkspace`'s new `initialResumePhase` prop**
+
+```tsx
+// append to src/pages/MissionWorkspace.test.tsx
+it('starts directly at global-assessment when resumed there', async () => {
+  vi.mocked(plansRepo.createPlan).mockResolvedValue({
+    id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+  })
+  render(
+    <MissionWorkspace
+      initialResumePhase={{ name: 'global-assessment', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+    />
+  )
+  expect(await screen.findByText('simulate-global-assessment')).toBeInTheDocument()
+  // No fresh mission/plan creation should happen on a resumed mission:
+  expect(plansRepo.createPlan).not.toHaveBeenCalled()
+})
+
+it('starts directly at setting-origin (with DEFAULT_CENTER, no re-geocoding) when resumed there', async () => {
+  render(
+    <MissionWorkspace
+      initialResumePhase={{ name: 'setting-origin', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+    />
+  )
+  expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+})
+
+it('starts directly at ready-no-interior (SiteMapView visible immediately) when resumed there', async () => {
+  render(
+    <MissionWorkspace
+      initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+    />
+  )
+  const siteMapView = await screen.findByTestId('site-map-view')
+  expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
+})
+```
+
+- [ ] **Step 3: Run to verify these fail**
+
+Run: `node_modules/.bin/vitest.cmd run src/pages/MissionWorkspace.test.tsx`
+Expected: FAIL — `initialResumePhase` isn't a recognized prop yet, every test starts at
+`creating-mission` regardless.
+
+- [ ] **Step 4: Give `MissionWorkspace` an optional `initialResumePhase` prop**
 
 ```typescript
 // src/pages/MissionWorkspace.tsx — extend props
@@ -1883,7 +2136,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
   const [phase, setPhase] = useState<WorkspacePhase>(
     initialResumePhase
       ? (initialResumePhase.name === 'setting-origin'
-          ? { ...initialResumePhase, mapCenter: DEFAULT_CENTER } // resumed missions skip re-geocoding for now — acceptable per spec, geocoding (Chunk 6) only runs on the fresh-creation path; note this as a known gap if it matters later
+          ? { ...initialResumePhase, mapCenter: DEFAULT_CENTER } // resumed missions skip re-geocoding for now — a deliberate scope cut for this plan, not spec-mandated (spec §8 doesn't carve out an exception for the resume path); geocoding (Chunk 6) only runs on the fresh-creation path today
           : initialResumePhase)
       : { name: 'creating-mission' }
   )
@@ -1893,7 +2146,12 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
 
 Import `type { ResumePhase } from './deriveResumePhase'`.
 
-- [ ] **Step 3: Write failing tests for `App.tsx`'s mission-list/resume wiring**
+- [ ] **Step 5: Run to verify the 3 new tests pass, then run the whole file**
+
+Run: `node_modules/.bin/vitest.cmd run src/pages/MissionWorkspace.test.tsx`
+Expected: PASS — all tests, old and new.
+
+- [ ] **Step 6: Write failing tests for `App.tsx`'s mission-list/resume wiring**
 
 ```tsx
 // src/App.test.tsx (or appended if it already exists)
@@ -1901,18 +2159,31 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import * as missionsRepo from './data/missionsRepo'
+import * as deriveResumePhaseModule from './pages/deriveResumePhase'
 
 vi.mock('./data/missionsRepo')
 vi.mock('./pages/deriveResumePhase') // mock separately per the real module path
 
+// Mocked so this file tests App.tsx's own wiring (which phase MissionWorkspace
+// receives) without needing to also stand up MissionWorkspace's full child
+// tree (SiteMapView, MapView, etc.) — same isolation principle already used
+// throughout this codebase's other page-level tests.
+vi.mock('./pages/MissionWorkspace', () => ({
+  MissionWorkspace: ({ initialResumePhase }: { initialResumePhase?: { name: string } }) => (
+    <div data-testid="mission-workspace" data-resume-phase-name={initialResumePhase?.name ?? 'none'} />
+  ),
+}))
+
+const existingMission = {
+  id: 'm1', address: '10 Rue de Rivoli', missionDate: '2026-07-20', declinationDeg: null,
+  originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
+  causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
+  parcelRefs: [], buildingFootprint: null,
+}
+
 describe('App', () => {
   it('shows the mission list on load, with existing missions from listMissions()', async () => {
-    vi.mocked(missionsRepo.listMissions).mockResolvedValue([
-      { id: 'm1', address: '10 Rue de Rivoli', missionDate: '2026-07-20', declinationDeg: null,
-        originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
-        causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
-        parcelRefs: [], buildingFootprint: null },
-    ])
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
     render(<App />)
     expect(await screen.findByText(/10 Rue de Rivoli/)).toBeInTheDocument()
   })
@@ -1921,21 +2192,50 @@ describe('App', () => {
     vi.mocked(missionsRepo.listMissions).mockResolvedValue([])
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Nouvelle mission' }))
-    expect(await screen.findByText(/adresse/i)).toBeInTheDocument() // MissionForm's address field label — verify exact text in MissionForm.tsx first
+    const workspace = await screen.findByTestId('mission-workspace')
+    expect(workspace).toHaveAttribute('data-resume-phase-name', 'none')
+  })
+
+  it('selecting an existing mission derives its resume phase and passes it to MissionWorkspace', async () => {
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    vi.mocked(deriveResumePhaseModule.deriveResumePhase).mockResolvedValue({
+      name: 'setting-origin',
+      mission: existingMission,
+      exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByText(/10 Rue de Rivoli/))
+
+    await waitFor(() => expect(deriveResumePhaseModule.deriveResumePhase).toHaveBeenCalledWith(existingMission))
+    const workspace = await screen.findByTestId('mission-workspace')
+    expect(workspace).toHaveAttribute('data-resume-phase-name', 'setting-origin')
+  })
+
+  it('shows an error, not a crash, when deriveResumePhase fails (e.g. the orphaned-mission retry itself fails)', async () => {
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    vi.mocked(deriveResumePhaseModule.deriveResumePhase).mockRejectedValue(new Error('network down'))
+
+    render(<App />)
+    fireEvent.click(await screen.findByText(/10 Rue de Rivoli/))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
 })
 ```
 
-Note: `deriveResumePhase` does its own data fetching (`listPlansForMission`/`createPlan`)
-— mock it directly in this file's resume-flow test rather than mocking its transitive
-`plansRepo` dependency, to keep this test focused on `App.tsx`'s own wiring logic.
+Note: `deriveResumePhase` does its own data fetching (`listPlansForMission`/`createPlan`,
+including the orphaned-mission retry) — mocked directly here rather than mocking its
+transitive `plansRepo` dependency, to keep this test focused on `App.tsx`'s own wiring
+logic. `deriveResumePhase`'s own internal retry behavior is already covered by Task 11's
+`deriveResumePhase.test.ts`, not re-tested here.
 
-- [ ] **Step 4: Run to verify these fail**
+- [ ] **Step 7: Run to verify these fail**
 
 Run: `node_modules/.bin/vitest.cmd run src/App.test.tsx`
 Expected: FAIL — `App` renders `MissionWorkspace` directly today, no list screen.
 
-- [ ] **Step 5: Add the mission-list state machine to `App.tsx`**
+- [ ] **Step 8: Add the mission-list state machine to `App.tsx`**
 
 ```tsx
 // src/App.tsx
@@ -1992,12 +2292,12 @@ function App() {
 export default App
 ```
 
-- [ ] **Step 6: Run the full suite, typecheck**
+- [ ] **Step 9: Run the full suite, typecheck**
 
 Run: `node_modules/.bin/vitest.cmd run && node_modules/.bin/tsc.cmd -b --noEmit`
 Expected: all pass, clean.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/App.tsx src/App.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
@@ -2050,17 +2350,33 @@ cd /d "%REPO%"
 rem Only rebuild if dist/ is missing — avoids a slow rebuild on every launch;
 rem Laurent (or whoever ships a code change) is expected to run `npm run build`
 rem manually after pulling new code, this script is for RUNNING what's already
-rem built, not for redeploying.
+rem built, not for redeploying. Echo a reminder so an old build is never
+rem silently reused without Laurent knowing — a stale build during the actual
+rem field test week would be confusing and hard to diagnose from the field.
 if not exist "%REPO%\dist" (
   echo Premier lancement : construction du build de production...
   call npm run build
+) else (
+  echo Build existant reutilise ^(lancez "npm run build" pour reconstruire^).
 )
 
 rem Check if something is already listening on PORT before starting a second
 rem preview server — avoids "address already in use" on a second click.
-netstat -ano | findstr ":%PORT% " | findstr "LISTENING" >nul
+rem CRITICAL: the /C: switch is required. Without it, findstr splits its
+rem search string on whitespace into separate OR'd terms, so the trailing
+rem space after %PORT% is treated as a token delimiter, not a literal
+rem character — ":4173 " would then also match ":41730", ":417300", etc. from
+rem an unrelated process, wrongly skipping this launcher's own server start.
+netstat -ano | findstr /C:":%PORT% " | findstr "LISTENING" >nul
 if errorlevel 1 (
-  start "" /min cmd /c "cd /d ""%REPO%"" && npm run preview -- --port %PORT% --strictPort"
+  rem Use `start`'s own /d switch to set the child's working directory —
+  rem NOT a nested `cd /d ""%REPO%"" && ...` inside the cmd /c string,
+  rem which silently collapses to a no-op `cd /d` (prints/keeps the current
+  rem dir) rather than actually changing it. It would appear to work here
+  rem only by accident, via inheriting this script's own already-correct
+  rem `cd /d "%REPO%"` above — fragile the moment this snippet is reordered
+  rem or copied elsewhere.
+  start "" /min /d "%REPO%" cmd /c "npm run preview -- --port %PORT% --strictPort"
   rem Give the server a moment to bind before opening the browser.
   timeout /t 2 /nobreak >nul
 )
