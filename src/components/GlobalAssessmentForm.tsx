@@ -6,13 +6,13 @@ export interface GlobalAssessmentFormProps {
   onSaved: (input: GlobalAssessmentInput) => void
 }
 
-interface CauseSliderProps {
+export interface CauseSliderProps {
   label: string
   value: number
   onChange: (v: number) => void
 }
 
-function CauseSlider({ label, value, onChange }: CauseSliderProps) {
+export function CauseSlider({ label, value, onChange }: CauseSliderProps) {
   return (
     <label>
       {label}
