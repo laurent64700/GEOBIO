@@ -897,4 +897,13 @@ describe('SiteMapView', () => {
     expect(screen.getByRole('button', { name: '45°' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '135°' })).toBeInTheDocument()
   })
+
+  it('always renders the permanent compass indicator', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    expect(await screen.findByTestId('compass-indicator')).toBeInTheDocument()
+  })
 })

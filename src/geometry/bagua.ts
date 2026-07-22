@@ -48,7 +48,7 @@ export interface BaguaSector {
   points: Point[]
 }
 
-const COMPASS_ORDER: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+export const COMPASS_ORDER: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
 
 /**
  * 8 equal 45° wedges around `center`, always oriented to true north (bearing

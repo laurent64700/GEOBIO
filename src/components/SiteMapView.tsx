@@ -20,6 +20,7 @@ import {
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { Sidebar } from './Sidebar'
+import { CompassIndicator } from './CompassIndicator'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
@@ -44,7 +45,7 @@ import { listFreeformNetworksForPlan } from '../data/freeformNetworksRepo'
 import { baguaCorrespondences } from '../domain/baguaCorrespondences'
 import { resolveNetworkColor } from '../domain/networkColors'
 import { allowedBearingsForNetwork } from '../domain/networkBearings'
-import type { CompassDirection } from '../geometry/bagua'
+import { COMPASS_ORDER } from '../geometry/bagua'
 import type {
   GridInstance,
   GridLine,
@@ -60,11 +61,6 @@ import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { resetToTheoretical } from '../geometry/lineEditing'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
-// Same order as bagua.ts's own (module-private) COMPASS_ORDER — kept in sync
-// manually since that constant isn't exported; only used here to iterate the
-// legend table in a sensible compass order rather than object-key order.
-const COMPASS_DIRECTIONS: CompassDirection[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-
 // Collapsed-by-default legend (spec §6: "repliée par défaut") for the Bagua
 // layer's static object-correspondence table. Kept minimal/local to this file
 // since nothing else reuses it.
@@ -77,7 +73,7 @@ function BaguaLegendCollapsed() {
       {expanded && (
         <table>
           <tbody>
-            {COMPASS_DIRECTIONS.map((direction) => {
+            {COMPASS_ORDER.map((direction) => {
               const correspondence = baguaCorrespondences[direction]
               return (
                 <tr key={direction}>
@@ -535,9 +531,8 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           OverlayPanel corners (top-right, top-left, bottom-left) with one
           pinned band + collapsible accordion. Pure relocation: every section
           below holds the exact same JSX that used to live in one of those
-          corners, unchanged. Only the orthogonality-review card (below,
-          still a floating bottom-right OverlayPanel) and the new
-          CompassIndicator (future chunk) stay outside the sidebar. */}
+          corners, unchanged. Only the orthogonality-review card and the
+          permanent CompassIndicator (both below) stay outside the sidebar. */}
       <Sidebar
         pinned={
           <FeltPointPicker
@@ -817,6 +812,14 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           )}
         </OverlayPanel>
       )}
+      {/* Fixed, non-interactive overlay, top-right of the map — distinct from
+          the Sidebar (now full-height left) and from the bottom-right
+          orthogonality OverlayPanel above. Not wrapped in <OverlayPanel>; it
+          needs no stacking/scroll behavior, just a fixed corner position
+          (spec §6). */}
+      <div data-testid="compass-indicator" style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000 }}>
+        <CompassIndicator />
+      </div>
     </div>
   )
 }
