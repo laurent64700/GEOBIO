@@ -31,7 +31,27 @@ export interface MapViewProps {
 
 export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProps) {
   return (
-    <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }}>
+    <MapContainer
+      center={center}
+      zoom={zoom}
+      maxZoom={20}
+      // Leaflet's animated zoom (the default) hands control of finishing the
+      // zoom to a requestAnimationFrame callback plus a CSS transitionend
+      // listener, with only a 250ms setTimeout as a last-resort fallback
+      // (see leaflet's Map._tryAnimatedZoom/_animateZoom/_onZoomTransitionEnd).
+      // Root-caused a real bug where zoom got permanently stuck (every
+      // zoom-in control, scroll, dblclick, and keyboard +/- silently did
+      // nothing) back to this: setZoom() had already returned assuming the
+      // animation would finish the job, but the animation's completion never
+      // ran. For a field tool where placing a point to within ~10cm requires
+      // reliably zooming in close (spec: parcel-level precision), a disabled
+      // animation is strictly better than an occasionally-stuck one — this
+      // makes every zoom change immediate and synchronous, removing the
+      // entire class of bug rather than chasing why the animation callback
+      // doesn't fire in some environments.
+      zoomAnimation={false}
+      style={{ height: '100%', width: '100%' }}
+    >
       <TileLayer url={IGN_ORTHOPHOTO_WMTS_URL} attribution="&copy; IGN-F/Géoportail" maxZoom={20} />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}
       {children}
