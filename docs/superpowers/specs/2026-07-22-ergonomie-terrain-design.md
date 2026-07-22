@@ -357,10 +357,12 @@ ce PC Windows uniquement (pas de tablette/téléphone dans le périmètre de ce 
 ## 11. Ce qui ne change pas
 
 Tous les composants/handlers déplacés dans un paquet gardent leur comportement exact
-(paquets 1 et 6) ou s'appuient sur des fonctions de données déjà testées et inchangées
-(`createFeltPoint`, `setGlobalAssessment`, `listMissions`, `listPlansForMission`) — ce
-document ne remet en cause aucune décision déjà prise sur les réseaux telluriques, le
-calage de grille, ou le modèle Bagua.
+(paquet 1, et paquet 4 qui ne fait que réutiliser `COMPASS_ORDER` sans rien modifier) ou
+s'appuient sur des fonctions de données déjà testées et inchangées (`createFeltPoint`,
+`setGlobalAssessment`, `listMissions`, `listPlansForMission`) — ce document ne remet en
+cause aucune décision déjà prise sur les réseaux telluriques, le calage de grille, ou le
+modèle Bagua. Seul le paquet 6 (géocodage) change un comportement existant côté succès
+(le centrage initial de la carte) ; son chemin d'échec reste, lui, inchangé (§8).
 
 ## 12. Hypothèses à confirmer en plan (pas tranchées ici, faible impact si erronées)
 
