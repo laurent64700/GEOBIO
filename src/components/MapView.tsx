@@ -29,12 +29,26 @@ export interface MapViewProps {
   children?: ReactNode
 }
 
+// IGN's real orthophoto tile coverage varies by region — rural/less-populated
+// communes are frequently only flown/published up to native zoom 19, while
+// dense urban areas often go to 20-21. Confirmed directly against the WMTS
+// endpoint for a real rural test address (30130 Saint Alexandre): z19
+// returns a real JPEG tile, z20 returns an HTTP 404 (XML error body) for the
+// exact same ground location. maxNativeZoom=19 tells Leaflet "don't request
+// tiles past z19, upscale the last real tile instead" — allowing the UI to
+// keep zooming past the native imagery resolution (for finer click/placement
+// precision, which only depends on the lat/lng math, not image sharpness)
+// without ever hitting a blank/404 tile. maxZoom stays higher than
+// maxNativeZoom specifically so this UI zoom headroom exists.
+const MAX_UI_ZOOM = 21
+const MAX_NATIVE_TILE_ZOOM = 19
+
 export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProps) {
   return (
     <MapContainer
       center={center}
       zoom={zoom}
-      maxZoom={20}
+      maxZoom={MAX_UI_ZOOM}
       // Leaflet's animated zoom (the default) hands control of finishing the
       // zoom to a requestAnimationFrame callback plus a CSS transitionend
       // listener, with only a 250ms setTimeout as a last-resort fallback
@@ -52,7 +66,12 @@ export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProp
       zoomAnimation={false}
       style={{ height: '100%', width: '100%' }}
     >
-      <TileLayer url={IGN_ORTHOPHOTO_WMTS_URL} attribution="&copy; IGN-F/Géoportail" maxZoom={20} />
+      <TileLayer
+        url={IGN_ORTHOPHOTO_WMTS_URL}
+        attribution="&copy; IGN-F/Géoportail"
+        maxZoom={MAX_UI_ZOOM}
+        maxNativeZoom={MAX_NATIVE_TILE_ZOOM}
+      />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}
       {children}
     </MapContainer>
