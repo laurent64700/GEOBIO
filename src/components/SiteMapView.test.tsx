@@ -832,4 +832,27 @@ describe('SiteMapView', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /valider le tracé/i })).not.toBeInTheDocument())
     expect(screen.queryByText('network down')).not.toBeInTheDocument()
   })
+
+  it('places a felt point via FeltPointPicker: select a network, click the map, point is created', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
+      id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 1, y: 1, createdAt: '2026-07-22T10:00:00Z',
+    })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
+    // MapView's test mock (this file's own top-of-file vi.mock('./MapView', ...))
+    // renders a plain <div data-testid="map-view"> with NO click handler of its
+    // own — onMapClick only fires from a nested
+    // <button>simulate-map-click</button>, rendered when onMapClick is truthy.
+    // Every other map-click-driven test in this file (e.g. the guide-line
+    // placement test) clicks that button, not the outer div — do the same here.
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    await waitFor(() => expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
+    ))
+  })
 })

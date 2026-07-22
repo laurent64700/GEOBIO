@@ -24,6 +24,7 @@ import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
 import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
 import { PhenomenonPicker } from './PhenomenonPicker'
+import { FeltPointPicker } from './FeltPointPicker'
 import { PhenomenaLayer } from './PhenomenaLayer'
 import { FreeformDrawTool } from './FreeformDrawTool'
 import { FreeformNetworkLayer } from './FreeformNetworkLayer'
@@ -207,11 +208,13 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     handleSubmitFreeformMetadata,
     handleCancelFreeformMetadata,
     clearGridOriginPlacement,
+    handleSelectFeltPointNetwork,
   } = usePlacementMode({
     planId,
     missionOrigin,
     onPhenomenonCreated: (created) => setPhenomena((prev) => [...prev, created]),
     onFreeformNetworkCreated: (created) => setFreeformNetworks((prev) => [...prev, created]),
+    onFeltPointCreated: (created) => setFeltPoints((prev) => [...prev, created]),
     onError: (message) => setError(message),
   })
 
@@ -532,7 +535,12 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           still a floating bottom-right OverlayPanel) and the new
           CompassIndicator (future chunk) stay outside the sidebar. */}
       <Sidebar
-        pinned={<p>Point ressenti — à venir (Chunk 2)</p>}
+        pinned={
+          <FeltPointPicker
+            activeNetworkName={placementMode?.kind === 'felt-point' ? placementMode.networkName : null}
+            onSelectNetwork={handleSelectFeltPointNetwork}
+          />
+        }
         sections={[
           {
             id: 'grille',
