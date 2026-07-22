@@ -21,6 +21,12 @@ comme Paint." Icônes/boutons clairs, groupés par fonction, zéro décoratif. C
 propose aucune palette de couleurs, aucune typographie, aucune animation — uniquement de
 la structure et du comportement.
 
+**Découpage du plan d'implémentation :** un seul plan, 5 tâches/chunks ordonnés (même
+pattern que `docs/superpowers/plans/2026-07-21-freeform-followups-plan.md`, qui a bien
+fonctionné le 22/07/2026) — pas 5 documents de plan séparés. Chaque paquet reste commité
+et testé indépendamment (suite verte + `tsc` clean après chacun), livrable/testable par
+Laurent dès qu'il est mergé, sans attendre les 4 autres.
+
 **Périmètre de ce document, confirmé avec Laurent :** cinq paquets indépendants mais
 livrés dans cet ordre (le paquet 2 dépend de la structure posée par le paquet 1) :
 
@@ -39,26 +45,35 @@ pathogènes (spec/plan séparés, statut d'exécution à vérifier indépendamme
 
 - `src/components/SiteMapView.tsx` (772 lignes après l'extraction de `usePlacementMode`
   faite ce jour) rend 4 `OverlayPanel` (top-right, top-left, bottom-left, bottom-right)
-  contenant au total 8 groupes de contrôles distincts : `LayerPanel` + `GridCreationPanel`
-  (top-right), ligne guide + `PhenomenonPicker` + tracé eau/faille + statut bâtiment
-  (top-left, 4 cartes empilées), mode édition de grille (bottom-left), revue
-  d'orthogonalité + légende Bagua (bottom-right).
+  contenant au total 9 groupes de contrôles distincts : `LayerPanel` + `GridCreationPanel`
+  (top-right, 2), ligne guide + `PhenomenonPicker` + tracé eau/faille + statut bâtiment
+  (top-left, 4 cartes empilées), mode édition de grille (bottom-left, 1), revue
+  d'orthogonalité + légende Bagua (bottom-right, 2).
 - `src/hooks/usePlacementMode.ts` gère déjà `PlacementMode` (union discriminée
   grid-origin/guide-line/phenomenon/freeform) — ce document y ajoute une 5ᵉ variante.
 - `FeltPoint` (`src/domain/types.ts`) a `networkName: string` (texte libre, pas un enum
   fermé — commentaire du code : "Laurent may search for a network before its
   GridTemplate row exists"). `createFeltPoint` (`src/data/feltPointsRepo.ts`) existe déjà
-  et fonctionne ; **aucun composant UI ne l'appelle** — c'est le trou.
-  `FeltPointsLayer` affiche les points en lecture seule uniquement.
+  et fonctionne ; **il est même déjà appelé**, mais uniquement par
+  `RodDetectionPanel.tsx` (flux de détection ArUco des tiges, dans
+  `MissionPhotosGallery`) — **aucun outil de placement manuel n'existe** : pas
+  d'interaction clic-bouton puis clic-carte comme pour les phénomènes. C'est ce trou-là
+  (le placement manuel, pas la fonction de données) que le paquet 2 comble. Les deux
+  voies de création resteront indépendantes après ce paquet, sans conflit identifié.
+  `FeltPointsLayer` affiche les points en lecture seule quelle que soit leur origine.
 - `src/components/PhenomenonPicker.tsx` est le pattern de référence à reproduire pour le
   point ressenti : liste de boutons, clic = arme `placementMode`, reclic sur le même =
   désarme (`aria-pressed`), clic carte = crée via le hook.
 - `src/pages/MissionWorkspace.tsx` : `DEFAULT_CENTER` = centre approximatif de la France
   métropolitaine, utilisé sans conditions dès la phase `setting-origin` — le commentaire
   du code confirme que le géocodage n'a jamais été implémenté.
-- Aucune boussole permanente n'existe : la seule occurrence de "compass" dans le code est
-  `COMPASS_DIRECTIONS`, un ordre de tri pour la légende Bagua, sans rapport avec un
-  indicateur visuel sur la carte.
+- Aucune boussole permanente n'existe : le code contient plusieurs occurrences de
+  "compass" (`COMPASS_DIRECTIONS`/`COMPASS_ORDER`, le type `CompassDirection`, le champ
+  `compassDirection` — déclaré dans `bagua.ts` sur `BaguaSector`, lu dans
+  `BaguaLayer.tsx`), mais aucune n'est un indicateur visuel sur la carte — toutes
+  servent uniquement au tri/légende Bagua ou au modèle de correspondances Bagua
+  (`baguaCorrespondences.ts` importe seulement le type `CompassDirection` comme clé,
+  sans champ `compassDirection` propre).
 - `MissionWorkspace`'s `WorkspacePhase` est un état 100% local (`useState`), jamais
   persisté ni reconstruit depuis la base — fermer l'onglet ou recharger perd la mission
   en cours. `listMissions()` (`src/data/missionsRepo.ts`) et
@@ -117,9 +132,11 @@ calque déjà prêts) : la toute première étape du protocole terrain de Lauren
   `PhenomenonPicker`/tracé eau-faille : `aria-pressed`, auto-annulation).
 - Nouvelle variante de `PlacementMode` dans `usePlacementMode.ts` :
   `{ kind: 'felt-point'; networkName: string }`, suivant exactement le patron de la
-  variante `'phenomenon'` existante (`handleMapClick` gagne un cas de plus,
-  `onFeltPointCreated` callback pour que `SiteMapView` ajoute le point créé à son état
-  `feltPoints` local, `FeltPointsLayer` n'a besoin d'aucun changement).
+  variante `'phenomenon'` existante — y compris la gestion d'erreur : un échec de
+  `createFeltPoint` route vers le callback `onError` du hook (même chemin que
+  `handlePlacePhenomenon`), pas un état d'erreur dédié. `handleMapClick` gagne un cas de
+  plus, `onFeltPointCreated` callback pour que `SiteMapView` ajoute le point créé à son
+  état `feltPoints` local, `FeltPointsLayer` n'a besoin d'aucun changement.
 - **Vit dans la bande épinglée du paquet 1**, pas dans l'accordéon.
 
 ## 5. Paquet 3 — Boussole permanente
@@ -162,21 +179,33 @@ regarde pas forcément la grille théorique.
   date (l'API trie déjà par `mission_date` décroissant), affichant adresse + date par
   ligne. Bouton "Nouvelle mission" à côté, qui va vers le flux `creating-mission` actuel
   inchangé.
-- Cliquer une mission existante recalcule la bonne `WorkspacePhase` à partir de ce qui
-  est déjà en base (pas de champ "phase" stocké séparément — dérivé de l'état réel) :
-  - Bilan global pas encore rempli (`bovisRate === null`, ou tout autre champ des 5
-    causes — à trancher en plan si un remplissage partiel doit compter comme "fait")
-    → phase `global-assessment`, avec le plan extérieur existant récupéré via
-    `listPlansForMission(missionId)` plutôt que recréé
+- Cliquer une mission existante récupère d'abord ses plans via
+  `listPlansForMission(missionId)` (filtré sur `kind === 'exterieur'` — nécessaire dès
+  qu'un plan intérieur existe aussi, puisque la requête renvoie les deux), puis recalcule
+  la bonne `WorkspacePhase` à partir de ce qui est déjà en base (pas de champ "phase"
+  stocké séparément — dérivé de l'état réel) :
+  - **Aucun plan extérieur trouvé** (mission créée mais `createPlan` a échoué juste
+    après — les deux appels de `handleMissionCreated` ne sont pas transactionnels,
+    connexion terrain potentiellement instable) → cas à ne pas laisser tomber
+    silencieusement : retenter la création du plan extérieur directement (mission déjà
+    là, il ne manque que le plan, aucune saisie perdue) plutôt qu'afficher une erreur
+    bloquante ou masquer la mission de la liste.
+  - Plan extérieur trouvé mais bilan global pas encore rempli (`bovisRate === null` —
+    voir §9, remplissage tout-ou-rien) → phase `global-assessment`, avec le plan
+    extérieur existant plutôt que recréé
   - Bilan rempli mais `originLat`/`originLng` encore `null` → phase `setting-origin`
   - Origine posée → phase `ready-no-interior` directement ; `SiteMapView` recharge déjà
     tout son état (grilles, points ressentis, phénomènes, tracés, bâtiment) depuis la
     base à l'ouverture, donc rien de plus à faire ici pour que le relevé en cours
     réapparaisse tel quel
 - **Aucune nouvelle dépendance** (pas de `react-router`) : un état d'écran de plus tout
-  en haut de l'app (`mission-list` → sélection → workspace), même style de machine à
-  états que celle déjà utilisée dans `MissionWorkspace`. Pas d'URL par mission — Laurent
-  a explicitement choisi la liste plutôt qu'un lien direct.
+  en haut de l'app, même style de machine à états que celle déjà utilisée dans
+  `MissionWorkspace`. **Vit dans `src/App.tsx`** (qui aujourd'hui se contente de rendre
+  `<MissionWorkspace />` directement, sans aucun état), pas dans `MissionWorkspace.tsx`
+  lui-même — `MissionWorkspace` garde sa propre machine à états interne inchangée, mais
+  reçoit en plus une mission existante (optionnelle) en prop pour démarrer directement
+  à la bonne phase au lieu de toujours partir de `creating-mission`. Pas d'URL par
+  mission — Laurent a explicitement choisi la liste plutôt qu'un lien direct.
 
 ## 8. Ce qui ne change pas
 
