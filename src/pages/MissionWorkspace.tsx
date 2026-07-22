@@ -13,6 +13,7 @@ import { uploadPlanImage } from '../data/planImageStorage'
 import { geocodeAddress } from '../data/geocodingService'
 import type { AffineTransform, Mission, Plan } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
+import type { ResumePhase } from './deriveResumePhase'
 
 // Rough center of metropolitan France — a placeholder until a mission's address
 // is geocoded to real coordinates. Geocoding isn't required by any Plan 1 spec
@@ -40,8 +41,18 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-export function MissionWorkspace() {
-  const [phase, setPhase] = useState<WorkspacePhase>({ name: 'creating-mission' })
+export interface MissionWorkspaceProps {
+  initialResumePhase?: ResumePhase
+}
+
+export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) {
+  const [phase, setPhase] = useState<WorkspacePhase>(
+    initialResumePhase
+      ? (initialResumePhase.name === 'setting-origin'
+          ? { ...initialResumePhase, mapCenter: DEFAULT_CENTER } // resumed missions skip re-geocoding for now — a deliberate scope cut for this plan, not spec-mandated (spec §8 doesn't carve out an exception for the resume path); geocoding (Chunk 6) only runs on the fresh-creation path today
+          : initialResumePhase)
+      : { name: 'creating-mission' }
+  )
 
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })

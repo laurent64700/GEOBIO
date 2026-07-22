@@ -331,4 +331,37 @@ describe('MissionWorkspace', () => {
     // the "Cliquez sur la carte..." flow still works exactly as today:
     expect(screen.getByText(/cliquez sur la carte/i)).toBeInTheDocument()
   })
+
+  it('starts directly at global-assessment when resumed there', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'global-assessment', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+      />
+    )
+    expect(await screen.findByText('simulate-global-assessment')).toBeInTheDocument()
+    // No fresh mission/plan creation should happen on a resumed mission:
+    expect(plansRepo.createPlan).not.toHaveBeenCalled()
+  })
+
+  it('starts directly at setting-origin (with DEFAULT_CENTER, no re-geocoding) when resumed there', async () => {
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'setting-origin', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+      />
+    )
+    expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+  })
+
+  it('starts directly at ready-no-interior (SiteMapView visible immediately) when resumed there', async () => {
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+      />
+    )
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
+  })
 })
