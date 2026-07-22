@@ -25,3 +25,6 @@ dist-ssr
 
 # Git worktrees (used for isolated plan/task branches)
 .worktrees/
+
+# Brainstorming visual-companion mockups (session-local scratch)
+.superpowers/
