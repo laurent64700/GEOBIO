@@ -32,7 +32,8 @@ Laurent dès qu'il est mergé, sans attendre les autres.
 
 **Périmètre de ce document, confirmé avec Laurent :** huit paquets, livrés dans cet ordre
 (le paquet 2 dépend de la structure posée par le paquet 1 ; le paquet 3 dépend du paquet 2
-pour connaître le réseau actif) :
+pour connaître le réseau actif ; le paquet 4 profite du coin haut-droit de la carte
+libéré par le paquet 1, qui y déplace `LayerPanel` dans le panneau latéral) :
 
 1. Panneau latéral (remplace les 4 `OverlayPanel` flottants actuels)
 2. Outil "placer un point ressenti" (comble le trou fonctionnel le plus critique)
@@ -78,9 +79,15 @@ multi-appareils/tablette (Laurent testera sur ce PC uniquement — voir §10 pac
   45°** (ce dernier non confirmé à 100%, assumé = Curry). C'est cette table que le
   paquet 3 utilise pour contraindre la ligne guide.
 - Ligne guide actuelle (top-left de `SiteMapView.tsx`) : 4 boutons de préréglage (N/S,
-  E/O, 45°, 135°) + un champ d'angle personnalisé + "Placer ici" (clic carte ensuite) +
-  "Effacer". Tous les boutons sont toujours proposés, sans lien avec un réseau
-  quelconque — c'est ce que le paquet 3 change.
+  E/O, 45°, 135°) + un champ d'angle personnalisé + son bouton "Valider" (commit
+  l'angle personnalisé) + "Placer ici" (clic carte ensuite) + "Effacer". Tous les
+  boutons sont toujours proposés, sans lien avec un réseau quelconque — c'est ce que le
+  paquet 3 change.
+- `src/geometry/bagua.ts`'s `COMPASS_ORDER` n'est **pas exporté** (`const` module-privé)
+  — `SiteMapView.tsx` le sait déjà et duplique le même tableau littéral localement
+  (`COMPASS_DIRECTIONS`, avec un commentaire explicite sur cette duplication volontaire).
+  Le paquet 4 devra soit exporter `COMPASS_ORDER` et l'importer, soit dupliquer le
+  littéral une troisième fois — à trancher en plan, détail d'implémentation mineur.
 - `src/components/GlobalAssessmentForm.tsx` : 6 curseurs (`causeArchitectural`,
   `causeElectromagnetique`, `causeGeobiologique`, `causeParanormale`, `causeAutres` —
   échelle 0-10 — et `bovisRate` — échelle 0-180000), état local, **un seul bouton
@@ -135,8 +142,9 @@ scrollable**, organisé en deux zones :
   - **Phénomènes** — contenu actuel de `PhenomenonPicker`, inchangé
   - **Tracés eau/faille** — les 2 boutons "Tracer l'eau"/"Tracer une faille" +
     `FreeformMetadataForm` quand un tracé est en attente
-  - **Ligne guide** — contenu du paquet 3 (voir §5, plus les boutons N/S, E/O, 45°,
-    135°, angle personnalisé, Placer ici, Effacer existants deviennent conditionnels)
+  - **Ligne guide** — contenu du paquet 3 (voir §5 : les boutons N/S, E/O, 45°, 135°
+    deviennent conditionnels au réseau actif ; angle personnalisé + Valider, Placer ici
+    et Effacer restent inchangés)
   - **Bâtiment** — la carte de statut bâtiment (Changer de bâtiment / recherche
     infructueuse / erreur dismissible), affichée seulement si pertinente comme
     aujourd'hui
@@ -198,9 +206,9 @@ relevé"), mais l'orientation proposée n'est plus un choix totalement libre —
 - **Aucun réseau armé** (le point ressenti n'est pas en cours de sélection) → tous les
   boutons restent disponibles, comportement actuel inchangé — pas de régression pour un
   usage de la ligne guide indépendant du protocole réseau (ex. calage général).
-- Le champ d'angle personnalisé **reste toujours disponible**, quel que soit le réseau
-  actif — échappatoire explicite pour l'angle non confirmé de Wissmann (voir §2) ou tout
-  cas hors norme.
+- Le champ d'angle personnalisé **et son bouton "Valider" restent toujours
+  disponibles**, quel que soit le réseau actif — échappatoire explicite pour l'angle non
+  confirmé de Wissmann (voir §2) ou tout cas hors norme.
 - Le bouton "Placer ici" et le clic carte pour ancrer la ligne ne changent pas —
   uniquement le sous-ensemble de boutons de préréglage d'angle proposés change selon
   `placementMode`.
@@ -243,7 +251,11 @@ seule occasion d'ajuster ces valeurs.
   toujours obligatoire** avant d'accéder à la carte — confirmé explicitement par
   Laurent, ce paquet ne la supprime pas.
 - **Nouvelle barre horizontale fixe en bas de l'écran**, toujours visible pendant la
-  phase `ready-no-interior` (la carte de relevé) — pas dans le panneau latéral (Laurent :
+  phase `ready-no-interior` (la carte de relevé). **Absente pendant `calibrating-interior`**
+  (l'écran de calage du plan intérieur importé n'est pas la carte de relevé — pas de
+  bilan global à ajuster sur cet écran-là, cohérent avec le fait que ce n'est déjà pas
+  un endroit où `SiteMapView`/le panneau latéral sont rendus). Pas dans le panneau
+  latéral (Laurent :
   "je les vois en permanent pas en latéral... c'est un élément d'arborescence logique"),
   un élément de chrome au même niveau que la carte elle-même, pas un outil rangé parmi
   les autres.
@@ -298,7 +310,7 @@ seule occasion d'ajuster ces valeurs.
     là, il ne manque que le plan, aucune saisie perdue) plutôt qu'afficher une erreur
     bloquante ou masquer la mission de la liste.
   - Plan extérieur trouvé mais bilan global pas encore rempli (`bovisRate === null` —
-    voir §11, remplissage tout-ou-rien) → phase `global-assessment`, avec le plan
+    voir §12, remplissage tout-ou-rien) → phase `global-assessment`, avec le plan
     extérieur existant plutôt que recréé
   - Bilan rempli mais `originLat`/`originLng` encore `null` → phase `setting-origin`
   - Origine posée → phase `ready-no-interior` directement ; `SiteMapView` recharge déjà
