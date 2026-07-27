@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 import { SiteMapView } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
@@ -10,6 +10,8 @@ import * as buildingFootprintService from '../data/buildingFootprintService'
 import * as missionsRepo from '../data/missionsRepo'
 import * as phenomenaRepo from '../data/phenomenaRepo'
 import * as freeformNetworksRepo from '../data/freeformNetworksRepo'
+import * as plansRepo from '../data/plansRepo'
+import * as contextObjectsRepo from '../data/contextObjectsRepo'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
@@ -22,6 +24,16 @@ vi.mock('../data/buildingFootprintService')
 vi.mock('../data/missionsRepo')
 vi.mock('../data/phenomenaRepo')
 vi.mock('../data/freeformNetworksRepo')
+vi.mock('../data/plansRepo')
+vi.mock('../data/contextObjectsRepo')
+
+// Same reasoning as the BuildingFootprintPicker mock below: CalibratedPlanOverlay
+// calls react-leaflet's useMap(), which throws outside a real <MapContainer> —
+// and this file's ./MapView mock is a plain <div>, not one.
+vi.mock('./CalibratedPlanOverlay', () => ({
+  CalibratedPlanOverlay: ({ imageUrl, visible }: { imageUrl: string; visible: boolean }) =>
+    visible ? <div data-testid="calibrated-plan-overlay" data-image-url={imageUrl} /> : null,
+}))
 
 // SiteMapView.test.tsx mocks ./MapView down to a plain <div> — there is no
 // real <MapContainer> anywhere in this test file, so a real, unmocked
@@ -54,6 +66,10 @@ vi.mock('./PhenomenaLayer', () => ({
   PhenomenaLayer: ({ visible, phenomena }: { visible: boolean; phenomena: unknown[] }) =>
     visible ? <div data-testid="phenomena-count">{phenomena.length}</div> : null,
 }))
+vi.mock('./ContextObjectsLayer', () => ({
+  ContextObjectsLayer: ({ visible, objects }: { visible: boolean; objects: unknown[] }) =>
+    visible ? <div data-testid="context-objects-count">{objects.length}</div> : null,
+}))
 vi.mock('./FreeformDrawTool', () => ({
   FreeformDrawTool: ({ active, onComplete }: { active: boolean; onComplete: (points: unknown[]) => void }) =>
     active ? <button onClick={() => onComplete([{ x: 0, y: 0 }, { x: 1, y: 1 }])}>simulate-freeform-complete</button> : null,
@@ -81,7 +97,21 @@ vi.mock('./FeltPointsLayer', () => ({
   FeltPointsLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="felt-points" /> : null),
 }))
 vi.mock('./FeltSegmentsLayer', () => ({
-  FeltSegmentsLayer: ({ visible }: { visible: boolean }) => (visible ? <div data-testid="felt-segments" /> : null),
+  FeltSegmentsLayer: ({
+    visible,
+    segments,
+    onSegmentClick,
+  }: {
+    visible: boolean
+    segments: { id: string }[]
+    onSegmentClick?: (segment: { id: string }) => void
+  }) =>
+    visible ? (
+      <div data-testid="felt-segments">
+        {onSegmentClick &&
+          segments.map((s) => <button key={s.id} onClick={() => onSegmentClick(s)}>simulate-pick-{s.id}</button>)}
+      </div>
+    ) : null,
 }))
 vi.mock('./GuideLineLayer', () => ({
   GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
@@ -150,7 +180,9 @@ describe('SiteMapView', () => {
     vi.mocked(gridTemplatesRepo.listGridTemplates).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue([])
     vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockResolvedValue([])
+    vi.mocked(contextObjectsRepo.listContextObjectsForPlan).mockResolvedValue([])
     vi.mocked(freeformNetworksRepo.listFreeformNetworksForPlan).mockResolvedValue([])
+    vi.mocked(plansRepo.listPlansForMission).mockResolvedValue([])
   })
 
   it('loads instances/lines/felt points, shows felt points by default and grid layers hidden by default', async () => {
@@ -207,6 +239,36 @@ describe('SiteMapView', () => {
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     await waitFor(() => expect(gridTemplatesRepo.listGridTemplates).toHaveBeenCalled())
+  })
+
+  it('renders the calibrated interior plan overlay, visible by default, when one exists for the mission', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(plansRepo.listPlansForMission).mockResolvedValue([
+      { id: 'p-ext', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
+      {
+        id: 'p-int', missionId: 'm1', kind: 'interieur', imageUrl: 'https://x/plan.jpg',
+        calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 },
+      },
+    ])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    const overlay = await screen.findByTestId('calibrated-plan-overlay')
+    expect(overlay).toHaveAttribute('data-image-url', 'https://x/plan.jpg')
+  })
+
+  it('does not render the interior plan overlay when no interior plan has both an image and a completed calibration', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(plansRepo.listPlansForMission).mockResolvedValue([
+      { id: 'p-ext', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
+    ])
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+    await screen.findByTestId('map-view')
+
+    expect(screen.queryByTestId('calibrated-plan-overlay')).not.toBeInTheDocument()
   })
 
   it('toggling the Hartmann layer in the panel shows its lines', async () => {
@@ -462,6 +524,74 @@ describe('SiteMapView', () => {
     // but that the function's own output is the mathematically correct one.
     expect(persistedPoints[0].x).toBeCloseTo(0.5)
     expect(persistedPoints[1].x).toBeCloseTo(0.5)
+  })
+
+  describe('grid recalibration on a crossing of 2 felt segments', () => {
+    const verticalSegment = {
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+      polarityA: '+' as const, polarityB: '-' as const, createdAt: '2026-07-23T10:00:00Z',
+    }
+    const horizontalSegment = {
+      id: 'fs2', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 4, y: 3 }, pointB: { x: 6, y: 3 },
+      polarityA: '+' as const, polarityB: '-' as const, createdAt: '2026-07-23T10:01:00Z',
+    }
+    const nearParallelSegment = {
+      // Nearly vertical (small x drift over a large y span) — within ~5.7° of
+      // verticalSegment's own direction, below the 10° trust threshold.
+      id: 'fs3', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 4, y: -1 }, pointB: { x: 4.2, y: 1 },
+      polarityA: '+' as const, polarityB: '-' as const, createdAt: '2026-07-23T10:02:00Z',
+    }
+
+    async function renderArmedForCalibration(segments: typeof verticalSegment[]) {
+      vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+      vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([hartmannLine])
+      vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockResolvedValue(segments)
+      vi.mocked(gridInstancesRepo.updateGridInstanceOrigin).mockResolvedValue({
+        ...hartmannInstance, originX: 5, originY: 3,
+      })
+      vi.mocked(gridLinesRepo.updateLinePoints).mockResolvedValue(hartmannLine)
+
+      render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+      await screen.findByTestId('map-view')
+
+      fireEvent.click(screen.getByLabelText('Hartmann')) // make the grid layer visible
+      fireEvent.click(screen.getByLabelText(/recaler la grille/i))
+    }
+
+    it('computes the crossing of the 2 picked segments and rigidly translates the grid instance + its lines onto it', async () => {
+      await renderArmedForCalibration([verticalSegment, horizontalSegment])
+
+      fireEvent.click(await screen.findByText('simulate-pick-fs1'))
+      fireEvent.click(screen.getByText('simulate-pick-fs2'))
+
+      await waitFor(() => expect(gridInstancesRepo.updateGridInstanceOrigin).toHaveBeenCalledWith('gi1', 5, 3))
+      // hartmannLine's points are [{x:0,y:-10},{x:0,y:10}] and the instance's
+      // original origin is (0,0), so translating onto crossing (5,3) shifts
+      // every point by exactly (+5,+3).
+      expect(gridLinesRepo.updateLinePoints).toHaveBeenCalledWith(
+        'gl1',
+        [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+        [{ x: 5, y: -7 }, { x: 5, y: 13 }]
+      )
+      // Picking mode closes itself after a successful recalibration.
+      expect(screen.queryByText(/tiges déjà relevées/i)).not.toBeInTheDocument()
+    })
+
+    it('shows a dismissible error and resets the picks when the 2 segments are too close to parallel', async () => {
+      await renderArmedForCalibration([verticalSegment, nearParallelSegment])
+
+      fireEvent.click(await screen.findByText('simulate-pick-fs1'))
+      fireEvent.click(screen.getByText('simulate-pick-fs3'))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/parallèles/i)
+      expect(gridInstancesRepo.updateGridInstanceOrigin).not.toHaveBeenCalled()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Fermer' }))
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
   })
 
   it('creates a grid end-to-end: pick template, click origin, set polarity, generate', async () => {
@@ -762,6 +892,32 @@ describe('SiteMapView', () => {
     expect(await screen.findByTestId('phenomena-count')).toHaveTextContent('1')
   })
 
+  it('places a context object on map click once a kind is selected, and can place a second of the same kind without reselecting', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(contextObjectsRepo.listContextObjectsForPlan).mockResolvedValue([])
+    vi.mocked(contextObjectsRepo.createContextObject)
+      .mockResolvedValueOnce({ id: 'co1', planId: 'p1', kind: 'arbre-chene', x: 1, y: 1, createdAt: '2026-07-27T10:00:00Z' })
+      .mockResolvedValueOnce({ id: 'co2', planId: 'p1', kind: 'arbre-chene', x: 2, y: 2, createdAt: '2026-07-27T10:01:00Z' })
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /arbre \(chêne\)/i }))
+    fireEvent.click(await screen.findByText('simulate-map-click'))
+
+    await waitFor(() =>
+      expect(contextObjectsRepo.createContextObject).toHaveBeenCalledWith(
+        expect.objectContaining({ planId: 'p1', kind: 'arbre-chene' })
+      )
+    )
+
+    // Placing a second one shouldn't require reselecting the kind.
+    fireEvent.click(screen.getByText('simulate-map-click'))
+    await waitFor(() => expect(contextObjectsRepo.createContextObject).toHaveBeenCalledTimes(2))
+
+    expect(await screen.findByTestId('context-objects-count')).toHaveTextContent('2')
+  })
+
   it('captures a freeform trace, submits metadata, and saves it', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
@@ -833,11 +989,16 @@ describe('SiteMapView', () => {
     expect(screen.queryByText('network down')).not.toBeInTheDocument()
   })
 
-  it('places a felt point via FeltPointPicker: select a network, click the map, point is created', async () => {
+  it('places a felt point via FeltPointPicker: select a network, click the map, confirm polarity, segment is created', async () => {
+    // Superseded by the felt-segment/polarity protocol correction (spec:
+    // network felt points are a manually-oriented 1m segment with a polarity
+    // chosen at each end, not a single point) — createFeltPoint is no longer
+    // called from this flow at all; createFeltSegment is.
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
-    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
-      id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 1, y: 1, createdAt: '2026-07-22T10:00:00Z',
+    vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 1, y: 0 },
+      polarityA: '+', polarityB: '-', createdAt: '2026-07-22T10:00:00Z',
     })
 
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
@@ -851,10 +1012,27 @@ describe('SiteMapView', () => {
     // placement test) clicks that button, not the outer div — do the same here.
     fireEvent.click(screen.getByText('simulate-map-click'))
 
-    await waitFor(() => expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith(
-      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
+    // The click only stages a pendingFeltSegment — FeltSegmentPolarityForm
+    // must be confirmed before anything is persisted.
+    fireEvent.click(await screen.findByRole('button', { name: 'Valider le segment' }))
+
+    await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann', polarityA: '+', polarityB: '-' })
     ))
   })
+
+  // Scoped to the "Ligne guide" accordion section specifically: once a
+  // network is armed, FeltPointPicker (in the sidebar's pinned band) renders
+  // its OWN orientation buttons with the exact same labels (N/S/E/O/45°/135°)
+  // for the felt-segment's own bearing — a deliberate, separate control for a
+  // different purpose (spec: segment orientation, not guide-line placement).
+  // An unscoped query is genuinely ambiguous between the two; these tests
+  // only ever cared about the guide-line accordion's own preset set.
+  function guideLineSection(): HTMLElement {
+    const details = screen.getByText('Ligne guide').closest('details')
+    if (!details) throw new Error('Ligne guide accordion section not found')
+    return details as HTMLElement
+  }
 
   it('shows only N/S and E/O guide-line presets while Hartmann is armed for felt-point placement', async () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
@@ -864,12 +1042,13 @@ describe('SiteMapView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
 
-    expect(screen.getByRole('button', { name: 'N/S' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'E/O' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '45°' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '135°' })).not.toBeInTheDocument()
+    const section = within(guideLineSection())
+    expect(section.getByRole('button', { name: 'N/S' })).toBeInTheDocument()
+    expect(section.getByRole('button', { name: 'E/O' })).toBeInTheDocument()
+    expect(section.queryByRole('button', { name: '45°' })).not.toBeInTheDocument()
+    expect(section.queryByRole('button', { name: '135°' })).not.toBeInTheDocument()
     // Custom angle field + its Valider button always remain available:
-    expect(screen.getByLabelText('Angle personnalisé')).toBeInTheDocument()
+    expect(section.getByLabelText('Angle personnalisé')).toBeInTheDocument()
   })
 
   it('shows only 45° and 135° guide-line presets while Curry is armed', async () => {
@@ -880,10 +1059,11 @@ describe('SiteMapView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Curry' }))
 
-    expect(screen.getByRole('button', { name: '45°' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '135°' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'N/S' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'E/O' })).not.toBeInTheDocument()
+    const section = within(guideLineSection())
+    expect(section.getByRole('button', { name: '45°' })).toBeInTheDocument()
+    expect(section.getByRole('button', { name: '135°' })).toBeInTheDocument()
+    expect(section.queryByRole('button', { name: 'N/S' })).not.toBeInTheDocument()
+    expect(section.queryByRole('button', { name: 'E/O' })).not.toBeInTheDocument()
   })
 
   it('shows all 4 guide-line presets when no felt-point network is armed', async () => {

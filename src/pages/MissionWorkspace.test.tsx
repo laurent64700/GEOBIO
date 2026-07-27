@@ -6,6 +6,7 @@ import * as plansRepo from '../data/plansRepo'
 import * as missionsRepo from '../data/missionsRepo'
 import * as planImageStorage from '../data/planImageStorage'
 import * as geocodingService from '../data/geocodingService'
+import type { Mission } from '../domain/types'
 
 vi.mock('../data/plansRepo')
 vi.mock('../data/missionsRepo')
@@ -48,8 +49,20 @@ vi.mock('../components/MapView', () => ({
 }))
 
 vi.mock('../components/SiteMapView', () => ({
-  SiteMapView: ({ planId }: { planId: string }) => (
-    <div data-testid="site-map-view" data-plan-id={planId} />
+  SiteMapView: ({ planId, fitBounds }: { planId: string; fitBounds?: unknown }) => (
+    <div data-testid="site-map-view" data-plan-id={planId} data-fit-bounds={fitBounds ? JSON.stringify(fitBounds) : undefined} />
+  ),
+}))
+
+vi.mock('../components/ParcelSelectionStep', () => ({
+  ParcelSelectionStep: ({ onConfirm }: { onConfirm: (parcels: unknown[]) => void }) => (
+    <button
+      onClick={() =>
+        onConfirm([{ id: 'A123', section: 'A', ringsLatLng: [[{ lat: 48.8566, lng: 2.3522 }]] }])
+      }
+    >
+      simulate-parcels-confirmed
+    </button>
   ),
 }))
 
@@ -138,6 +151,17 @@ async function advanceToOriginSetting() {
   await screen.findByText(/cliquez sur la carte/i)
 }
 
+// Continues from origin-setting through the map click and the (mocked)
+// parcel-selection step, landing on ready-no-interior. `resolvedMission` is
+// what setSelectedParcels resolves to — defaults to missionWithOrigin, since
+// that's what every existing ready-no-interior test already expects.
+async function advanceToReadyNoInterior(resolvedMission: Mission = missionWithOrigin) {
+  vi.mocked(missionsRepo.setSelectedParcels).mockResolvedValue(resolvedMission)
+  fireEvent.click(screen.getByText('simulate-map-click'))
+  fireEvent.click(await screen.findByText('simulate-parcels-confirmed'))
+  await waitFor(() => expect(missionsRepo.setSelectedParcels).toHaveBeenCalled())
+}
+
 describe('MissionWorkspace', () => {
   beforeEach(() => vi.clearAllMocks())
 
@@ -162,6 +186,24 @@ describe('MissionWorkspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
 
+  it('shows the parcel-selection step after setting the origin, then persists the selection and fits the map to it', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(missionsRepo.setSelectedParcels).mockResolvedValue({ ...missionWithOrigin, parcelRefs: ['A123'] })
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    fireEvent.click(await screen.findByText('simulate-parcels-confirmed'))
+
+    await waitFor(() => expect(missionsRepo.setSelectedParcels).toHaveBeenCalledWith('m1', ['A123']))
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toHaveAttribute('data-fit-bounds', JSON.stringify([[48.8566, 2.3522], [48.8566, 2.3522]]))
+  })
+
   it('records the mission origin on map click, then shows the map and the interior-upload option', async () => {
     vi.mocked(plansRepo.createPlan).mockResolvedValue({
       id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
@@ -170,11 +212,9 @@ describe('MissionWorkspace', () => {
 
     render(<MissionWorkspace />)
     await advanceToOriginSetting()
-    fireEvent.click(screen.getByText('simulate-map-click'))
+    await advanceToReadyNoInterior()
 
-    await waitFor(() =>
-      expect(missionsRepo.setMissionOrigin).toHaveBeenCalledWith('m1', { lat: 48.8566, lng: 2.3522 })
-    )
+    expect(missionsRepo.setMissionOrigin).toHaveBeenCalledWith('m1', { lat: 48.8566, lng: 2.3522 })
     const siteMapView = await screen.findByTestId('site-map-view')
     expect(siteMapView).toBeInTheDocument()
     // SiteMapView must be scoped to the exterior Plan's id ('p1'), not the
@@ -199,7 +239,7 @@ describe('MissionWorkspace', () => {
 
     render(<MissionWorkspace />)
     await advanceToOriginSetting()
-    fireEvent.click(screen.getByText('simulate-map-click'))
+    await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
 
     const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
@@ -221,7 +261,7 @@ describe('MissionWorkspace', () => {
 
     render(<MissionWorkspace />)
     await advanceToOriginSetting()
-    fireEvent.click(screen.getByText('simulate-map-click'))
+    await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
     const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
     fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
@@ -285,7 +325,11 @@ describe('MissionWorkspace', () => {
 
     render(<MissionWorkspace />)
     await advanceToOriginSetting()
-    fireEvent.click(screen.getByText('simulate-map-click'))
+    await advanceToReadyNoInterior({
+      ...missionAfterGlobalAssessment,
+      originLat: missionWithOrigin.originLat,
+      originLng: missionWithOrigin.originLng,
+    })
     await screen.findByTestId('site-map-view') // confirms ready-no-interior was reached
 
     const bar = screen.getByTestId('global-assessment-bar')

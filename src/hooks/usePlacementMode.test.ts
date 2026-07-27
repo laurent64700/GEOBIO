@@ -2,32 +2,36 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { usePlacementMode } from './usePlacementMode'
 import * as phenomenaRepo from '../data/phenomenaRepo'
+import * as contextObjectsRepo from '../data/contextObjectsRepo'
 import * as freeformNetworksRepo from '../data/freeformNetworksRepo'
-import * as feltPointsRepo from '../data/feltPointsRepo'
+import * as feltSegmentsRepo from '../data/feltSegmentsRepo'
 
 vi.mock('../data/phenomenaRepo')
+vi.mock('../data/contextObjectsRepo')
 vi.mock('../data/freeformNetworksRepo')
-vi.mock('../data/feltPointsRepo')
+vi.mock('../data/feltSegmentsRepo')
 
 const MISSION_ORIGIN = { lat: 48.8566, lng: 2.3522 }
 const MAP_CLICK_LATLNG = { lat: 48.8567, lng: 2.3523 }
 
 function setup() {
   const onPhenomenonCreated = vi.fn()
+  const onContextObjectCreated = vi.fn()
   const onFreeformNetworkCreated = vi.fn()
-  const onFeltPointCreated = vi.fn()
+  const onFeltSegmentCreated = vi.fn()
   const onError = vi.fn()
   const rendered = renderHook(() =>
     usePlacementMode({
       planId: 'p1',
       missionOrigin: MISSION_ORIGIN,
       onPhenomenonCreated,
+      onContextObjectCreated,
       onFreeformNetworkCreated,
-      onFeltPointCreated,
+      onFeltSegmentCreated,
       onError,
     })
   )
-  return { ...rendered, onPhenomenonCreated, onFreeformNetworkCreated, onFeltPointCreated, onError }
+  return { ...rendered, onPhenomenonCreated, onContextObjectCreated, onFreeformNetworkCreated, onFeltSegmentCreated, onError }
 }
 
 describe('usePlacementMode', () => {
@@ -179,6 +183,67 @@ describe('usePlacementMode', () => {
       2,
       expect.objectContaining({ planId: 'p1', kind: 'spire-vortex' })
     )
+  })
+
+  it('places several context objects of the same kind in a row without needing to reselect the kind', async () => {
+    vi.mocked(contextObjectsRepo.createContextObject)
+      .mockResolvedValueOnce({
+        id: 'co1', planId: 'p1', kind: 'arbre-chene', x: 1, y: 1, createdAt: '2026-07-27T10:00:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: 'co2', planId: 'p1', kind: 'arbre-chene', x: 2, y: 2, createdAt: '2026-07-27T10:01:00Z',
+      })
+
+    const { result, onContextObjectCreated } = setup()
+
+    act(() => {
+      result.current.handleSelectContextObjectKind('arbre-chene')
+    })
+    expect(result.current.placementMode).toEqual({ kind: 'context-object', contextObjectKind: 'arbre-chene' })
+
+    act(() => {
+      result.current.handleMapClick(MAP_CLICK_LATLNG)
+    })
+    await waitFor(() => expect(contextObjectsRepo.createContextObject).toHaveBeenCalledTimes(1))
+
+    // The kind must still be armed after the first placement — no
+    // reselection — proving placementMode survived the click.
+    expect(result.current.placementMode).toEqual({ kind: 'context-object', contextObjectKind: 'arbre-chene' })
+
+    act(() => {
+      result.current.handleMapClick(MAP_CLICK_LATLNG)
+    })
+    await waitFor(() => expect(contextObjectsRepo.createContextObject).toHaveBeenCalledTimes(2))
+
+    expect(onContextObjectCreated).toHaveBeenCalledTimes(2)
+  })
+
+  it('deselects context-object placement mode when the active kind is selected again', () => {
+    const { result } = setup()
+
+    act(() => {
+      result.current.handleSelectContextObjectKind('puits')
+    })
+    expect(result.current.placementMode).toEqual({ kind: 'context-object', contextObjectKind: 'puits' })
+
+    act(() => {
+      result.current.handleSelectContextObjectKind(null)
+    })
+    expect(result.current.placementMode).toBeNull()
+  })
+
+  it('surfaces a failed context-object save via onError', async () => {
+    vi.mocked(contextObjectsRepo.createContextObject).mockRejectedValue(new Error('network down'))
+    const { result, onError } = setup()
+
+    act(() => {
+      result.current.handleSelectContextObjectKind('puits')
+    })
+    act(() => {
+      result.current.handleMapClick(MAP_CLICK_LATLNG)
+    })
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith('network down'))
   })
 
   it('selecting a phenomenon kind while a grid-origin request is pending does not strand GridCreationPanel', () => {
@@ -359,55 +424,94 @@ describe('usePlacementMode', () => {
     expect(onFreeformNetworkCreated).toHaveBeenCalledTimes(1)
   })
 
-  it('arms felt-point placement mode when a network is selected, and creates a FeltPoint on map click', async () => {
-    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
-      id: 'fp1', planId: 'p1', networkName: 'Hartmann', x: 0, y: 0, createdAt: '2026-07-22T10:00:00Z',
-    })
-    const onFeltPointCreated = vi.fn()
-    const { result } = renderHook(() =>
-      usePlacementMode({
-        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
-        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
-        onFeltPointCreated, onError: vi.fn(),
-      })
-    )
-
+  it('arms felt-point mode with a default bearing (first of the network\'s family) when a network is selected', () => {
+    const { result } = setup()
     act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
-    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann' })
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann', bearingDeg: 0 })
+  })
 
-    await act(async () => result.current.handleMapClick({ lat: 48.8567, lng: 2.3523 }))
+  it('falls back to the default [0, 90] family for a custom (non-family) network name', () => {
+    const { result } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Réseau X'))
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Réseau X', bearingDeg: 0 })
+  })
 
-    expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith(
-      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
-    )
-    expect(onFeltPointCreated).toHaveBeenCalledWith(expect.objectContaining({ networkName: 'Hartmann' }))
+  it('lets the armed bearing be changed via handleSelectFeltPointBearing', () => {
+    const { result } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    act(() => result.current.handleSelectFeltPointBearing(90))
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann', bearingDeg: 90 })
   })
 
   it('selecting the same felt-point network again deselects it', () => {
-    const { result } = renderHook(() =>
-      usePlacementMode({
-        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
-        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
-        onFeltPointCreated: vi.fn(), onError: vi.fn(),
-      })
-    )
+    const { result } = setup()
     act(() => result.current.handleSelectFeltPointNetwork('Curry'))
     act(() => result.current.handleSelectFeltPointNetwork('Curry'))
     expect(result.current.placementMode).toBeNull()
   })
 
-  it('routes a failed FeltPoint save through onError', async () => {
-    vi.mocked(feltPointsRepo.createFeltPoint).mockRejectedValue(new Error('network down'))
-    const onError = vi.fn()
-    const { result } = renderHook(() =>
-      usePlacementMode({
-        planId: 'p1', missionOrigin: { lat: 48.8566, lng: 2.3522 },
-        onPhenomenonCreated: vi.fn(), onFreeformNetworkCreated: vi.fn(),
-        onFeltPointCreated: vi.fn(), onError,
-      })
+  it('a map click while felt-point mode is armed computes a 1m segment (centered on the click, along the armed bearing) and holds it pending — does not save yet', () => {
+    const { result } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann')) // bearingDeg 0 (N/S)
+
+    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
+
+    expect(feltSegmentsRepo.createFeltSegment).not.toHaveBeenCalled()
+    expect(result.current.pendingFeltSegment).not.toBeNull()
+    expect(result.current.pendingFeltSegment!.networkName).toBe('Hartmann')
+    // Bearing 0 (N/S) — the segment runs along y, centered on the clicked
+    // point, 1m total length (0.5m each side); x is unchanged.
+    const { pointA, pointB } = result.current.pendingFeltSegment!
+    expect(pointA.x).toBeCloseTo(pointB.x, 6)
+    expect(Math.abs(pointA.y - pointB.y)).toBeCloseTo(1, 6)
+    // Placement mode stays armed (mirrors freeform's pendingFreeformTrace
+    // pattern) so the picker keeps showing the network as active while the
+    // polarity form is open.
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann', bearingDeg: 0 })
+  })
+
+  it('submitting the polarity form saves the pending segment and clears pending/placement state on success', async () => {
+    vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 0, y: -0.5 }, pointB: { x: 0, y: 0.5 },
+      polarityA: '+', polarityB: '-', createdAt: '2026-07-22T10:00:00Z',
+    })
+    const { result, onFeltSegmentCreated } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
+
+    await act(async () => result.current.handleSubmitFeltSegmentPolarity('+', '-'))
+
+    expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann', polarityA: '+', polarityB: '-' })
     )
-    act(() => result.current.handleSelectFeltPointNetwork('Palm'))
-    await act(async () => result.current.handleMapClick({ lat: 48.8567, lng: 2.3523 }))
-    expect(onError).toHaveBeenCalledWith('network down')
+    expect(onFeltSegmentCreated).toHaveBeenCalledWith(expect.objectContaining({ networkName: 'Hartmann' }))
+    expect(result.current.pendingFeltSegment).toBeNull()
+    expect(result.current.placementMode).toBeNull()
+  })
+
+  it('cancelling the polarity form discards the pending segment without saving', () => {
+    const { result } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
+
+    act(() => result.current.handleCancelFeltSegment())
+
+    expect(feltSegmentsRepo.createFeltSegment).not.toHaveBeenCalled()
+    expect(result.current.pendingFeltSegment).toBeNull()
+    expect(result.current.placementMode).toBeNull()
+  })
+
+  it('routes a failed segment save through its own dismissible feltSegmentSaveError, not the global onError — leaves the pending segment intact so the user can retry', async () => {
+    vi.mocked(feltSegmentsRepo.createFeltSegment).mockRejectedValue(new Error('network down'))
+    const { result, onError } = setup()
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
+
+    await act(async () => result.current.handleSubmitFeltSegmentPolarity('+', '-'))
+
+    expect(onError).not.toHaveBeenCalled()
+    expect(result.current.feltSegmentSaveError).toBe('network down')
+    expect(result.current.pendingFeltSegment).not.toBeNull()
   })
 })

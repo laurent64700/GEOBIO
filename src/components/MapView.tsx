@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
-import { MapContainer, TileLayer, useMapEvents } from 'react-leaflet'
+import { useEffect } from 'react'
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
 // IGN Géoplateforme WMTS endpoint (data.geopf.fr) — free, keyless access to
@@ -21,11 +23,26 @@ function ClickHandler({ onMapClick }: { onMapClick: (latlng: { lat: number; lng:
   return null
 }
 
+// Fits the view to `bounds` exactly once, on mount — e.g. after a parcel
+// selection is confirmed, so the map recenters/zooms to that selection
+// without fighting the `center`/`zoom` props that every other caller relies
+// on for their initial view.
+function FitBoundsOnce({ bounds }: { bounds: LatLngBoundsExpression }) {
+  const map = useMap()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    map.fitBounds(bounds)
+  }, [])
+  return null
+}
+
 export interface MapViewProps {
   /** [latitude, longitude] */
   center: [number, number]
   zoom?: number
   onMapClick?: (latlng: { lat: number; lng: number }) => void
+  /** When provided, the view fits to these bounds once on mount instead of using center/zoom directly. */
+  fitBounds?: LatLngBoundsExpression
   children?: ReactNode
 }
 
@@ -43,7 +60,7 @@ export interface MapViewProps {
 const MAX_UI_ZOOM = 21
 const MAX_NATIVE_TILE_ZOOM = 19
 
-export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProps) {
+export function MapView({ center, zoom = 18, onMapClick, fitBounds, children }: MapViewProps) {
   return (
     <MapContainer
       center={center}
@@ -73,6 +90,7 @@ export function MapView({ center, zoom = 18, onMapClick, children }: MapViewProp
         maxNativeZoom={MAX_NATIVE_TILE_ZOOM}
       />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}
+      {fitBounds && <FitBoundsOnce bounds={fitBounds} />}
       {children}
     </MapContainer>
   )

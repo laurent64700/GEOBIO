@@ -29,7 +29,7 @@ describe('fetchBuildingsInBounds', () => {
     vi.stubGlobal('fetch', vi.fn())
   })
 
-  it('parses building features into ringsLatLng, using lat,lng BBOX axis order', async () => {
+  it('parses building features into ringsLatLng, using lng,lat BBOX axis order (verified live 2026-07-23)', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(sampleGeoJson),
@@ -42,7 +42,7 @@ describe('fetchBuildingsInBounds', () => {
 
     const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
     expect(calledUrl).toContain('TYPENAME=BDTOPO_V3:batiment')
-    expect(calledUrl).toContain('BBOX=48.85,2.35,48.86,2.36,EPSG:4326')
+    expect(calledUrl).toContain('BBOX=2.35,48.85,2.36,48.86,EPSG:4326')
   })
 
   it('parses a MultiPolygon building into one candidate per disjoint part, with numeric coordinates', async () => {

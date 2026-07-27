@@ -11,28 +11,33 @@ const phenomena: Phenomenon[] = [
 ]
 
 describe('PhenomenaLayer', () => {
-  it('renders one marker per phenomenon', () => {
+  it('renders one icon marker per phenomenon', () => {
     const { container } = render(
       <MapContainer center={[48.8566, 2.3522]} zoom={18}>
         <PhenomenaLayer phenomena={phenomena} missionOrigin={missionOrigin} visible />
       </MapContainer>
     )
-    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(2)
+    expect(container.querySelectorAll('.leaflet-marker-icon')).toHaveLength(2)
   })
 
-  it('labels each marker with its kind\'s placeholder text code', () => {
-    // The permanent Tooltip mounts its content synchronously on first
-    // render (unlike a hover-triggered Tooltip), so no mouseover/waitFor
-    // simulation is needed here. This is the assertion that actually
-    // distinguishes PhenomenaLayer from FeltPointsLayer: without it, a
-    // scrambled or missing KIND_LABELS entry would pass every other test.
+  it('gives the cheminee-2 marker its "2" branch-count badge, and the vortex marker none', () => {
     const { container } = render(
       <MapContainer center={[48.8566, 2.3522]} zoom={18}>
         <PhenomenaLayer phenomena={phenomena} missionOrigin={missionOrigin} visible />
       </MapContainer>
     )
-    expect(container.textContent).toContain('Vx')
-    expect(container.textContent).toContain('Ch2')
+    const markers = container.querySelectorAll('.leaflet-marker-icon')
+    expect(markers[0].querySelector('.geobio-icon-badge')).toBeNull() // spire-vortex
+    expect(markers[1].querySelector('.geobio-icon-badge')?.textContent).toBe('2') // cheminee-2
+  })
+
+  it('renders real SVG icon markup for each marker, not a placeholder text code', () => {
+    const { container } = render(
+      <MapContainer center={[48.8566, 2.3522]} zoom={18}>
+        <PhenomenaLayer phenomena={[phenomena[0]]} missionOrigin={missionOrigin} visible />
+      </MapContainer>
+    )
+    expect(container.querySelector('.leaflet-marker-icon svg')).not.toBeNull()
   })
 
   it('renders nothing when visible is false', () => {
@@ -41,7 +46,7 @@ describe('PhenomenaLayer', () => {
         <PhenomenaLayer phenomena={phenomena} missionOrigin={missionOrigin} visible={false} />
       </MapContainer>
     )
-    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+    expect(container.querySelectorAll('.leaflet-marker-icon')).toHaveLength(0)
   })
 
   it('renders nothing when there are no phenomena', () => {
@@ -50,6 +55,6 @@ describe('PhenomenaLayer', () => {
         <PhenomenaLayer phenomena={[]} missionOrigin={missionOrigin} visible />
       </MapContainer>
     )
-    expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(0)
+    expect(container.querySelectorAll('.leaflet-marker-icon')).toHaveLength(0)
   })
 })

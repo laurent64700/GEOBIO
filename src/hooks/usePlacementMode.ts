@@ -1,12 +1,23 @@
 import { useCallback, useState } from 'react'
 import { createPhenomenon } from '../data/phenomenaRepo'
+import { createContextObject } from '../data/contextObjectsRepo'
 import { createFreeformNetwork } from '../data/freeformNetworksRepo'
-import { createFeltPoint } from '../data/feltPointsRepo'
+import { createFeltSegment } from '../data/feltSegmentsRepo'
+import { allowedBearingsForNetwork } from '../domain/networkBearings'
+import { computeGuideLineEndpoints } from '../geometry/guideLine'
 import type { FreeformMetadata } from '../components/FreeformMetadataForm'
 import type {
-  Point, PhenomenonKind, Phenomenon, FreeformNetworkKind, FreeformNetwork, FeltPoint,
+  Point, PhenomenonKind, Phenomenon, ContextObjectKind, ContextObject,
+  FreeformNetworkKind, FreeformNetwork, FeltSegment, GridLinePolarity,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
+
+// Segment length placed for a network felt point (spec: "une ligne (1M)") —
+// half on each side of the clicked center point.
+const FELT_SEGMENT_HALF_LENGTH_M = 0.5
+// Same fallback family FeltPointPicker uses for a custom ("Autre") network
+// with no known bearing family.
+const DEFAULT_BEARING_FAMILY: [number, number] = [0, 90]
 
 // Discriminated union for the single map-click "mode" that's currently
 // active. Grid-origin placement, guide-line placement, phenomenon placement
@@ -18,19 +29,24 @@ export type PlacementMode =
   | { kind: 'grid-origin' }
   | { kind: 'guide-line' }
   | { kind: 'phenomenon'; phenomenonKind: PhenomenonKind }
+  | { kind: 'context-object'; contextObjectKind: ContextObjectKind }
   | { kind: 'freeform'; freeformKind: FreeformNetworkKind }
-  | { kind: 'felt-point'; networkName: string }
+  | { kind: 'felt-point'; networkName: string; bearingDeg: number }
   | null
 
 export interface UsePlacementModeArgs {
   planId: string
   missionOrigin: LatLng
   onPhenomenonCreated: (phenomenon: Phenomenon) => void
+  onContextObjectCreated: (contextObject: ContextObject) => void
   onFreeformNetworkCreated: (network: FreeformNetwork) => void
-  onFeltPointCreated: (feltPoint: FeltPoint) => void
+  onFeltSegmentCreated: (feltSegment: FeltSegment) => void
   // Only for handlePlacePhenomenon's failure path (a real load/action failure
-  // with no better place to go) — NOT for handleSubmitFreeformMetadata's
-  // failure path, which uses its own internal freeformSaveError instead.
+  // with no better place to go) — NOT for handleSubmitFreeformMetadata's or
+  // handleSubmitFeltSegmentPolarity's failure paths, which use their own
+  // internal dismissible error state instead (freeformSaveError /
+  // feltSegmentSaveError) so a failed optional/retryable save never blanks
+  // the whole map.
   onError: (message: string) => void
 }
 
@@ -38,8 +54,9 @@ export function usePlacementMode({
   planId,
   missionOrigin,
   onPhenomenonCreated,
+  onContextObjectCreated,
   onFreeformNetworkCreated,
-  onFeltPointCreated,
+  onFeltSegmentCreated,
   onError,
 }: UsePlacementModeArgs) {
   const [placementMode, setPlacementMode] = useState<PlacementMode>(null)
@@ -65,6 +82,14 @@ export function usePlacementMode({
   // a successful save or on cancelling the metadata form, so a later new
   // trace doesn't start with a stale error message showing.
   const [freeformSaveError, setFreeformSaveError] = useState<string | null>(null)
+  // Holds the computed (not-yet-saved) 1m segment between a felt-point map
+  // click and the polarity form being submitted/cancelled — mirrors
+  // pendingFreeformTrace's role for the freeform flow exactly.
+  const [pendingFeltSegment, setPendingFeltSegment] = useState<{ networkName: string; pointA: Point; pointB: Point } | null>(null)
+  // Mirrors freeformSaveError: a failed segment save is optional/retryable
+  // (the trace is already computed, only the persistence step failed), so it
+  // must never blank the whole map via the page-blocking onError path.
+  const [feltSegmentSaveError, setFeltSegmentSaveError] = useState<string | null>(null)
 
   // Setting placementMode to a new value structurally replaces whatever mode
   // (if any) was previously active — see PlacementMode's doc comment above.
@@ -149,6 +174,26 @@ export function usePlacementMode({
     }
   }
 
+  // Mirrors handleSelectPhenomenonKind/handlePlacePhenomenon exactly — a
+  // context object has no extra metadata to fill in beyond kind+position, so
+  // it saves immediately on click, same as a phenomenon.
+  function handleSelectContextObjectKind(kind: ContextObjectKind | null) {
+    if (kind === null) {
+      setPlacementMode(null)
+      return
+    }
+    startPlacementMode({ kind: 'context-object', contextObjectKind: kind })
+  }
+
+  async function handlePlaceContextObject(local: Point, kind: ContextObjectKind) {
+    try {
+      const created = await createContextObject({ planId, kind, x: local.x, y: local.y })
+      onContextObjectCreated(created)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   // Arms/disarms felt-point placement mode — mirrors handleSelectPhenomenonKind:
   // selecting a network arms placement for the next map click; selecting the
   // already-armed network again (or passing null, e.g. FeltPointPicker's own
@@ -157,6 +202,11 @@ export function usePlacementMode({
   // handleSelectPhenomenonKind: cancelling out of felt-point mode can't ever
   // be interrupting a freeform drag (placementMode is 'felt-point' at that
   // point, not 'freeform'), so there's nothing to guard against.
+  //
+  // Arms with a default bearing — the first of the network's known angle
+  // family (allowedBearingsForNetwork), or [0, 90] for a custom network with
+  // no known family — so a map click is always immediately valid; the user
+  // can still switch it via handleSelectFeltPointBearing before clicking.
   function handleSelectFeltPointNetwork(networkName: string | null) {
     if (networkName === null) {
       setPlacementMode(null)
@@ -166,16 +216,48 @@ export function usePlacementMode({
       setPlacementMode(null)
       return
     }
-    startPlacementMode({ kind: 'felt-point', networkName })
+    const [defaultBearing] = allowedBearingsForNetwork(networkName) ?? DEFAULT_BEARING_FAMILY
+    startPlacementMode({ kind: 'felt-point', networkName, bearingDeg: defaultBearing })
   }
 
-  async function handlePlaceFeltPoint(local: Point, networkName: string) {
+  // Switches the orientation of the segment about to be placed, without
+  // otherwise disturbing placement mode — only meaningful while 'felt-point'
+  // is already armed (FeltPointPicker only renders these buttons then).
+  function handleSelectFeltPointBearing(bearingDeg: number) {
+    if (placementMode?.kind !== 'felt-point') return
+    setPlacementMode({ ...placementMode, bearingDeg })
+  }
+
+  async function handleSubmitFeltSegmentPolarity(polarityA: GridLinePolarity, polarityB: GridLinePolarity) {
+    if (!pendingFeltSegment) return
     try {
-      const created = await createFeltPoint({ planId, networkName, x: local.x, y: local.y })
-      onFeltPointCreated(created)
+      const created = await createFeltSegment({
+        planId,
+        networkName: pendingFeltSegment.networkName,
+        pointA: pendingFeltSegment.pointA,
+        pointB: pendingFeltSegment.pointB,
+        polarityA,
+        polarityB,
+      })
+      onFeltSegmentCreated(created)
+      // Only clear on SUCCESS — a failed save must leave the pending segment
+      // and the polarity form alone so the user can retry without re-clicking
+      // the map (same reasoning as handleSubmitFreeformMetadata).
+      setPendingFeltSegment(null)
+      setPlacementMode(null)
+      setFeltSegmentSaveError(null)
     } catch (err) {
-      onError(err instanceof Error ? err.message : String(err))
+      setFeltSegmentSaveError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  function handleCancelFeltSegment() {
+    // Nothing was persisted yet at this point (creation only happens on
+    // submit), so discarding the pending state is enough — no delete call
+    // needed, same as handleCancelFreeformMetadata.
+    setPendingFeltSegment(null)
+    setPlacementMode(null)
+    setFeltSegmentSaveError(null)
   }
 
   // A toggle, mirroring PhenomenonPicker's own "click the active kind again
@@ -296,9 +378,21 @@ export function usePlacementMode({
       // click. Laurent explicitly deselects via PhenomenonPicker (clicking
       // the active kind again) or by selecting a different kind.
     }
-    if (placementMode?.kind === 'felt-point') {
+    if (placementMode?.kind === 'context-object') {
       const local = latLngToLocal(latlng, missionOrigin)
-      handlePlaceFeltPoint(local, placementMode.networkName)
+      handlePlaceContextObject(local, placementMode.contextObjectKind)
+      // Same reasoning as phenomenon above: placing several trees/fence
+      // posts in a row along a boundary shouldn't require re-selecting.
+    }
+    if (placementMode?.kind === 'felt-point') {
+      // Hand off to the polarity form rather than saving immediately —
+      // mirrors handleFreeformTraceComplete. placementMode deliberately
+      // stays 'felt-point' so FeltPointPicker keeps showing the armed
+      // network/bearing while the form is open, until it's
+      // submitted/cancelled.
+      const local = latLngToLocal(latlng, missionOrigin)
+      const [pointA, pointB] = computeGuideLineEndpoints(local, placementMode.bearingDeg, FELT_SEGMENT_HALF_LENGTH_M)
+      setPendingFeltSegment({ networkName: placementMode.networkName, pointA, pointB })
     }
   }
 
@@ -349,7 +443,10 @@ export function usePlacementMode({
     gridCreationKey,
     pendingFreeformTrace,
     freeformSaveError,
+    pendingFeltSegment,
+    feltSegmentSaveError,
     setFreeformSaveError,
+    setFeltSegmentSaveError,
     setCustomBearingInput,
     setGuideLineBearing,
     startPlacementMode,
@@ -358,7 +455,11 @@ export function usePlacementMode({
     handleClearGuideLine,
     handleValidateCustomBearing,
     handleSelectPhenomenonKind,
+    handleSelectContextObjectKind,
     handleSelectFeltPointNetwork,
+    handleSelectFeltPointBearing,
+    handleSubmitFeltSegmentPolarity,
+    handleCancelFeltSegment,
     handleStartFreeformTrace,
     handleFreeformTraceComplete,
     handleSubmitFreeformMetadata,

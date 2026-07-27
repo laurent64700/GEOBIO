@@ -3,6 +3,8 @@ import { render } from '@testing-library/react'
 import { MapContainer } from 'react-leaflet'
 import type { Map as LeafletMap, Polyline as LeafletPolyline } from 'leaflet'
 import { EditableNetworkLine } from './EditableNetworkLine'
+import { lineWeightForZoom } from '../geometry/lineWeightForZoom'
+import { widthForNetwork } from '../domain/networkWidths'
 import type { GridLine } from '../domain/types'
 
 const line: GridLine = {
@@ -18,6 +20,7 @@ describe('EditableNetworkLine', () => {
         <EditableNetworkLine
           line={line}
           color="#d32f2f"
+          networkName="Curry"
           missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
           editable={false}
           onChanged={vi.fn()}
@@ -26,7 +29,9 @@ describe('EditableNetworkLine', () => {
     )
     const path = container.querySelector('path.leaflet-interactive')
     expect(path?.getAttribute('stroke')).toBe('#d32f2f')
-    expect(path?.getAttribute('stroke-width')).toBe('4')
+    expect(Number(path?.getAttribute('stroke-width'))).toBeCloseTo(
+      lineWeightForZoom(widthForNetwork('Curry'), 48.8566, 18, true), 4
+    )
     expect(path?.getAttribute('stroke-dasharray')).toBe('6, 4')
   })
 
@@ -43,6 +48,7 @@ describe('EditableNetworkLine', () => {
         <EditableNetworkLine
           line={line}
           color="#d32f2f"
+          networkName="Curry"
           missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
           editable
           onChanged={onChanged}

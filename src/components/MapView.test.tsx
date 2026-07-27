@@ -1,8 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+import L from 'leaflet'
 import { MapView } from './MapView'
 
 describe('MapView', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('renders a Leaflet map container', () => {
     render(<MapView center={[48.8566, 2.3522]} />)
     expect(document.querySelector('.leaflet-container')).not.toBeNull()
@@ -35,5 +40,25 @@ describe('MapView', () => {
       </MapView>
     )
     expect(screen.getByTestId('child-layer')).toBeInTheDocument()
+  })
+
+  it('fits the view to the given bounds once on mount when fitBounds is provided', () => {
+    const fitBoundsSpy = vi.spyOn(L.Map.prototype, 'fitBounds')
+    render(
+      <MapView
+        center={[48.8566, 2.3522]}
+        fitBounds={[
+          [48.8560, 2.3510],
+          [48.8570, 2.3530],
+        ]}
+      />
+    )
+    expect(fitBoundsSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call fitBounds when the prop is not provided', () => {
+    const fitBoundsSpy = vi.spyOn(L.Map.prototype, 'fitBounds')
+    render(<MapView center={[48.8566, 2.3522]} />)
+    expect(fitBoundsSpy).not.toHaveBeenCalled()
   })
 })

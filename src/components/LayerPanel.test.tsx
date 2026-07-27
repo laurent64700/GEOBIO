@@ -7,6 +7,8 @@ import {
   PATHOGENIC_CROSSINGS_LAYER_ID,
   PHENOMENA_LAYER_ID,
   FREEFORM_NETWORK_LAYER_ID,
+  INTERIOR_PLAN_LAYER_ID,
+  CONTEXT_OBJECTS_LAYER_ID,
 } from './LayerPanel'
 
 describe('LayerPanel', () => {
@@ -140,6 +142,54 @@ describe('LayerPanel', () => {
     )
     fireEvent.click(screen.getByLabelText(/tracés eau\/faille/i))
     expect(onToggle).toHaveBeenCalledWith(FREEFORM_NETWORK_LAYER_ID)
+  })
+
+  it('shows "Plan intérieur calé" checked by default (real field data confirmation, not an auxiliary layer)', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText('Plan intérieur calé')).toBeChecked()
+  })
+
+  it('calls onToggle with INTERIOR_PLAN_LAYER_ID when the interior-plan checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('Plan intérieur calé'))
+    expect(onToggle).toHaveBeenCalledWith(INTERIOR_PLAN_LAYER_ID)
+  })
+
+  it('shows "Objets de contexte" checked by default (real field data, like felt points/segments)', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/objets de contexte/i)).toBeChecked()
+  })
+
+  it('calls onToggle with CONTEXT_OBJECTS_LAYER_ID when the context-objects checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText(/objets de contexte/i))
+    expect(onToggle).toHaveBeenCalledWith(CONTEXT_OBJECTS_LAYER_ID)
   })
 
   it('respects explicit visibility overrides', () => {

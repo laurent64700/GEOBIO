@@ -14,11 +14,15 @@ import '@geoman-io/leaflet-geoman-free'
 import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css'
 import { localToLatLng, latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { applyAllVertices } from '../geometry/lineEditing'
+import { widthForNetwork } from '../domain/networkWidths'
+import { lineWeightForZoom } from '../geometry/lineWeightForZoom'
+import { useMapZoom } from '../hooks/useMapZoom'
 import type { GridLine } from '../domain/types'
 
 export interface EditableNetworkLineProps {
   line: GridLine
   color: string
+  networkName: string
   missionOrigin: LatLng
   editable: boolean
   onChanged: (updated: GridLine, changeKind: 'drag' | 'vertex-added') => void
@@ -35,9 +39,11 @@ export interface EditableNetworkLineProps {
  * accepted limitation, see that spec's §4.2 — not something this component tries to
  * de-duplicate.
  */
-export function EditableNetworkLine({ line, color, missionOrigin, editable, onChanged }: EditableNetworkLineProps) {
+export function EditableNetworkLine({ line, color, networkName, missionOrigin, editable, onChanged }: EditableNetworkLineProps) {
   const layerRef = useRef<LeafletPolyline & { pm?: { enable: () => void; disable: () => void } }>(null)
   useMap() // ensures this only ever renders inside a MapContainer
+  const zoom = useMapZoom()
+  const realWidthM = widthForNetwork(networkName)
 
   useEffect(() => {
     const layer = layerRef.current
@@ -86,7 +92,7 @@ export function EditableNetworkLine({ line, color, missionOrigin, editable, onCh
       pathOptions={{
         color,
         dashArray: line.polarity === '-' ? '6, 4' : undefined,
-        weight: line.reinforced ? 4 : 2,
+        weight: lineWeightForZoom(realWidthM, missionOrigin.lat, zoom, line.reinforced),
       }}
     />
   )

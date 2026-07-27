@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createGridLines, listGridLinesForInstance, updateAdjustedPoints } from './gridLinesRepo'
+import { createGridLines, listGridLinesForInstance, updateAdjustedPoints, updateLinePoints } from './gridLinesRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -69,5 +69,31 @@ describe('gridLinesRepo', () => {
     expect(chain.eq).toHaveBeenCalledWith('id', 'gl1')
     expect(chain.update).toHaveBeenCalledWith({ adjusted_points: [{ x: 0.3, y: -3 }, { x: 0, y: 3 }] })
     expect(line.adjustedPoints).toEqual([{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
+  })
+
+  it('updates both theoretical and adjusted points of a line (grid recalibration)', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+        theoretical_points: [{ x: 2, y: -1 }, { x: 2, y: 5 }],
+        adjusted_points: [{ x: 2.4, y: -1 }, { x: 2, y: 5 }],
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const line = await updateLinePoints(
+      'gl1',
+      [{ x: 2, y: -1 }, { x: 2, y: 5 }],
+      [{ x: 2.4, y: -1 }, { x: 2, y: 5 }]
+    )
+
+    expect(chain.eq).toHaveBeenCalledWith('id', 'gl1')
+    expect(chain.update).toHaveBeenCalledWith({
+      theoretical_points: [{ x: 2, y: -1 }, { x: 2, y: 5 }],
+      adjusted_points: [{ x: 2.4, y: -1 }, { x: 2, y: 5 }],
+    })
+    expect(line.theoreticalPoints).toEqual([{ x: 2, y: -1 }, { x: 2, y: 5 }])
+    expect(line.adjustedPoints).toEqual([{ x: 2.4, y: -1 }, { x: 2, y: 5 }])
   })
 })

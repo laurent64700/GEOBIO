@@ -7,10 +7,13 @@ import { PlanCalibrationTool } from '../components/PlanCalibrationTool'
 import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
 import { GlobalAssessmentBar } from '../components/GlobalAssessmentBar'
 import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
+import { ParcelSelectionStep } from '../components/ParcelSelectionStep'
 import { createPlan } from '../data/plansRepo'
-import { setMissionOrigin, setGlobalAssessment, type GlobalAssessmentInput } from '../data/missionsRepo'
+import { setMissionOrigin, setGlobalAssessment, setSelectedParcels, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
 import { geocodeAddress } from '../data/geocodingService'
+import type { CadastralParcel } from '../data/cadastreService'
+import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
 import type { AffineTransform, Mission, Plan } from '../domain/types'
 import type { LatLng } from '../geometry/localCoordinates'
 import type { ResumePhase } from './deriveResumePhase'
@@ -40,7 +43,8 @@ type WorkspacePhase =
   | { name: 'creating-exterior-plan'; mission: Mission }
   | { name: 'global-assessment'; mission: Mission; exteriorPlan: Plan }
   | { name: 'setting-origin'; mission: Mission; exteriorPlan: Plan; mapCenter: [number, number] }
-  | { name: 'ready-no-interior'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'selecting-parcels'; mission: Mission; exteriorPlan: Plan }
+  | { name: 'ready-no-interior'; mission: Mission; exteriorPlan: Plan; fitBounds?: SimpleLatLngBounds }
   | { name: 'calibrating-interior'; mission: Mission; exteriorPlan: Plan; imageUrl: string }
   | { name: 'error'; message: string }
 
@@ -87,7 +91,19 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
     if (phase.name !== 'setting-origin') return
     try {
       const updated = await setMissionOrigin(phase.mission.id, latlng)
-      setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan })
+      setPhase({ name: 'selecting-parcels', mission: updated, exteriorPlan: phase.exteriorPlan })
+    } catch (err) {
+      setPhase({ name: 'error', message: messageOf(err) })
+    }
+  }
+
+  async function handleParcelsSelected(selectedParcels: CadastralParcel[]) {
+    if (phase.name !== 'selecting-parcels') return
+    try {
+      const parcelIds = selectedParcels.map((p) => p.id)
+      const updated = await setSelectedParcels(phase.mission.id, parcelIds)
+      const fitBounds = boundsOfParcels(selectedParcels) ?? undefined
+      setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan, fitBounds })
     } catch (err) {
       setPhase({ name: 'error', message: messageOf(err) })
     }
@@ -145,6 +161,16 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
         </div>
       )
 
+    case 'selecting-parcels': {
+      const { originLat, originLng } = phase.mission
+      return (
+        <ParcelSelectionStep
+          missionOrigin={{ lat: originLat!, lng: originLng! }}
+          onConfirm={handleParcelsSelected}
+        />
+      )
+    }
+
     case 'ready-no-interior': {
       // originLat/originLng are guaranteed non-null here: this phase is only
       // ever entered via setMissionOrigin's successful response (above) or
@@ -159,6 +185,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
               missionId={phase.mission.id}
               missionOrigin={{ lat: originLat!, lng: originLng! }}
               initialBuildingFootprint={phase.mission.buildingFootprint}
+              fitBounds={phase.fitBounds}
             />
           </div>
           <label>

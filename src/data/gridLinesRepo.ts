@@ -67,3 +67,22 @@ export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point
   if (error) throw new Error(`Impossible de mettre à jour la ligne : ${error.message}`)
   return mapRowToGridLine(data as GridLineRow)
 }
+
+// Used by grid recalibration (translateGridLine shifts BOTH point arrays by
+// the same rigid delta, unlike a felt-adjustment drag which only ever
+// touches adjustedPoints via updateAdjustedPoints above).
+export async function updateLinePoints(
+  lineId: string,
+  theoreticalPoints: Point[],
+  adjustedPoints: Point[]
+): Promise<GridLine> {
+  const { data, error } = await supabase
+    .from('grid_line')
+    .update({ theoretical_points: theoreticalPoints, adjusted_points: adjustedPoints })
+    .eq('id', lineId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de recaler la ligne : ${error.message}`)
+  return mapRowToGridLine(data as GridLineRow)
+}

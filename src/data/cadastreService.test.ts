@@ -43,7 +43,7 @@ describe('fetchParcelsInBounds', () => {
     expect(parcels[0].ringsLatLng[0][0]).toEqual({ lat: 48.85, lng: 2.35 })
   })
 
-  it('builds the BBOX in lat,lng axis order (per WFS 2.0.0 + EPSG:4326 convention)', async () => {
+  it('builds the BBOX in lng,lat axis order (verified live against the real endpoint 2026-07-23)', async () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(sampleGeoJson),
@@ -52,7 +52,7 @@ describe('fetchParcelsInBounds', () => {
     await fetchParcelsInBounds({ minLat: 48.85, maxLat: 48.86, minLng: 2.35, maxLng: 2.36 })
 
     const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string
-    expect(calledUrl).toContain('BBOX=48.85,2.35,48.86,2.36,EPSG:4326')
+    expect(calledUrl).toContain('BBOX=2.35,48.85,2.36,48.86,EPSG:4326')
   })
 
   it('parses a MultiPolygon parcel into one entry per disjoint part, sharing id/section', async () => {

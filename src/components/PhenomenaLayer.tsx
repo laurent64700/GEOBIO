@@ -1,6 +1,7 @@
-import { CircleMarker, Tooltip } from 'react-leaflet'
+import { IconMarker } from './IconMarker'
+import { PHENOMENON_ICONS } from '../domain/phenomenonIcons'
 import type { Phenomenon } from '../domain/types'
-import { localToLatLng, type LatLng } from '../geometry/localCoordinates'
+import type { LatLng } from '../geometry/localCoordinates'
 
 export interface PhenomenaLayerProps {
   phenomena: Phenomenon[]
@@ -8,40 +9,27 @@ export interface PhenomenaLayerProps {
   visible: boolean
 }
 
-// Placeholder text codes standing in for real icons (spec §7 — real icons from
-// Laurent's legend sheet are out of scope for this pass). Swapping these for
-// real icon assets later only touches this map, not the data model or callers.
-const KIND_LABELS: Record<Phenomenon['kind'], string> = {
-  'cheminee-1': 'Ch1',
-  'cheminee-2': 'Ch2',
-  'cheminee-3': 'Ch3',
-  'cheminee-4': 'Ch4',
-  'spire-vortex': 'Vx',
-  'point-cosmique': 'Cos',
-  'carre-magique': 'CM',
-  'tube-magique': 'TM',
-}
-
 const PHENOMENON_COLOR = '#6a1b9a'
 
+// Upgraded from plain text-code circles ("Ch1", "Vx"...) to real icons
+// (game-icons.net stand-ins — see phenomenonIcons.ts) to harmonize with the
+// context-object markers (spec: "harmoniser pour être UX friendly").
 export function PhenomenaLayer({ phenomena, missionOrigin, visible }: PhenomenaLayerProps) {
   if (!visible) return null
 
   return (
     <>
       {phenomena.map((phenomenon) => {
-        const latlng = localToLatLng(phenomenon, missionOrigin)
+        const { svg, badge } = PHENOMENON_ICONS[phenomenon.kind]
         return (
-          <CircleMarker
+          <IconMarker
             key={phenomenon.id}
-            center={[latlng.lat, latlng.lng]}
-            radius={8}
-            pathOptions={{ color: PHENOMENON_COLOR, fillOpacity: 0.85 }}
-          >
-            <Tooltip permanent direction="center" className="phenomenon-label">
-              {KIND_LABELS[phenomenon.kind]}
-            </Tooltip>
-          </CircleMarker>
+            position={phenomenon}
+            missionOrigin={missionOrigin}
+            svg={svg}
+            color={PHENOMENON_COLOR}
+            badge={badge}
+          />
         )
       })}
     </>

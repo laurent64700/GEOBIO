@@ -35,9 +35,9 @@ export async function fetchBuildingsInBounds(
   bounds: LatLngBounds,
   signal?: AbortSignal
 ): Promise<BuildingFootprint[]> {
-  // WFS 2.0.0 with EPSG:4326 uses the CRS authority's defined axis order (lat, lng) —
-  // same convention already verified and fixed in cadastreService.ts 2026-07-19.
-  const bbox = `${bounds.minLat},${bounds.minLng},${bounds.maxLat},${bounds.maxLng},EPSG:4326`
+  // Same endpoint/bug as cadastreService.ts's fetchParcelsInBounds — see its comment.
+  // Verified live 2026-07-23: standard lng,lat (x,y) order, not lat,lng.
+  const bbox = `${bounds.minLng},${bounds.minLat},${bounds.maxLng},${bounds.maxLat},EPSG:4326`
   const url =
     `${CADASTRE_WFS_URL}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature` +
     `&TYPENAME=${BUILDING_TYPE_NAME}&OUTPUTFORMAT=application/json&BBOX=${bbox}`

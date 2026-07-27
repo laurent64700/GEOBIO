@@ -159,6 +159,34 @@ export interface Phenomenon {
   createdAt: string
 }
 
+export type ContextObjectKind =
+  | 'canape'
+  | 'table'
+  | 'table-ronde'
+  | 'lit'
+  | 'arbre-chene'
+  | 'arbre-pin'
+  | 'haie'
+  | 'puits'
+  | 'mur-briques'
+  | 'mur-pierre'
+  | 'route'
+  | 'cloture'
+
+/**
+ * A simple furniture/landscape marker for context missing from the aerial
+ * photo (spec: e.g. a tree not visible on the IGN imagery during a Hartmann
+ * survey) — no metadata beyond kind/position, unlike FeltPoint/Phenomenon.
+ */
+export interface ContextObject {
+  id: string
+  planId: string
+  kind: ContextObjectKind
+  x: number
+  y: number
+  createdAt: string
+}
+
 /**
  * Fixed manufacture-time mapping of an ArUco marker ID to the network and rod
  * it is glued to — see docs/superpowers/specs/2026-07-16-rod-marker-detection-design.md.

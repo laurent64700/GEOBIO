@@ -4,12 +4,25 @@ export const BAGUA_LAYER_ID = 'bagua'
 export const PATHOGENIC_CROSSINGS_LAYER_ID = 'pathogenic-crossings'
 export const PHENOMENA_LAYER_ID = 'phenomena'
 export const FREEFORM_NETWORK_LAYER_ID = 'freeform-network'
+export const INTERIOR_PLAN_LAYER_ID = 'interior-plan'
+export const CONTEXT_OBJECTS_LAYER_ID = 'context-objects'
 
 // Single source of truth for which layer ids default to visible when absent
 // from the `visibility` map. Duplicating this list (as a literal OR-chain) in
 // each consumer is exactly how SiteMapView's toggleLayer "forgot" about
 // FELT_SEGMENTS_LAYER_ID once already — see toggleLayer in SiteMapView.tsx.
-export const DEFAULT_VISIBLE_LAYER_IDS: readonly string[] = [FELT_POINTS_LAYER_ID, FELT_SEGMENTS_LAYER_ID]
+// INTERIOR_PLAN_LAYER_ID defaults visible (unlike the other optional layers
+// below it) specifically so a freshly-calibrated photo is seen immediately —
+// the whole point of rendering it at all was the missing visual confirmation
+// that the calibration/scale was right (see CalibratedPlanOverlay's doc
+// comment); defaulting it hidden would just reintroduce a milder version of
+// that same problem.
+export const DEFAULT_VISIBLE_LAYER_IDS: readonly string[] = [
+  FELT_POINTS_LAYER_ID,
+  FELT_SEGMENTS_LAYER_ID,
+  INTERIOR_PLAN_LAYER_ID,
+  CONTEXT_OBJECTS_LAYER_ID,
+]
 
 export interface LayerEntry {
   id: string
@@ -100,6 +113,22 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
           onChange={() => onToggle(FREEFORM_NETWORK_LAYER_ID)}
         />
         Tracés eau/faille
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[INTERIOR_PLAN_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(INTERIOR_PLAN_LAYER_ID)}
+          onChange={() => onToggle(INTERIOR_PLAN_LAYER_ID)}
+        />
+        Plan intérieur calé
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={visibility[CONTEXT_OBJECTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(CONTEXT_OBJECTS_LAYER_ID)}
+          onChange={() => onToggle(CONTEXT_OBJECTS_LAYER_ID)}
+        />
+        Objets de contexte (mobilier, extérieur)
       </label>
     </div>
   )

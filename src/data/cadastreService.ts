@@ -45,10 +45,13 @@ export async function fetchParcelsInBounds(
   bounds: LatLngBounds,
   signal?: AbortSignal
 ): Promise<CadastralParcel[]> {
-  // WFS 2.0.0 with EPSG:4326 uses the CRS authority's defined axis order (lat, lng
-  // for EPSG:4326), not the lng/lat convention common in WFS 1.x — confirmed against
-  // this endpoint's documented usage 2026-07-19, previously an unverified guess.
-  const bbox = `${bounds.minLat},${bounds.minLng},${bounds.maxLat},${bounds.maxLng},EPSG:4326`
+  // Verified live against the real endpoint 2026-07-23 (a mocked-fetch unit test
+  // can't catch an axis-order bug): a lat,lng BBOX silently returns 0 features at a
+  // real address with 1250+ real parcels nearby, while lng,lat returns them — the
+  // opposite of what this comment claimed until now (a never-actually-confirmed
+  // guess from 2026-07-19, despite the "confirmed" wording). This endpoint expects
+  // standard lng,lat (x,y) order.
+  const bbox = `${bounds.minLng},${bounds.minLat},${bounds.maxLng},${bounds.maxLat},EPSG:4326`
   const url =
     `${CADASTRE_WFS_URL}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature` +
     `&TYPENAME=${PARCEL_TYPE_NAME}&OUTPUTFORMAT=application/json&BBOX=${bbox}`

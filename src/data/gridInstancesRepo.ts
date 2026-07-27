@@ -47,3 +47,19 @@ export async function listGridInstancesForPlan(planId: string): Promise<GridInst
   if (error) throw new Error(`Impossible de charger les instances de grille : ${error.message}`)
   return (data as GridInstanceRow[]).map(mapRowToGridInstance)
 }
+
+export async function updateGridInstanceOrigin(
+  instanceId: string,
+  originX: number,
+  originY: number
+): Promise<GridInstance> {
+  const { data, error } = await supabase
+    .from('grid_instance')
+    .update({ origin_x: originX, origin_y: originY })
+    .eq('id', instanceId)
+    .select()
+    .single()
+
+  if (error) throw new Error(`Impossible de recaler la grille : ${error.message}`)
+  return mapRowToGridInstance(data as GridInstanceRow)
+}
