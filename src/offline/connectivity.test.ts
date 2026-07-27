@@ -5,7 +5,10 @@ describe('isOnlineNow', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
 
   it('returns true when navigator.onLine is true and the network probe succeeds', async () => {
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
@@ -29,11 +32,20 @@ describe('isOnlineNow', () => {
   })
 
   it('returns false when the network probe times out', async () => {
+    vi.useFakeTimers()
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
     vi.mocked(fetch).mockImplementation(
-      () => new Promise((_, reject) => setTimeout(() => reject(new Error('aborted')), 50))
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          const signal = (options as RequestInit)?.signal
+          signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        })
     )
 
-    expect(await isOnlineNow()).toBe(false)
-  }, 2000)
+    const resultPromise = isOnlineNow()
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(await resultPromise).toBe(false)
+    vi.useRealTimers()
+  })
 })
