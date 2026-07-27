@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { openDB, type IDBPDatabase } from 'idb'
 
 // Keep in sync with the createObjectStore calls in getDB()'s upgrade() below —
 // this list and that imperative code are two hand-synced sources of truth.
@@ -28,18 +28,14 @@ const PLAN_ID_STORES: StoreName[] = [
   'grid_instance',
 ]
 
-interface GeobioOfflineDB extends DBSchema {
-  [key: string]: { key: string | number; value: unknown }
-}
-
 const DB_NAME = 'geobio-offline'
 const DB_VERSION = 1
 
-let dbPromise: Promise<IDBPDatabase<GeobioOfflineDB>> | null = null
+let dbPromise: Promise<IDBPDatabase> | null = null
 
-export function getDB(): Promise<IDBPDatabase<GeobioOfflineDB>> {
+export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
-    dbPromise = openDB<GeobioOfflineDB>(DB_NAME, DB_VERSION, {
+    dbPromise = openDB(DB_NAME, DB_VERSION, {
       upgrade(db) {
         for (const store of PLAN_ID_STORES) {
           const os = db.createObjectStore(store, { keyPath: 'id' })
