@@ -19,14 +19,16 @@ export const STORE_NAMES = [
 export type StoreName = (typeof STORE_NAMES)[number]
 
 // Object stores indexed by plan_id (most terrain-phase data — see spec §4.2).
-const PLAN_ID_STORES: StoreName[] = [
+export const PLAN_ID_STORES = [
   'felt_point',
   'felt_segment',
   'phenomenon',
   'context_object',
   'freeform_network',
   'grid_instance',
-]
+] as const satisfies readonly StoreName[]
+
+export type PlanIdStoreName = (typeof PLAN_ID_STORES)[number]
 
 const DB_NAME = 'geobio-offline'
 const DB_VERSION = 1
