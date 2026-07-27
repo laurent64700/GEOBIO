@@ -13,6 +13,7 @@
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.0",
     "@supabase/supabase-js": "^2.110.7",
+    "idb": "^8.0.3",
     "js-aruco2": "^2.0.0",
     "leaflet": "^1.9.4",
     "react": "^19.2.7",
