@@ -1,5 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
+// Keep in sync with the createObjectStore calls in getDB()'s upgrade() below —
+// this list and that imperative code are two hand-synced sources of truth.
 export const STORE_NAMES = [
   'grid_template',
   'grid_instance',
