@@ -61,9 +61,12 @@ nonBlockingError: { action: 'upload' | 'calibration' | 'assessment'; message: st
 ```
 Partagé par les 3 handlers (même cause racine, même traitement — pas de valeur à créer
 3 états séparés), mais le champ `action` évite qu'un message affiché soit attribué à
-la mauvaise action. Un libellé par action est préfixé à l'affichage :
-`upload` → "Import du plan intérieur : …", `calibration` → "Calage du plan : …",
-`assessment` → "Bilan global : …".
+la mauvaise action. Un libellé par action est préfixé à l'affichage (le `…` ci-dessous
+n'est PAS littéral, il indique juste "le message suit" — le libellé réel n'a pas de
+points de suspension) :
+`upload` → `"Import du plan intérieur : "`, `calibration` → `"Calage du plan : "`,
+`assessment` → `"Bilan global : "`. Exemple de rendu complet pour un échec d'upload :
+`"Import du plan intérieur : Failed to fetch"`.
 
 **Simplification acceptée (pas un bug à corriger ici)** : les 3 handlers partagent un
 seul état, donc si deux échouent à quelques centaines de ms d'écart (ex. upload de
@@ -79,8 +82,8 @@ réel solo-terrain — YAGNI.
 {nonBlockingError && <p role="alert">{ACTION_LABELS[nonBlockingError.action]} {nonBlockingError.message}</p>}
 ```
 - Phase `ready-no-interior` : rendu en haut du `<div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>`
-  existant (ligne ~180 de `MissionWorkspace.tsx`), avant `SiteMapView` — aucune
-  restructuration de wrapper nécessaire, ce `<div>` existe déjà.
+  existant (case `'ready-no-interior'` de `MissionWorkspace.tsx`), avant `SiteMapView`
+  — aucune restructuration de wrapper nécessaire, ce `<div>` existe déjà.
 - Phase `calibrating-interior` : le `case` actuel retourne un `<PlanCalibrationTool>`
   **nu, sans wrapper** (`MissionWorkspace.tsx:231-239`). Ce chantier ajoute un wrapper
   fragment `<>...</>` autour de la bannière et de `<PlanCalibrationTool>`, la bannière
@@ -128,7 +131,11 @@ reste monté et interactif — pas remplacé par l'écran d'erreur plein page ;
 (d) un test dédié : un premier échec affiche son message, une nouvelle tentative
 (réussie ou non) sur la MÊME action efface l'ancien message avant que le résultat de
 la nouvelle tentative ne s'affiche — vérifie explicitement le comportement "efface au
-début de chaque tentative" décrit en §3.
+début de chaque tentative" décrit en §3 ;
+(e) un test dédié : un échec sur une action affiche son message, puis le DÉMARRAGE
+d'une tentative sur une AUTRE action efface aussi ce message (conséquence directe de
+l'état partagé unique — le "début de chaque tentative" en §3 n'est pas scopé par
+action, `setNonBlockingError(null)` s'exécute pour n'importe laquelle des 3 tentatives).
 
 ## 5. Ce qui ne change pas
 
