@@ -1,5 +1,8 @@
 import { supabase } from '../lib/supabaseClient'
 import type { FeltSegment, GridLinePolarity, Point } from '../domain/types'
+import { cachedList, cachedWrite } from '../offline/cacheThrough'
+import { generateClientId } from '../offline/clientId'
+import { SupabaseQueryError } from '../offline/supabaseQueryError'
 
 export interface CreateFeltSegmentInput {
   planId: string
@@ -40,33 +43,54 @@ function mapRowToFeltSegment(row: FeltSegmentRow): FeltSegment {
 }
 
 export async function createFeltSegment(input: CreateFeltSegmentInput): Promise<FeltSegment> {
-  const { data, error } = await supabase
-    .from('felt_segment')
-    .insert({
-      plan_id: input.planId,
-      network_name: input.networkName,
-      ax: input.pointA.x,
-      ay: input.pointA.y,
-      bx: input.pointB.x,
-      by: input.pointB.y,
-      polarity_a: input.polarityA ?? null,
-      polarity_b: input.polarityB ?? null,
-    })
-    .select()
-    .single()
+  const id = generateClientId()
+  const createdAt = new Date().toISOString()
+  const polarityA = input.polarityA ?? null
+  const polarityB = input.polarityB ?? null
+  const row = {
+    id,
+    plan_id: input.planId,
+    network_name: input.networkName,
+    ax: input.pointA.x,
+    ay: input.pointA.y,
+    bx: input.pointB.x,
+    by: input.pointB.y,
+    polarity_a: polarityA,
+    polarity_b: polarityB,
+    created_at: createdAt,
+  }
+  const item: FeltSegment = {
+    id,
+    planId: input.planId,
+    networkName: input.networkName,
+    pointA: input.pointA,
+    pointB: input.pointB,
+    polarityA,
+    polarityB,
+    createdAt,
+  }
 
-  if (error) throw new Error(`Impossible d'enregistrer le segment ressenti : ${error.message}`)
-  return mapRowToFeltSegment(data as FeltSegmentRow)
+  return cachedWrite('felt_segment', 'felt_segment', 'insert', item, () => row, async () => {
+    const { data, error } = await supabase.from('felt_segment').insert(row).select().single()
+
+    if (error) throw new SupabaseQueryError(`Impossible d'enregistrer le segment ressenti : ${error.message}`)
+    return mapRowToFeltSegment(data as FeltSegmentRow)
+  })
 }
 
 export async function deleteFeltSegment(id: string): Promise<void> {
-  const { error } = await supabase.from('felt_segment').delete().eq('id', id)
-  if (error) throw new Error(`Impossible de supprimer le segment ressenti : ${error.message}`)
+  await cachedWrite('felt_segment', 'felt_segment', 'delete', { id }, () => ({ id }), async () => {
+    const { error } = await supabase.from('felt_segment').delete().eq('id', id)
+    if (error) throw new SupabaseQueryError(`Impossible de supprimer le segment ressenti : ${error.message}`)
+    return { id }
+  })
 }
 
 export async function listFeltSegmentsForPlan(planId: string): Promise<FeltSegment[]> {
-  const { data, error } = await supabase.from('felt_segment').select().eq('plan_id', planId)
+  return cachedList('felt_segment', planId, async () => {
+    const { data, error } = await supabase.from('felt_segment').select().eq('plan_id', planId)
 
-  if (error) throw new Error(`Impossible de charger les segments ressentis : ${error.message}`)
-  return (data as FeltSegmentRow[]).map(mapRowToFeltSegment)
+    if (error) throw new SupabaseQueryError(`Impossible de charger les segments ressentis : ${error.message}`)
+    return (data as FeltSegmentRow[]).map(mapRowToFeltSegment)
+  })
 }
