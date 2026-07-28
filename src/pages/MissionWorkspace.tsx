@@ -108,7 +108,9 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       // signal at the site. Preloading is best-effort — a failure here must
       // never block the mission from opening online, nor surface as an
       // unhandled rejection.
-      preloadPlanForOffline(updated, phase.exteriorPlan).catch(() => {})
+      preloadPlanForOffline(updated, phase.exteriorPlan).catch((err) =>
+        console.warn('[offline] preload failed for mission', updated.id, err)
+      )
       const fitBounds = boundsOfParcels(selectedParcels) ?? undefined
       setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan, fitBounds })
     } catch (err) {
