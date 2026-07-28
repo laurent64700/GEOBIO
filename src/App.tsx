@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { MissionList } from './components/MissionList'
+import { OfflineIndicator } from './components/OfflineIndicator'
 import { MissionWorkspace } from './pages/MissionWorkspace'
 import { deriveResumePhase, type ResumePhase } from './pages/deriveResumePhase'
 import { listMissions } from './data/missionsRepo'
@@ -56,19 +57,25 @@ function App() {
   }
 
   return (
-    <div style={{ height: '100vh', width: '100%' }}>
-      {phase.name === 'loading-missions' && <p>Chargement…</p>}
-      {phase.name === 'mission-list' && (
-        <MissionList
-          missions={phase.missions}
-          onSelectMission={handleSelectMission}
-          onCreateNew={() => setPhase({ name: 'creating' })}
-        />
-      )}
-      {phase.name === 'creating' && <MissionWorkspace />}
-      {phase.name === 'resuming' && <MissionWorkspace initialResumePhase={phase.resumePhase} />}
-      {phase.name === 'error' && <p role="alert">{phase.message}</p>}
-    </div>
+    <>
+      <div style={{ height: '100vh', width: '100%' }}>
+        {phase.name === 'loading-missions' && <p>Chargement…</p>}
+        {phase.name === 'mission-list' && (
+          <MissionList
+            missions={phase.missions}
+            onSelectMission={handleSelectMission}
+            onCreateNew={() => setPhase({ name: 'creating' })}
+          />
+        )}
+        {phase.name === 'creating' && <MissionWorkspace />}
+        {phase.name === 'resuming' && <MissionWorkspace initialResumePhase={phase.resumePhase} />}
+        {phase.name === 'error' && <p role="alert">{phase.message}</p>}
+      </div>
+      {/* Sibling of the phase-driven container, not nested inside any phase
+          conditional — must stay mounted and visible across all app phases
+          (mission list, resuming, error, etc.), per Task 8.3 / spec §4.7. */}
+      <OfflineIndicator />
+    </>
   )
 }
 

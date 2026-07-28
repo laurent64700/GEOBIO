@@ -5,11 +5,19 @@ import * as missionsRepo from './data/missionsRepo'
 import * as deriveResumePhaseModule from './pages/deriveResumePhase'
 import * as currentSessionModule from './offline/currentSession'
 import * as connectivity from './offline/connectivity'
+import * as offlineSyncModule from './hooks/useOfflineSync'
 
 vi.mock('./data/missionsRepo')
 vi.mock('./pages/deriveResumePhase') // mock separately per the real module path
 vi.mock('./offline/currentSession')
 vi.mock('./offline/connectivity')
+// useOfflineSync itself touches IndexedDB (via getDB()), which jsdom doesn't
+// implement — mocked here purely to keep App.test.tsx isolated from that,
+// same isolation principle as the other offline/* mocks above. OfflineIndicator's
+// own rendering logic (text per pendingCount, never-null) is covered by
+// OfflineIndicator.test.tsx; this file only checks App.tsx mounts it
+// permanently regardless of phase.
+vi.mock('./hooks/useOfflineSync')
 
 // Mocked so this file tests App.tsx's own wiring (which phase MissionWorkspace
 // receives) without needing to also stand up MissionWorkspace's full child
@@ -39,12 +47,26 @@ describe('App', () => {
     // for the same pattern applied elsewhere in this codebase).
     vi.clearAllMocks()
     vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    vi.mocked(offlineSyncModule.useOfflineSync).mockReturnValue({ pendingCount: 0 })
   })
 
   it('shows the mission list on load, with existing missions from listMissions()', async () => {
     vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
     render(<App />)
     expect(await screen.findByText(/10 Rue de Rivoli/)).toBeInTheDocument()
+  })
+
+  it('mounts the OfflineIndicator regardless of app phase (mission-list and error phases)', async () => {
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    const { unmount } = render(<App />)
+    await screen.findByText(/10 Rue de Rivoli/) // mission-list phase reached
+    expect(screen.getByText('Synchronisé')).toBeInTheDocument()
+    unmount()
+
+    vi.mocked(missionsRepo.listMissions).mockRejectedValue(new Error('network down'))
+    render(<App />)
+    await screen.findByRole('alert') // error phase reached
+    expect(screen.getByText('Synchronisé')).toBeInTheDocument()
   })
 
   it('"Nouvelle mission" goes to the mission-creation flow', async () => {
