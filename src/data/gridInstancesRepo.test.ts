@@ -44,6 +44,10 @@ describe('gridInstancesRepo', () => {
         plan_id: 'p1', template_snapshot: hartmann, origin_x: 1.5, origin_y: -2,
       })
     )
+    // id is now generated client-side, unconditionally, before the network
+    // attempt (spec §4.1) — assert shape, not a fixed value.
+    const insertedRow = chain.insert.mock.calls[0][0]
+    expect(insertedRow.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
     expect(instance.templateSnapshot).toEqual(hartmann)
   })
 
