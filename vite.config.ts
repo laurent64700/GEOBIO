@@ -25,5 +25,10 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // .worktrees/* holds full nested checkouts (see superpowers:using-git-worktrees) —
+    // without this exclude, vitest's default discovery picks up every test file a
+    // second time from inside any worktree still present under the repo root,
+    // silently doubling the reported test count.
+    exclude: ['**/node_modules/**', '**/.worktrees/**'],
   },
 })
