@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabaseClient'
 import type { GridLine, GridLineFamily, GridLinePolarity, Point } from '../domain/types'
 import { getDB } from '../offline/db'
 import { isOnlineNow } from '../offline/connectivity'
+import { generateClientId } from '../offline/clientId'
 import { enqueueMutation } from '../offline/pendingMutations'
 import { SupabaseQueryError } from '../offline/supabaseQueryError'
 
@@ -35,23 +36,70 @@ function mapRowToGridLine(row: GridLineRow): GridLine {
   }
 }
 
+// Ids are generated client-side for EVERY line, unconditionally, before any
+// online/offline branching (spec §4.1) — this is a deliberate behavior
+// change from Postgres's `default gen_random_uuid()`: an offline-created
+// batch already has its final ids from the moment of creation, so no
+// id-remapping is needed once synced. `grid_line` doesn't use `generated
+// always as identity`, so supplying `id` explicitly on insert is safe
+// (already verified elsewhere in this offline layer).
+//
+// Only the Supabase network call (including its business-error check and row
+// mapping) is covered by the try/catch below — same scoping rule as the rest
+// of this file (see listGridLinesForInstance's doc comment): once the insert
+// has succeeded, mirroring the returned rows into the local cache is a
+// separate step performed OUTSIDE the try, so a local-write failure at that
+// point propagates as its own error instead of being folded into "offline,
+// queue the write".
+//
+// The whole batch is queued as a SINGLE pending mutation whose payload is the
+// array of row-form objects — not one mutation per line — because sync.ts
+// replays it via `supabase.from('grid_line').insert(payload)`, which natively
+// accepts an array in one call, exactly like the online path below.
 export async function createGridLines(inputs: CreateGridLineInput[]): Promise<GridLine[]> {
-  const { data, error } = await supabase
-    .from('grid_line')
-    .insert(
-      inputs.map((i) => ({
-        grid_instance_id: i.gridInstanceId,
-        family: i.family,
-        polarity: i.polarity,
-        reinforced: i.reinforced,
-        theoretical_points: i.theoreticalPoints,
-        adjusted_points: i.theoreticalPoints,
-      }))
-    )
-    .select()
+  const rows: GridLineRow[] = inputs.map((i) => ({
+    id: generateClientId(),
+    grid_instance_id: i.gridInstanceId,
+    family: i.family,
+    polarity: i.polarity,
+    reinforced: i.reinforced,
+    theoretical_points: i.theoreticalPoints,
+    adjusted_points: i.theoreticalPoints,
+  }))
 
-  if (error) throw new Error(`Impossible de créer les lignes de grille : ${error.message}`)
-  return (data as GridLineRow[]).map(mapRowToGridLine)
+  if (await isOnlineNow()) {
+    let lines: GridLine[]
+    try {
+      const { data, error } = await supabase.from('grid_line').insert(rows).select()
+      if (error) throw new SupabaseQueryError(`Impossible de créer les lignes de grille : ${error.message}`)
+      lines = (data as GridLineRow[]).map(mapRowToGridLine)
+    } catch (err) {
+      if (err instanceof SupabaseQueryError) throw err
+      // network failure (not a Supabase-reported error) — fall through to
+      // the offline cache-and-queue path below.
+      return cacheAndQueueGridLines(rows)
+    }
+    // insert succeeded — mirroring into the cache is a separate step from
+    // here on; see the doc comment above for why a failure here must
+    // propagate rather than be folded into the offline path.
+    const db = await getDB()
+    for (const line of lines) {
+      await db.put('grid_line', line)
+    }
+    return lines
+  }
+
+  return cacheAndQueueGridLines(rows)
+}
+
+async function cacheAndQueueGridLines(rows: GridLineRow[]): Promise<GridLine[]> {
+  const lines = rows.map(mapRowToGridLine)
+  const db = await getDB()
+  for (const line of lines) {
+    await db.put('grid_line', line)
+  }
+  await enqueueMutation({ table: 'grid_line', operation: 'insert', payload: rows })
+  return lines
 }
 
 // grid_line is indexed by grid_instance_id, NOT plan_id (a plan can contain

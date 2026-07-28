@@ -37,13 +37,16 @@ describe('gridLinesRepo', () => {
     ])
 
     expect(from).toHaveBeenCalledWith('grid_line')
-    expect(chain.insert).toHaveBeenCalledWith([
-      {
-        grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
-        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
-        adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
-      },
-    ])
+    const insertedRows = chain.insert.mock.calls[0][0]
+    expect(insertedRows).toHaveLength(1)
+    // id is now generated client-side, unconditionally, before the network
+    // attempt (spec §4.1) — assert shape, not absence.
+    expect(insertedRows[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    expect(insertedRows[0]).toMatchObject({
+      grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
+      theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    })
     expect(lines[0].adjustedPoints).toEqual(lines[0].theoreticalPoints)
   })
 
@@ -334,6 +337,73 @@ describe('gridLinesRepo — offline behavior', () => {
       theoretical_points: [{ x: 3, y: -1 }, { x: 3, y: 5 }],
       adjusted_points: [{ x: 3.4, y: -1 }, { x: 3, y: 5 }],
     })
+  })
+
+  it('creates grid lines online: mirrors all N returned lines into the cache with zero pending mutations', async () => {
+    const rows = [
+      { id: 'gl-a', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: true,
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }], adjusted_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
+      { id: 'gl-b', grid_instance_id: 'gi1', family: 'axis-a', polarity: '-', reinforced: false,
+        theoretical_points: [{ x: 1, y: -3 }, { x: 1, y: 3 }], adjusted_points: [{ x: 1, y: -3 }, { x: 1, y: 3 }] },
+      { id: 'gl-c', grid_instance_id: 'gi1', family: 'axis-b', polarity: '+', reinforced: true,
+        theoretical_points: [{ x: 2, y: -3 }, { x: 2, y: 3 }], adjusted_points: [{ x: 2, y: -3 }, { x: 2, y: 3 }] },
+    ]
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: rows, error: null }).from
+
+    const lines = await createGridLines([
+      { gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: true, theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
+      { gridInstanceId: 'gi1', family: 'axis-a', polarity: '-', reinforced: false, theoreticalPoints: [{ x: 1, y: -3 }, { x: 1, y: 3 }] },
+      { gridInstanceId: 'gi1', family: 'axis-b', polarity: '+', reinforced: true, theoreticalPoints: [{ x: 2, y: -3 }, { x: 2, y: 3 }] },
+    ])
+
+    expect(lines).toHaveLength(3)
+    const db = await getDB()
+    for (const row of rows) {
+      const cached = await db.get('grid_line', row.id)
+      expect(cached).toBeDefined()
+      expect(cached.gridInstanceId).toBe('gi1')
+    }
+    const pending = await listPendingMutations()
+    expect(pending).toHaveLength(0)
+  })
+
+  it('creates grid lines offline: caches all N lines with distinct client-generated ids and queues exactly ONE batched mutation', async () => {
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    const writerFrom = vi.fn()
+    vi.mocked(supabase).from = writerFrom
+
+    const inputs = [
+      { gridInstanceId: 'gi1', family: 'axis-a' as const, polarity: '+' as const, reinforced: true, theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }] },
+      { gridInstanceId: 'gi1', family: 'axis-a' as const, polarity: '-' as const, reinforced: false, theoreticalPoints: [{ x: 1, y: -3 }, { x: 1, y: 3 }] },
+      { gridInstanceId: 'gi1', family: 'axis-b' as const, polarity: '+' as const, reinforced: true, theoreticalPoints: [{ x: 2, y: -3 }, { x: 2, y: 3 }] },
+    ]
+
+    const lines = await createGridLines(inputs)
+
+    expect(writerFrom).not.toHaveBeenCalled()
+    expect(lines).toHaveLength(3)
+    const ids = lines.map((l) => l.id)
+    expect(new Set(ids).size).toBe(3)
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    }
+
+    const db = await getDB()
+    for (const line of lines) {
+      expect(await db.get('grid_line', line.id)).toEqual(line)
+    }
+
+    const pending = await listPendingMutations()
+    expect(pending).toHaveLength(1)
+    expect(pending[0]).toMatchObject({ table: 'grid_line', operation: 'insert' })
+    expect(Array.isArray(pending[0].payload)).toBe(true)
+    const payloadRows = pending[0].payload as Array<{ id: string; grid_instance_id: string }>
+    expect(payloadRows).toHaveLength(3)
+    for (const row of payloadRows) {
+      expect(typeof row.id).toBe('string')
+      expect(row.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    }
+    expect(new Set(payloadRows.map((r) => r.id)).size).toBe(3)
   })
 
   it('throws a clear error when updating a line that is not in the local cache while offline', async () => {
