@@ -30,7 +30,15 @@ const existingMission = {
 
 describe('App', () => {
   beforeEach(() => {
+    // Clear call history first (needed for the `not.toHaveBeenCalled()`
+    // assertion below), then restore `isOnlineNow`'s default. `vi.clearAllMocks()`
+    // only resets call history — it does NOT reset `mockResolvedValue`
+    // implementations set by `vi.mock('./offline/connectivity')`'s auto-mock,
+    // so without this, tests would depend on execution order (see
+    // gridTemplatesRepo.test.ts / gridLinesRepo.test.ts / plansRepo.test.ts
+    // for the same pattern applied elsewhere in this codebase).
     vi.clearAllMocks()
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
   })
 
   it('shows the mission list on load, with existing missions from listMissions()', async () => {
