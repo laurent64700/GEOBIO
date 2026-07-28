@@ -3,9 +3,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import * as missionsRepo from './data/missionsRepo'
 import * as deriveResumePhaseModule from './pages/deriveResumePhase'
+import * as currentSessionModule from './offline/currentSession'
 
 vi.mock('./data/missionsRepo')
 vi.mock('./pages/deriveResumePhase') // mock separately per the real module path
+vi.mock('./offline/currentSession')
 
 // Mocked so this file tests App.tsx's own wiring (which phase MissionWorkspace
 // receives) without needing to also stand up MissionWorkspace's full child
@@ -63,5 +65,18 @@ describe('App', () => {
     fireEvent.click(await screen.findByText(/10 Rue de Rivoli/))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
+  })
+
+  it('persists the mission + exterior plan into current_session after a successful resume', async () => {
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    const exteriorPlan = { id: 'p1', missionId: 'm1', kind: 'exterieur' as const, imageUrl: null, calibration: null }
+    vi.mocked(deriveResumePhaseModule.deriveResumePhase).mockResolvedValue({
+      name: 'ready-no-interior', mission: existingMission, exteriorPlan,
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByText(/10 Rue de Rivoli/))
+
+    await waitFor(() => expect(currentSessionModule.setCurrentSession).toHaveBeenCalledWith(existingMission, exteriorPlan))
   })
 })

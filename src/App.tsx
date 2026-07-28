@@ -3,6 +3,7 @@ import { MissionList } from './components/MissionList'
 import { MissionWorkspace } from './pages/MissionWorkspace'
 import { deriveResumePhase, type ResumePhase } from './pages/deriveResumePhase'
 import { listMissions } from './data/missionsRepo'
+import { setCurrentSession } from './offline/currentSession'
 import type { Mission } from './domain/types'
 import './App.css'
 
@@ -25,6 +26,9 @@ function App() {
   async function handleSelectMission(mission: Mission) {
     try {
       const resumePhase = await deriveResumePhase(mission)
+      if (resumePhase.name === 'ready-no-interior') {
+        await setCurrentSession(resumePhase.mission, resumePhase.exteriorPlan)
+      }
       setPhase({ name: 'resuming', resumePhase })
     } catch (err) {
       setPhase({ name: 'error', message: err instanceof Error ? err.message : String(err) })
