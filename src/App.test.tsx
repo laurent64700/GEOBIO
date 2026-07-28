@@ -1,13 +1,15 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import App from './App'
 import * as missionsRepo from './data/missionsRepo'
 import * as deriveResumePhaseModule from './pages/deriveResumePhase'
 import * as currentSessionModule from './offline/currentSession'
+import * as connectivity from './offline/connectivity'
 
 vi.mock('./data/missionsRepo')
 vi.mock('./pages/deriveResumePhase') // mock separately per the real module path
 vi.mock('./offline/currentSession')
+vi.mock('./offline/connectivity')
 
 // Mocked so this file tests App.tsx's own wiring (which phase MissionWorkspace
 // receives) without needing to also stand up MissionWorkspace's full child
@@ -27,6 +29,10 @@ const existingMission = {
 }
 
 describe('App', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('shows the mission list on load, with existing missions from listMissions()', async () => {
     vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
     render(<App />)
@@ -78,5 +84,27 @@ describe('App', () => {
     fireEvent.click(await screen.findByText(/10 Rue de Rivoli/))
 
     await waitFor(() => expect(currentSessionModule.setCurrentSession).toHaveBeenCalledWith(existingMission, exteriorPlan))
+  })
+
+  it('boots straight into the resuming phase from the cached session when offline at mount, without calling listMissions', async () => {
+    const exteriorPlan = { id: 'p1', missionId: 'm1', kind: 'exterieur' as const, imageUrl: null, calibration: null }
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({ mission: existingMission, exteriorPlan })
+
+    render(<App />)
+
+    const workspace = await screen.findByTestId('mission-workspace')
+    expect(workspace).toHaveAttribute('data-resume-phase-name', 'ready-no-interior')
+    expect(missionsRepo.listMissions).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the normal listMissions() flow when offline at mount but no session is cached', async () => {
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue(null)
+    vi.mocked(missionsRepo.listMissions).mockRejectedValue(new Error('network down'))
+
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
 })
