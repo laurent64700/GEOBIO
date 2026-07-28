@@ -54,45 +54,89 @@ jamais routé vers l'état `phase: 'error'` bloquant de la page.
 
 ## 3. Conception
 
-**État ajouté** : un seul état local dans `MissionWorkspace`,
-`nonBlockingError: string | null` (`useState`), partagé par les 3 handlers plutôt
-qu'un état par action — même cause racine, même traitement, pas de valeur à les
-séparer.
+**État ajouté** : un seul état local dans `MissionWorkspace`, mais **structuré**, pas
+une simple chaîne :
+```ts
+nonBlockingError: { action: 'upload' | 'calibration' | 'assessment'; message: string } | null
+```
+Partagé par les 3 handlers (même cause racine, même traitement — pas de valeur à créer
+3 états séparés), mais le champ `action` évite qu'un message affiché soit attribué à
+la mauvaise action. Un libellé par action est préfixé à l'affichage :
+`upload` → "Import du plan intérieur : …", `calibration` → "Calage du plan : …",
+`assessment` → "Bilan global : …".
 
-**Affichage** : `{nonBlockingError && <p role="alert">{nonBlockingError}</p>}` rendu en
-haut de la zone terrain (`ready-no-interior`/`calibrating-interior`), toujours visible
-au-dessus du reste du contenu de la phase — jamais un remplacement plein écran.
+**Simplification acceptée (pas un bug à corriger ici)** : les 3 handlers partagent un
+seul état, donc si deux échouent à quelques centaines de ms d'écart (ex. upload de
+fichier pendant qu'une sauvegarde de curseur — débouncée 500ms via
+`useDebouncedCallback` — est encore en vol), seul le message le plus récent reste
+affiché ; le premier est silencieusement remplacé. Accepté comme limite connue et
+documentée (le libellé par action rend au moins le message affiché non ambigu) plutôt
+que de construire un système de bannières multiples pour un cas limite rare en usage
+réel solo-terrain — YAGNI.
+
+**Affichage** :
+```tsx
+{nonBlockingError && <p role="alert">{ACTION_LABELS[nonBlockingError.action]} {nonBlockingError.message}</p>}
+```
+- Phase `ready-no-interior` : rendu en haut du `<div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>`
+  existant (ligne ~180 de `MissionWorkspace.tsx`), avant `SiteMapView` — aucune
+  restructuration de wrapper nécessaire, ce `<div>` existe déjà.
+- Phase `calibrating-interior` : le `case` actuel retourne un `<PlanCalibrationTool>`
+  **nu, sans wrapper** (`MissionWorkspace.tsx:231-239`). Ce chantier ajoute un wrapper
+  fragment `<>...</>` autour de la bannière et de `<PlanCalibrationTool>`, la bannière
+  en premier enfant.
+- **Ne pas confondre avec l'alerte déjà existante dans `PlanCalibrationTool.tsx:101`**
+  (`<p role="alert">{error}</p>` interne, pour les échecs de validation géométrique du
+  calage — ex. points de contrôle colinéaires — une classe d'erreur totalement
+  différente, cliente, synchrone, jamais réseau). Les deux bannières peuvent coexister
+  à l'écran (une pour un échec `createPlan` réseau, une pour un échec de calage
+  géométrique) — ne PAS les fusionner ni en supprimer une. Un test qui cherche
+  `role="alert"` doit donc cibler le texte du message (`getByText`/`getByRole('alert',
+  {name: /.../})`), jamais un `getByRole('alert')` nu qui échouerait si les deux sont
+  visibles en même temps.
 
 **Comportement de chaque handler** :
 - Au début de la tentative : `setNonBlockingError(null)` (efface un message périmé
   d'un essai précédent, pour ne pas laisser un message obsolète affiché après un
   retry réussi).
 - Sur succès : comportement inchangé (transition de phase, etc.).
-- Sur échec : `setNonBlockingError(messageOf(err))` au lieu de
-  `setPhase({name:'error',...})` (pour les deux premiers) ou au lieu de laisser
+- Sur échec : `setNonBlockingError({ action: '...', message: messageOf(err) })` au lieu
+  de `setPhase({name:'error',...})` (pour les deux premiers) ou au lieu de laisser
   l'erreur non attrapée (pour le troisième). La phase courante ne change pas —
   l'utilisateur reste sur l'écran où il était, peut immédiatement réessayer (re-choisir
   un fichier, recliquer calibrer, rebouger un curseur).
 
 **Cas non géré délibérément** : pas de rollback visuel pour `GlobalAssessmentBar` — le
 curseur reste affiché à la position choisie par l'utilisateur même si la sauvegarde a
-échoué, cohérent avec l'absence actuelle de tout état "en cours d'enregistrement" sur
-ce composant. Un futur curseur pourrait re-tenter automatiquement ou indiquer un état
-"non sauvegardé", mais ce n'est pas demandé ici (YAGNI).
+échoué (`GlobalAssessmentBar.tsx:36` : l'état local `local` n'est jamais resynchronisé
+sur la prop `values` après le montage initial, donc aucun retour en arrière visuel ne
+se produit naturellement — cohérent avec l'absence actuelle de tout état "en cours
+d'enregistrement" sur ce composant). Un futur curseur pourrait re-tenter
+automatiquement ou indiquer un état "non sauvegardé", mais ce n'est pas demandé ici
+(YAGNI).
 
 ## 4. Tests
 
 Pour chacun des 3 points, un test simulant un échec (mock rejeté) vérifiant :
-(a) le message d'erreur apparaît via `role="alert"` ;
-(b) le reste de l'écran terrain (`SiteMapView` ou équivalent visible dans la phase
-courante) reste monté et interactif — pas remplacé par l'écran d'erreur plein page ;
+(a) le message d'erreur (préfixé par son libellé d'action) apparaît, ciblé par son
+texte précis (pas un `getByRole('alert')` nu, qui peut matcher l'alerte interne de
+`PlanCalibrationTool` en phase `calibrating-interior`) ;
+(b) le reste de l'écran terrain (`SiteMapView`/`PlanCalibrationTool` selon la phase)
+reste monté et interactif — pas remplacé par l'écran d'erreur plein page ;
 (c) pour les deux premiers, `phase` n'a pas changé (toujours `ready-no-interior` ou
-`calibrating-interior`, jamais `error`).
+`calibrating-interior`, jamais `error`) ;
+(d) un test dédié : un premier échec affiche son message, une nouvelle tentative
+(réussie ou non) sur la MÊME action efface l'ancien message avant que le résultat de
+la nouvelle tentative ne s'affiche — vérifie explicitement le comportement "efface au
+début de chaque tentative" décrit en §3.
 
 ## 5. Ce qui ne change pas
 
-Tout le reste de `MissionWorkspace.tsx` (les autres handlers, `phase: 'error'` pour les
-échecs qui doivent réellement bloquer — ex. échec de `createMission`/
-`setGlobalAssessment` initial avant que l'écran terrain existe, échec de
-`deriveResumePhase`), et tout le mode hors-ligne déjà livré (cache-through, sync,
-indicateur) restent inchangés.
+Tout le reste de `MissionWorkspace.tsx` reste inchangé — en particulier
+`handleMissionCreated` (`createPlan` pour le plan extérieur) et
+`handleGlobalAssessmentSaved` (premier `setGlobalAssessment` + `geocodeAddress`, avant
+que l'écran terrain existe), qui continuent de basculer `phase` sur `error` en cas
+d'échec : à ce stade de la préparation, il n'y a pas encore d'écran terrain à préserver,
+donc l'état d'erreur bloquant reste approprié. `PlanCalibrationTool`'s propre alerte
+interne (validation géométrique du calage) n'est pas touchée. Le mode hors-ligne déjà
+livré (cache-through, sync, indicateur) reste inchangé.
