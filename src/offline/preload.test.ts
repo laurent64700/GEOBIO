@@ -107,4 +107,54 @@ describe('preloadPlanForOffline', () => {
     expect(currentSession.setCurrentSession).toHaveBeenCalledTimes(1)
     expect(currentSession.setCurrentSession).toHaveBeenCalledWith(mission, exteriorPlan)
   })
+
+  it('writes current_session only after all priming (including per-instance grid-lines) has completed', async () => {
+    const order: string[] = []
+
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockImplementation(async () => {
+      order.push('listGridInstancesForPlan')
+      return instances
+    })
+    vi.mocked(gridTemplatesRepo.listGridTemplates).mockImplementation(async () => {
+      order.push('listGridTemplates')
+      return []
+    })
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockImplementation(async () => {
+      order.push('listFeltPointsForPlan')
+      return []
+    })
+    vi.mocked(feltSegmentsRepo.listFeltSegmentsForPlan).mockImplementation(async () => {
+      order.push('listFeltSegmentsForPlan')
+      return []
+    })
+    vi.mocked(phenomenaRepo.listPhenomenaForPlan).mockImplementation(async () => {
+      order.push('listPhenomenaForPlan')
+      return []
+    })
+    vi.mocked(contextObjectsRepo.listContextObjectsForPlan).mockImplementation(async () => {
+      order.push('listContextObjectsForPlan')
+      return []
+    })
+    vi.mocked(freeformNetworksRepo.listFreeformNetworksForPlan).mockImplementation(async () => {
+      order.push('listFreeformNetworksForPlan')
+      return []
+    })
+    vi.mocked(plansRepo.listPlansForMission).mockImplementation(async () => {
+      order.push('listPlansForMission')
+      return []
+    })
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockImplementation(async (id) => {
+      order.push(`listGridLinesForInstance:${id}`)
+      return []
+    })
+    vi.mocked(currentSession.setCurrentSession).mockImplementation(async () => {
+      order.push('setCurrentSession')
+    })
+
+    await preloadPlanForOffline(mission, exteriorPlan)
+
+    expect(order[order.length - 1]).toBe('setCurrentSession')
+    expect(order).toContain('listGridLinesForInstance:gi1')
+    expect(order).toContain('listGridLinesForInstance:gi2')
+  })
 })

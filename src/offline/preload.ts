@@ -18,12 +18,18 @@ import type { Mission, Plan } from '../domain/types'
  * site in the same session (never revisiting the mission list, the only
  * other place `current_session` is written — `handleSelectMission` in
  * App.tsx, Task 6.2) would have nothing cached to boot from.
+ *
+ * `setCurrentSession` is called last, after every priming call (including
+ * the per-instance grid-lines fan-out) has resolved — writing it earlier
+ * would let an interrupted preload leave `current_session` pointing at a
+ * mission whose offline data isn't actually complete yet.
  */
 export async function preloadPlanForOffline(mission: Mission, exteriorPlan: Plan): Promise<void> {
   const planId = exteriorPlan.id
 
-  const [instances] = await Promise.all([
-    listGridInstancesForPlan(planId),
+  const instancesPromise = listGridInstancesForPlan(planId)
+  await Promise.all([
+    instancesPromise,
     listGridTemplates(),
     listFeltPointsForPlan(planId),
     listFeltSegmentsForPlan(planId),
@@ -32,6 +38,7 @@ export async function preloadPlanForOffline(mission: Mission, exteriorPlan: Plan
     listFreeformNetworksForPlan(planId),
     listPlansForMission(mission.id),
   ])
+  const instances = await instancesPromise
 
   await Promise.all(instances.map((instance) => listGridLinesForInstance(instance.id)))
 
