@@ -12,6 +12,7 @@ import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, setSelectedParcels, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
 import { geocodeAddress } from '../data/geocodingService'
+import { preloadPlanForOffline } from '../offline/preload'
 import type { CadastralParcel } from '../data/cadastreService'
 import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
 import type { AffineTransform, Mission, Plan } from '../domain/types'
@@ -102,6 +103,12 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
     try {
       const parcelIds = selectedParcels.map((p) => p.id)
       const updated = await setSelectedParcels(phase.mission.id, parcelIds)
+      // Fire-and-forget: prime the offline caches in the background now that
+      // parcels are confirmed, so the mission is ready to work with no
+      // signal at the site. Preloading is best-effort — a failure here must
+      // never block the mission from opening online, nor surface as an
+      // unhandled rejection.
+      preloadPlanForOffline(updated, phase.exteriorPlan).catch(() => {})
       const fitBounds = boundsOfParcels(selectedParcels) ?? undefined
       setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan, fitBounds })
     } catch (err) {

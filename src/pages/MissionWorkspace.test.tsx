@@ -6,12 +6,14 @@ import * as plansRepo from '../data/plansRepo'
 import * as missionsRepo from '../data/missionsRepo'
 import * as planImageStorage from '../data/planImageStorage'
 import * as geocodingService from '../data/geocodingService'
+import * as preloadModule from '../offline/preload'
 import type { Mission } from '../domain/types'
 
 vi.mock('../data/plansRepo')
 vi.mock('../data/missionsRepo')
 vi.mock('../data/planImageStorage')
 vi.mock('../data/geocodingService')
+vi.mock('../offline/preload')
 
 vi.mock('../components/MissionForm', async () => {
   const { useEffect } = await import('react')
@@ -163,7 +165,14 @@ async function advanceToReadyNoInterior(resolvedMission: Mission = missionWithOr
 }
 
 describe('MissionWorkspace', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    // Default to a resolved preload so every test that merely passes through
+    // parcel-selection (most of them, via advanceToReadyNoInterior) doesn't
+    // have to care about offline preloading. Tests that specifically exercise
+    // the preload call/failure path override this.
+    vi.mocked(preloadModule.preloadPlanForOffline).mockResolvedValue(undefined)
+  })
 
   it('creates an exterior plan once a mission is created, then shows the global assessment form', async () => {
     vi.mocked(plansRepo.createPlan).mockResolvedValue({
@@ -202,6 +211,37 @@ describe('MissionWorkspace', () => {
     await waitFor(() => expect(missionsRepo.setSelectedParcels).toHaveBeenCalledWith('m1', ['A123']))
     const siteMapView = await screen.findByTestId('site-map-view')
     expect(siteMapView).toHaveAttribute('data-fit-bounds', JSON.stringify([[48.8566, 2.3522], [48.8566, 2.3522]]))
+    // Confirming parcels must kick off offline preloading in the background,
+    // using the UPDATED mission (post-confirmation, with parcelRefs set) —
+    // not the pre-confirmation mission — and the exterior Plan from the
+    // current phase.
+    await waitFor(() =>
+      expect(preloadModule.preloadPlanForOffline).toHaveBeenCalledWith(
+        { ...missionWithOrigin, parcelRefs: ['A123'] },
+        { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null }
+      )
+    )
+  })
+
+  it('still opens the mission normally even if offline preloading fails after parcel confirmation', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(missionsRepo.setSelectedParcels).mockResolvedValue({ ...missionWithOrigin, parcelRefs: ['A123'] })
+    vi.mocked(preloadModule.preloadPlanForOffline).mockRejectedValue(new Error('indexeddb unavailable'))
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    fireEvent.click(screen.getByText('simulate-map-click'))
+
+    fireEvent.click(await screen.findByText('simulate-parcels-confirmed'))
+
+    // The parcel-confirmation flow must complete normally — reaching
+    // ready-no-interior — despite the rejected preload promise.
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toBeInTheDocument()
+    await waitFor(() => expect(preloadModule.preloadPlanForOffline).toHaveBeenCalled())
   })
 
   it('records the mission origin on map click, then shows the map and the interior-upload option', async () => {
