@@ -20,22 +20,25 @@ function App() {
 
   useEffect(() => {
     async function boot() {
-      if (!(await isOnlineNow())) {
-        const cached = await getCurrentSession()
-        if (cached) {
-          setPhase({
-            name: 'resuming',
-            resumePhase: { name: 'ready-no-interior', mission: cached.mission, exteriorPlan: cached.exteriorPlan },
-          })
-          return
+      try {
+        if (!(await isOnlineNow())) {
+          const cached = await getCurrentSession()
+          if (cached) {
+            setPhase({
+              name: 'resuming',
+              resumePhase: { name: 'ready-no-interior', mission: cached.mission, exteriorPlan: cached.exteriorPlan },
+            })
+            return
+          }
+          // No cached session — fall through to the normal listMissions() path
+          // below, which will fail offline and surface the 'error' phase.
+          // This is the documented edge case: offline with nothing cached yet.
         }
-        // No cached session — fall through to the normal listMissions() path
-        // below, which will fail offline and surface the 'error' phase.
-        // This is the documented edge case: offline with nothing cached yet.
+        const missions = await listMissions()
+        setPhase({ name: 'mission-list', missions })
+      } catch (err) {
+        setPhase({ name: 'error', message: err instanceof Error ? err.message : String(err) })
       }
-      listMissions()
-        .then((missions) => setPhase({ name: 'mission-list', missions }))
-        .catch((err) => setPhase({ name: 'error', message: err instanceof Error ? err.message : String(err) }))
     }
     boot()
   }, [])

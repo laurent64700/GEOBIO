@@ -115,4 +115,13 @@ describe('App', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
+
+  it('shows an error, not an infinite loading screen, when getCurrentSession fails while offline at mount', async () => {
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    vi.mocked(currentSessionModule.getCurrentSession).mockRejectedValue(new Error('indexeddb unavailable'))
+
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('indexeddb unavailable')
+  })
 })
