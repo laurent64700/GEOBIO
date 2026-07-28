@@ -16,14 +16,27 @@ function replay(mutation: PendingMutation): PromiseLike<{ error: { message: stri
       // grid_line inserts from Task 4.2) — supabase-js's `.insert()`
       // accepts both natively through the same call, so no special-casing
       // is needed here.
+      // `as never`: `table` is a runtime string, not a literal type, so
+      // supabase-js can't resolve a row type for `.insert()` generically —
+      // this cast is required, not a corner cut.
       return supabase.from(table).insert(payload as never)
     case 'update': {
       const { id, ...patch } = payload as { id: string } & Record<string, unknown>
+      // `as never`: same reason as the insert cast above — `table` being a
+      // runtime string prevents supabase-js from inferring the row type.
       return supabase.from(table).update(patch as never).eq('id', id)
     }
     case 'delete': {
       const { id } = payload as { id: string }
       return supabase.from(table).delete().eq('id', id)
+    }
+    default: {
+      // Exhaustiveness guard: if `MutationOperation` ever gains a member
+      // without a corresponding case above, this becomes a compile error
+      // instead of a silent runtime `undefined` (tsconfig.app.json does not
+      // set `noImplicitReturns`, so nothing else would catch this).
+      const _exhaustive: never = operation
+      throw new Error(`Unhandled mutation operation: ${_exhaustive}`)
     }
   }
 }
@@ -42,6 +55,11 @@ function replay(mutation: PendingMutation): PromiseLike<{ error: { message: stri
  * call itself throwing/rejecting) increments `attempts` and leaves the
  * mutation queued; it never stops or blocks replay of the remaining
  * mutations.
+ *
+ * There is no retry cap, backoff, or escalation here — a mutation that
+ * fails forever stays queued and is retried on every future sync
+ * indefinitely; that's a deliberate scope boundary (YAGNI), not an
+ * oversight.
  */
 export async function flushPendingMutations(): Promise<void> {
   const mutations = await listPendingMutations()

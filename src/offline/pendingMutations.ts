@@ -8,6 +8,8 @@ export interface PendingMutation {
   operation: MutationOperation
   payload: unknown
   createdAt: string
+  // Tracked on every failed replay (see incrementAttempts / sync.ts), but
+  // currently has no cap and no consumer — no code reads this field today.
   attempts: number
 }
 
