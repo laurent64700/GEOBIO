@@ -136,10 +136,10 @@ interface ActionHistoryEntry {
 
 **Point critique découvert en relecture — annuler/refaire ne doivent JAMAIS
 s'enregistrer eux-mêmes comme une nouvelle action.** `undo()`/`redo()` appellent les
-mêmes fonctions de repo déjà existantes que l'action d'origine (§3.3 explique que ces
-fonctions passent normalement par `undoableWrite`, qui enregistre une entrée
-d'historique à chaque appel réussi). Sans précaution, le simple fait d'appeler
-`deleteX`/`restoreX`/`updateGridInstanceOrigin`/`updateLinePoints` DEPUIS `undo()`
+mêmes fonctions de repo déjà existantes que l'action d'origine. Pour `deleteX`,
+`updateGridInstanceOrigin` et `updateLinePoints` (§3.3 explique que ces fonctions
+passent normalement par `undoableWrite`, qui enregistre une entrée d'historique à
+chaque appel réussi), sans précaution le simple fait de les appeler DEPUIS `undo()`
 enregistrerait une toute nouvelle entrée `undone: false` — au lieu de marquer l'entrée
 existante `undone: true`, ce qui casserait la règle "annuler = dernière entrée non
 annulée, `id` maximum" (le deuxième clic sur Annuler retrouverait cette entrée
@@ -147,18 +147,27 @@ fantôme au lieu de continuer à remonter dans le vrai historique), et contredir
 directement la règle de purge (§3.1 plus bas), qui suppose déjà implicitement une
 distinction entre "vraie nouvelle action utilisateur" et "écriture déclenchée par un
 annuler/refaire" sans jamais préciser comment cette distinction est faite.
+`restoreX` n'est PAS concernée par ce risque précis — voir §3.2 (corrigé en relecture,
+round 4) : elle n'appelle jamais `undoableWrite`, donc aucun enregistrement fantôme
+n'est possible de ce côté ; mais elle partage le même besoin de bookkeeping manuel sur
+`undone` décrit ci-dessous.
 
-**Fix retenu** : chaque fonction de repo concernée accepte un paramètre optionnel
-`options?: { record?: boolean; batchId?: string }` (défaut `record: true`), transmis
-tel quel à `undoableWrite` (§3.3). `undo()`/`redo()` appellent ces mêmes fonctions
-publiques avec `{ record: false }` — l'écriture réelle a bien lieu (même chemin
-cache-through/hors-ligne que d'habitude), mais AUCUNE entrée d'historique n'est créée.
-`undo()`/`redo()` sont eux-mêmes responsables de basculer le champ `undone` des
-entrées concernées (une opération directe sur `action_history`, distincte de
-`undoableWrite`), APRÈS que l'écriture compensatoire a réussi. La règle de purge (plus
-bas) ne se déclenche donc jamais pour une écriture faite par `undo()`/`redo()`,
-puisqu'aucune entrée n'est enregistrée pour ces écritures-là — la distinction "action
-normale" vs "annuler/refaire" est donc bien réelle, pas seulement supposée.
+**Fix retenu** : pour `deleteX`, `updateGridInstanceOrigin` et `updateLinePoints`,
+chacune accepte un paramètre optionnel `options?: { record?: boolean; batchId?: string }`
+(défaut `record: true`), transmis tel quel à `undoableWrite` (§3.3). `undo()`/`redo()`
+appellent ces fonctions avec `{ record: false }` — l'écriture réelle a bien lieu (même
+chemin cache-through/hors-ligne que d'habitude), mais AUCUNE entrée d'historique n'est
+créée. Pour `restoreX` (§3.2), qui n'a pas de paramètre `options` du tout, `undo()`/
+`redo()` l'appellent directement — le même résultat (écriture réelle, zéro entrée
+créée) est obtenu structurellement, puisque `restoreX` ne passe jamais par
+`undoableWrite`. Dans les deux cas, `undo()`/`redo()` sont eux-mêmes responsables de
+basculer le champ `undone` des entrées concernées (une opération directe sur
+`action_history`, distincte de `undoableWrite`), APRÈS que l'écriture compensatoire a
+réussi. La règle de purge (plus bas) ne se déclenche donc jamais pour une écriture
+faite par `undo()`/`redo()`, puisqu'aucune entrée n'est enregistrée pour ces
+écritures-là (que ce soit via `{ record: false }` ou structurellement pour `restoreX`)
+— la distinction "action normale" vs "annuler/refaire" est donc bien réelle, pas
+seulement supposée.
 
 **Annuler** = trouve la dernière entrée non annulée (`undone: false`, `id` maximum)
 pour le plan courant (via l'index `plan_id`). Si son `batchId` est non nul, TOUTES les
@@ -333,14 +342,25 @@ async function undoableWrite<T>(
                                 // à l'intérieur, juste avant/après
   options?: UndoableOptions,
 ): Promise<T> {
-  const after = await perform()
+  const result = await perform()
   if (options?.record ?? true) {
     // enregistre l'entrée d'historique (planId, entityType, operation, before,
-    // after, options?.batchId ?? null) — y compris purge et éviction FIFO §3.1
+    // after: operation === 'delete' ? null : result, options?.batchId ?? null)
+    // — y compris purge et éviction FIFO §3.1
   }
-  return after
+  return result
 }
 ```
+
+**Précision ajoutée en relecture (round 5)** : `perform()` retourne la valeur que
+`deleteX`/`createX`/`updateX` retournent déjà normalement (ex. `deleteFeltPoint` ne
+retourne que `{ id }`, pas l'objet domaine complet — confirmé dans `cacheThrough.ts`,
+overload `delete`). `after` dans `ActionHistoryEntry` (§3.1, `null` pour un `delete`)
+n'est donc PAS simplement `result` : `undoableWrite` force `after` à `null` quand
+`operation === 'delete'`, indépendamment de ce que `perform()` a retourné, exactement
+comme l'interface de §3.1 l'exige. Pour `insert`/`update`, `result` EST déjà l'objet
+domaine complet retourné par `createX`/`updateX` — pas de transformation nécessaire dans
+ces deux cas.
 
 Chaque fonction de repo concernée gagne un paramètre optionnel final
 `options?: UndoableOptions`, transmis tel quel à son appel `undoableWrite`. Plutôt que
@@ -378,9 +398,12 @@ les deux repos se comportent différemment :**
   déjà retenu pour `ActionHistoryEntry.planId` lui-même (§3.1 : fourni explicitement,
   jamais déduit de l'indexation propre de l'entité).
 
-**Signatures publiques modifiées — liste complète des 10 fonctions concernées (précisée
-en relecture, round 4 : la version précédente n'énumérait que les 3 fonctions des repos
-de grille, alors que le paragraphe juste au-dessus annonce 6 repos concernés) :**
+**Signatures publiques modifiées — liste complète des 11 fonctions concernées (précisée
+en relecture, round 4, et corrigée en relecture round 5 — le décompte affiché en round 4
+disait "10", erroné : 8 fonctions `createX`/`deleteX` sur les 4 repos à paire
+création/suppression, + `updateGridInstanceOrigin`, + `updateAdjustedPoints`, +
+`updateLinePoints` = 11 ; la version d'avant round 4 n'énumérait que ces 3 dernières,
+alors que le paragraphe juste au-dessus annonce 6 repos concernés) :**
 - `feltPointsRepo` : `createFeltPoint(..., options?: UndoableOptions)`,
   `deleteFeltPoint(id, options?: UndoableOptions)` (`restoreFeltPoint(item)` existe
   aussi, §3.2, mais n'a pas de paramètre `options` — voir §3.2).
@@ -494,17 +517,22 @@ seulement `adjustedPoints` — pour garantir que le dispatch "toujours via
 `updateLinePoints`" (§3.1) est réellement appliqué, pas contourné.
 
 **Test dédié à la lecture inconditionnelle de `existing` (§3.3, point ajouté en
-relecture round 4) — spécifiquement sur la branche en ligne réussie.** Le bug que ce
-chantier corrige est que `updateAdjustedPoints`/`updateLinePoints` ne lisaient
+relecture round 4) — spécifiquement sur la branche en ligne réussie, POUR CHACUNE des
+deux fonctions séparément (précisé en relecture round 5 : `updateAdjustedPoints` et
+`updateLinePoints` ont chacune leur propre branchement `if (isOnlineNow())` et leur
+propre appel à `getCachedLineOrThrow` en repli, `gridLinesRepo.ts:196-224` vs
+`229-261` — un test qui ne couvrirait que l'une des deux ne prouverait rien pour
+l'autre, une régression sur la fonction non testée passerait inaperçue).** Le bug que
+ce chantier corrige est que `updateAdjustedPoints`/`updateLinePoints` ne lisaient
 `existing` QUE dans leur branche hors-ligne/repli — un test qui laisserait
 `isOnlineNow()` non forcé (donc potentiellement toujours hors-ligne dans l'environnement
 de test) passerait même si cette correction n'était jamais implémentée, et ne
-prouverait rien. Le test doit forcer explicitement `isOnlineNow()` à `true` et
-`tryOnlineLineUpdate` à réussir (mock), puis vérifier que le `before` enregistré dans
-`action_history` correspond bien à l'état PRÉ-mise à jour de la ligne — pas `undefined`,
-pas l'état post-mise à jour, pas une erreur — pour prouver que la lecture de `existing`
-a bien lieu AVANT l'appel réseau sur ce chemin précis, symétriquement au test déjà décrit
-ci-dessus pour le chemin hors-ligne.
+prouverait rien. **Deux tests distincts, un par fonction** : chacun force explicitement
+`isOnlineNow()` à `true` et `tryOnlineLineUpdate` à réussir (mock), puis vérifie que le
+`before` enregistré dans `action_history` correspond bien à l'état PRÉ-mise à jour de la
+ligne — pas `undefined`, pas l'état post-mise à jour, pas une erreur — pour prouver que
+la lecture de `existing` a bien lieu AVANT l'appel réseau sur ce chemin précis,
+symétriquement au test déjà décrit ci-dessus pour le chemin hors-ligne.
 
 **Test dédié à la non-réenregistrement de undo()/redo() (§3.1, point critique)** :
 créer une action réelle (ex. `createFeltPoint`), l'annuler, puis vérifier
