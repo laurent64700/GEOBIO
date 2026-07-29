@@ -401,7 +401,7 @@ git commit -m "feat: non-blocking error banner for global assessment save failur
 ## Vérification finale
 
 - [ ] Run: `node_modules/.bin/vitest.cmd run src/pages/MissionWorkspace.test.tsx` —
-  attendu : tous les tests passent (existants + 6 nouveaux de ce plan).
+  attendu : tous les tests passent (existants + 5 nouveaux de ce plan).
 - [ ] Run: `node_modules/.bin/vitest.cmd run --maxWorkers=2` (suite complète) —
   attendu : aucune régression par rapport à la baseline actuelle de `master`.
 - [ ] Run: `npx tsc -b` — attendu : aucune erreur.
