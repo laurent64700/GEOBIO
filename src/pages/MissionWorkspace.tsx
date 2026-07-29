@@ -53,6 +53,19 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+type NonBlockingErrorAction = 'upload' | 'calibration' | 'assessment'
+
+interface NonBlockingError {
+  action: NonBlockingErrorAction
+  message: string
+}
+
+const ACTION_LABELS: Record<NonBlockingErrorAction, string> = {
+  upload: 'Import du plan intérieur : ',
+  calibration: 'Calage du plan : ',
+  assessment: 'Bilan global : ',
+}
+
 export interface MissionWorkspaceProps {
   initialResumePhase?: ResumePhase
 }
@@ -65,6 +78,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
           : initialResumePhase)
       : { name: 'creating-mission' }
   )
+  const [nonBlockingError, setNonBlockingError] = useState<NonBlockingError | null>(null)
 
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })
@@ -120,6 +134,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
 
   async function handleInteriorFileChosen(file: File) {
     if (phase.name !== 'ready-no-interior') return
+    setNonBlockingError(null)
     try {
       const url = await uploadPlanImage(phase.mission.id, file)
       setPhase({
@@ -129,7 +144,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
         imageUrl: url,
       })
     } catch (err) {
-      setPhase({ name: 'error', message: messageOf(err) })
+      setNonBlockingError({ action: 'upload', message: messageOf(err) })
     }
   }
 
@@ -188,6 +203,12 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       const { originLat, originLng } = phase.mission
       return (
         <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
+          {nonBlockingError && (
+            <p role="alert">
+              {ACTION_LABELS[nonBlockingError.action]}
+              {nonBlockingError.message}
+            </p>
+          )}
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView
               planId={phase.exteriorPlan.id}

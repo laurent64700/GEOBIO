@@ -289,6 +289,52 @@ describe('MissionWorkspace', () => {
     expect(await screen.findByText('simulate-calibrated')).toBeInTheDocument()
   })
 
+  it('shows a non-blocking banner (not the full-page error) when the interior file upload fails', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(planImageStorage.uploadPlanImage).mockRejectedValue(new Error('network down'))
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    await advanceToReadyNoInterior()
+    await screen.findByLabelText(/importer un plan intérieur/i)
+
+    const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
+    fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
+
+    await waitFor(() =>
+      expect(screen.getByText(/import du plan intérieur.*network down/i)).toBeInTheDocument()
+    )
+    // Le reste de l'écran terrain reste monté — pas basculé en page d'erreur pleine page.
+    expect(screen.getByTestId('site-map-view')).toBeInTheDocument()
+  })
+
+  it('clears a stale upload error banner once a retry on the same action succeeds', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(planImageStorage.uploadPlanImage)
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce('https://x/plan.jpg')
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    await advanceToReadyNoInterior()
+    await screen.findByLabelText(/importer un plan intérieur/i)
+    const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
+
+    fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
+    await screen.findByText(/import du plan intérieur.*network down/i)
+
+    fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
+
+    await waitFor(() => expect(screen.queryByText(/network down/i)).not.toBeInTheDocument())
+    expect(await screen.findByText('simulate-calibrated')).toBeInTheDocument()
+  })
+
   it('saves an interior Plan once calibration completes', async () => {
     vi.mocked(plansRepo.createPlan)
       .mockResolvedValueOnce({ id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null })
