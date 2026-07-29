@@ -102,6 +102,12 @@ upgrade(db, oldVersion) {
 }
 ```
 
+`db.ts` documente déjà `STORE_NAMES` comme "source de vérité à synchroniser à la main"
+avec le contenu de `upgrade()` — `'action_history'` doit être ajouté à `STORE_NAMES`
+en même temps que le bloc `upgrade()` ci-dessus, pour respecter cet invariant déjà
+établi par le fichier (sinon rien ne casse aujourd'hui, mais l'invariant documenté du
+fichier serait silencieusement violé).
+
 ### 3.1 Mécanisme central : actions compensatoires
 
 Chaque action annulable enregistre un instantané complet dans le nouveau store
@@ -121,13 +127,18 @@ interface ActionHistoryEntry {
   operation: 'insert' | 'update' | 'delete'
   before: unknown | null   // objet domaine complet avant l'action (null si insert)
   after: unknown | null    // objet domaine complet après l'action (null si delete)
+  batchId: string | null   // partagé entre plusieurs entrées d'un même geste
+                            // utilisateur (ex. recalage de grille) — voir plus bas
   undone: boolean
   createdAt: string
 }
 ```
 
 **Annuler** = trouve la dernière entrée non annulée (`undone: false`, `id` maximum)
-pour le plan courant (via l'index `plan_id`), applique l'inverse :
+pour le plan courant (via l'index `plan_id`). Si son `batchId` est non nul, TOUTES les
+entrées non annulées partageant ce `batchId` sont incluses dans l'opération (voir
+"Regroupement en lot" plus bas — cas du recalage de grille). Pour chaque entrée
+concernée, applique l'inverse :
 - `insert` → appelle la fonction `deleteX` déjà existante du repo concerné.
 - `delete` → appelle une nouvelle fonction `restoreX(item)` (une par repo concerné —
   voir §3.2) qui réinsère l'objet exact avec son id d'origine.
@@ -146,13 +157,16 @@ pour le plan courant (via l'index `plan_id`), applique l'inverse :
   inconditionnellement, donc l'utiliser systématiquement pour l'annulation est toujours
   correct, quelle que soit l'action d'origine.
 
-Puis marque l'entrée `undone: true`.
+Puis marque toutes les entrées concernées (le lot entier, ou l'entrée seule si
+`batchId` est nul) `undone: true`.
 
 **Refaire** = trouve la plus ANCIENNE entrée annulée (`undone: true`, `id` minimum
 parmi les annulées — les entrées annulées forment toujours un suffixe contigu du plus
-récent au plus ancien non-encore-refait, grâce à la purge décrite ci-dessous),
-réapplique l'action d'origine vers `after` au lieu de `before` (même règle de
-dispatch que ci-dessus — `grid_line` toujours via `updateLinePoints`), marque l'entrée
+récent au plus ancien non-encore-refait, grâce à la purge décrite ci-dessous). Si son
+`batchId` est non nul, inclut de la même façon toutes les entrées annulées partageant
+ce `batchId`. Réapplique l'action d'origine vers `after` au lieu de `before` pour
+chaque entrée concernée (même règle de dispatch que ci-dessus — `grid_line` toujours
+via `updateLinePoints`), marque l'entrée (ou le lot)
 `undone: false`.
 
 **Pile vide** : `undo()`/`redo()` sur une pile vide (pour le plan courant) est un
@@ -165,18 +179,47 @@ et `hasRedoableAction(planId): Promise<boolean>` (existence d'au moins une entr�
 `undone: false` / `undone: true` pour ce `planId`) pilotent le grisage des boutons
 (§3.4).
 
+**Regroupement en lot (`batchId`) — point critique découvert en relecture.** Certains
+gestes utilisateur déclenchent PLUSIEURS appels de repo distincts qui doivent
+s'annuler/se refaire comme UNE SEULE étape. Le cas réel le plus important : le recalage
+de grille sur un croisement de 2 tiges (douleur n°2, `SiteMapView.tsx`, fonction de
+recalage autour de la ligne 448) appelle `updateGridInstanceOrigin` UNE fois puis
+`updateLinePoints` UNE fois PAR LIGNE de l'instance — et une grille générée avec le
+rayon par défaut (`DEFAULT_GRID_RADIUS_M`, `createGridForPlan.ts`) dépasse couramment
+10 lignes. Sans regroupement, ce geste unique produirait 1+N entrées d'historique
+séparées ; avec la limite FIFO à 10 par plan (ci-dessous), cela viderait à lui seul tout
+le budget d'historique du plan et évincerait l'entrée de recalage d'origine (la plus
+ancienne des N+1) — rendant impossible d'annuler complètement le recalage, exactement
+le problème que ce chantier doit résoudre.
+
+**Fix** : `ActionHistoryEntry` gagne un champ `batchId: string | null` (id généré côté
+client, `null` pour une action simple à un seul appel). `undoableWrite` accepte un
+`batchId` optionnel ; un geste qui déclenche plusieurs appels de repo (aujourd'hui, un
+seul cas réel : le recalage de grille) génère UN `batchId` partagé et le passe à chaque
+appel `undoableWrite` de la séquence. **Annuler/refaire opèrent au niveau du lot, pas
+de la ligne individuelle** : annuler la dernière entrée non annulée trouve d'abord son
+`batchId` (si non nul), puis annule TOUTES les entrées de ce plan partageant ce
+`batchId` en une seule opération logique (chacune via sa propre fonction inverse, comme
+d'habitude) avant de marquer le tout `undone: true`. Refaire fonctionne à l'identique
+dans l'autre sens. Une entrée à `batchId: null` reste un lot à elle seule (comportement
+inchangé pour toutes les autres actions de ce chantier, qui restent à un seul appel).
+
 **Purge sur nouvelle action** : dès qu'une nouvelle action (autre qu'un
 annuler/refaire) est enregistrée pour un plan, TOUTES les entrées `undone: true` de ce
 plan sont supprimées avant d'insérer la nouvelle — comportement standard de tout
 éditeur (impossible de "refaire" une branche qu'une nouvelle action a rendue
 obsolète).
 
-**Éviction FIFO à 10** : après insertion d'une nouvelle entrée (non-undo/redo), si le
-plan a plus de 10 entrées au total, la plus ancienne (`id` minimum pour ce `planId`)
-est supprimée. La limite est **par plan**, pas globale. Comme la purge ci-dessus
-s'exécute toujours avant cette étape, le compte peut déjà être bien en dessous de 10
-au moment de l'éviction — dans ce cas l'éviction ne se déclenche simplement pas
-(condition `> 10`, pas de contradiction avec la purge).
+**Éviction FIFO à 10 lots (pas 10 lignes)** : la limite de 10 s'applique au nombre de
+LOTS distincts pour un plan (un `batchId` non nul compte pour un seul lot, quel que
+soit le nombre d'entrées qu'il regroupe ; une entrée à `batchId: null` compte aussi
+pour un lot à elle seule), pas au nombre brut de lignes dans `action_history`. Après
+insertion d'un nouveau lot, si le plan a plus de 10 lots, TOUTES les entrées du lot le
+plus ancien (celui dont l'entrée avec l'`id` minimum pour ce `planId` a le `id` le plus
+petit) sont supprimées ensemble. La limite est **par plan**, pas globale. Comme la
+purge ci-dessus s'exécute toujours avant cette étape, le compte de lots peut déjà être
+bien en dessous de 10 au moment de l'éviction — dans ce cas l'éviction ne se déclenche
+simplement pas (condition `> 10`, pas de contradiction avec la purge).
 
 **Croissance à long terme (limite acceptée)** : la limite de 10 est par plan, pas
 globale — le nombre total d'entrées dans `action_history` grossit donc avec le nombre
@@ -205,19 +248,25 @@ exclu de l'annulation (§2), donc n'a pas besoin de `restoreX` non plus.
 
 Plutôt que de compter sur chaque composant UI pour se souvenir d'enregistrer une
 action, un petit wrapper `undoableWrite(planId, entityType, operation, before, after,
-writer: () => Promise<T>): Promise<T>` s'intercale entre chaque fonction de repo
-concernée et son `cachedWrite`/`cachedList` déjà existant : il exécute l'écriture
-normale, puis (si elle réussit) enregistre l'entrée d'historique — y compris la purge
-et l'éviction FIFO décrites en §3.1. Seuls les 6 repos avec au moins une opération
-annulable du §2 l'utilisent (`feltPointsRepo`, `feltSegmentsRepo`, `phenomenaRepo`,
-`contextObjectsRepo`, `gridInstancesRepo`, `gridLinesRepo`) ; `plansRepo`,
-`gridTemplatesRepo` et `freeformNetworksRepo` n'y touchent pas.
+writer: () => Promise<T>, batchId?: string): Promise<T>` s'intercale entre chaque
+fonction de repo concernée et son `cachedWrite`/`cachedList` déjà existant : il exécute
+l'écriture normale, puis (si elle réussit) enregistre l'entrée d'historique — y compris
+la purge et l'éviction FIFO au niveau du lot décrites en §3.1. Seuls les 6 repos avec au
+moins une opération annulable du §2 l'utilisent (`feltPointsRepo`, `feltSegmentsRepo`,
+`phenomenaRepo`, `contextObjectsRepo`, `gridInstancesRepo`, `gridLinesRepo`) ;
+`plansRepo`, `gridTemplatesRepo` et `freeformNetworksRepo` n'y touchent pas.
 
 Pour les opérations `update` (recalage de grille, édition de ligne), le `before` est
 déjà naturellement disponible : les fonctions concernées (`updateGridInstanceOrigin`,
 `updateAdjustedPoints`/`updateLinePoints`) lisent déjà l'entité existante du cache
 avant de la patcher (patron établi lors du chantier hors-ligne, Task 3.7/4.1) — pas de
 lecture supplémentaire à ajouter.
+
+**Site d'appel du recalage de grille** (`SiteMapView.tsx`, fonction autour de la ligne
+448) génère un `batchId` (`crypto.randomUUID()`) une fois pour tout le geste, et le
+passe à l'appel `undoableWrite` enveloppant `updateGridInstanceOrigin` ET à chacun des
+appels `undoableWrite` enveloppant `updateLinePoints` (un par ligne translatée) — tous
+partagent le même `batchId`, formant un seul lot annulable/refaisable (§3.1).
 
 ### 3.4 UI
 
@@ -234,6 +283,35 @@ en file d'attente hors-ligne comme toute autre écriture (spec du mode hors-lign
 §4.5/§4.6) — pas de nouveau mode d'échec à inventer, pas de bannière d'erreur
 spécifique à ce chantier.
 
+### 3.6 Remplacement du mécanisme d'annulation local déjà existant
+
+**Découvert en relecture, point à traiter explicitement.** `SiteMapView.tsx` a déjà,
+depuis avant ce chantier, un mécanisme d'annulation LOCAL et non persistant, limité aux
+éditions de lignes de grille par glissement : un état `undoStack` en mémoire
+(`Record<gridInstanceId, GridLine[]>`, ligne ~166), une fonction `handleLineChanged`
+qui y empile l'état précédent à chaque glissement (ligne ~368), une fonction
+`handleUndo` qui dépile et rappelle `updateAdjustedPoints` (ligne ~390), et un bouton
+"Annuler" dans l'UI (ligne ~708) actif seulement si `editMode` est armé.
+
+Une fois `updateAdjustedPoints` enveloppé par `undoableWrite` (§3.3), l'appel que fait
+CE bouton local à `updateAdjustedPoints` serait lui-même enregistré comme une NOUVELLE
+action dans l'historique global (`undoableWrite` ne peut pas distinguer "ceci est un
+appel normal" de "ceci est déjà un geste d'annulation") — les deux mécanismes
+entreraient en collision : cliquer sur l'ancien bouton local pourrait par exemple
+réappliquer une modification que l'utilisateur venait d'annuler via le nouveau bouton
+global, ou remplir le lot d'historique global avec des entrées qui n'ont plus de sens
+une fois le lot correspondant déjà annulé/refait globalement.
+
+**Décision retenue** : ce chantier **supprime** `undoStack`, `handleUndo` et le bouton
+"Annuler" local de `SiteMapView.tsx`, entièrement remplacés par le nouveau mécanisme
+global (§3.1-§3.4), qui couvre le même besoin (annuler un glissement de ligne) en
+mieux — persistant, pas limité à `editMode`, pas limité aux lignes de grille. `handleLineChanged`
+reste, moins l'empilement dans `undoStack` (l'enregistrement dans l'historique se fait
+désormais automatiquement via `undoableWrite`, à l'intérieur de `updateAdjustedPoints`
+lui-même — plus besoin que `SiteMapView` s'en occupe). `handleResetLine`
+(réinitialisation au tracé théorique) continue de fonctionner à l'identique, simplement
+via `handleLineChanged` inchangé.
+
 ## 4. Tests
 
 Pour la migration IndexedDB (§3.0) : un test dédié simulant une base déjà en version 1
@@ -249,14 +327,25 @@ restaure bien `theoreticalPoints` ET `adjustedPoints` à leurs valeurs `before` 
 seulement `adjustedPoints` — pour garantir que le dispatch "toujours via
 `updateLinePoints`" (§3.1) est réellement appliqué, pas contourné.
 
-Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 par plan (pas
-globale), annuler/refaire une séquence d'actions couvrant un mélange d'entités (une
-insertion sur `felt_point`, une mise à jour sur `grid_instance`, une suppression sur
-`phenomenon` par exemple — pas une seule entité qui passerait par les 3 opérations,
-puisqu'aucun repo ne les expose toutes les 3) et vérifier l'état final du cache à
-chaque étape ; `undo()`/`redo()` sur une pile vide ne fait rien et ne lève pas
-d'erreur ; persistance de l'historique après un rechargement simulé (fermeture/
-réouverture de la connexion IndexedDB).
+Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 LOTS par plan
+(pas 10 lignes brutes, pas globale — un test dédié doit couvrir le cas d'un seul lot
+regroupant plus de 10 entrées : il doit compter pour un seul lot, ne doit jamais être
+partiellement évincé, et ne doit jamais à lui seul déclencher une éviction), annuler/
+refaire une séquence d'actions couvrant un mélange d'entités (une insertion sur
+`felt_point`, une mise à jour sur `grid_instance`, une suppression sur `phenomenon` par
+exemple — pas une seule entité qui passerait par les 3 opérations, puisqu'aucun repo
+ne les expose toutes les 3) et vérifier l'état final du cache à chaque étape ;
+`undo()`/`redo()` sur une pile vide ne fait rien et ne lève pas d'erreur ; persistance
+de l'historique après un rechargement simulé (fermeture/réouverture de la connexion
+IndexedDB).
+
+**Test dédié au regroupement en lot (§3.1/§3.3)** : simuler un recalage de grille
+touchant plusieurs lignes (au moins 3, pour dépasser un cas trivial à une seule ligne) —
+un appel `updateGridInstanceOrigin` + plusieurs appels `updateLinePoints`, tous avec le
+même `batchId`. Vérifier : (a) une seule opération "Annuler" restaure l'origine de
+l'instance ET les points de TOUTES les lignes du lot en une fois, pas seulement la
+dernière ligne touchée ; (b) le lot compte comme une seule entrée pour la limite FIFO
+de 10 (§3.1) ; (c) "Refaire" réapplique le lot entier de la même façon.
 
 Pour l'UI : boutons grisés quand `hasUndoableAction`/`hasRedoableAction` renvoie
 `false` pour le plan courant, clic déclenche bien la bonne fonction de repo selon
@@ -266,6 +355,9 @@ Pour l'UI : boutons grisés quand `hasUndoableAction`/`hasRedoableAction` renvoi
 
 Le mode hors-ligne déjà livré (cache-through, synchro, indicateur) et le chantier
 "erreurs non bloquantes" (upload plan intérieur, calibration, bilan global) restent
-inchangés — ce chantier n'ajoute que de nouvelles fonctions et un nouveau store,
-aucune modification de l'existant en dehors de l'ajout de l'appel à `undoableWrite`
-dans les fonctions de repo concernées.
+inchangés. `handleResetLine` et le reste de `SiteMapView.tsx` en dehors du mécanisme
+d'annulation local retiré (§3.6) restent inchangés. Ce chantier ajoute de nouvelles
+fonctions et un nouveau store, modifie `db.ts` (migration, §3.0), et retire le
+mécanisme d'annulation local devenu redondant (§3.6) — aucune autre modification de
+l'existant en dehors de l'ajout de l'appel à `undoableWrite` dans les fonctions de
+repo concernées.
