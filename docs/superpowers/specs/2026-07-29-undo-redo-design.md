@@ -352,11 +352,18 @@ async function undoableWrite<T>(
 }
 ```
 
-**Précision ajoutée en relecture (round 5)** : `perform()` retourne la valeur que
-`deleteX`/`createX`/`updateX` retournent déjà normalement (ex. `deleteFeltPoint` ne
-retourne que `{ id }`, pas l'objet domaine complet — confirmé dans `cacheThrough.ts`,
-overload `delete`). `after` dans `ActionHistoryEntry` (§3.1, `null` pour un `delete`)
-n'est donc PAS simplement `result` : `undoableWrite` force `after` à `null` quand
+**Précision ajoutée en relecture (round 5, citation corrigée en relecture round 6)** :
+`perform()` retourne ce que la fonction de repo retourne déjà normalement aujourd'hui —
+et ce n'est PAS toujours `{ id }` ni l'objet domaine complet, ça dépend de la fonction.
+Exemple vérifié dans le code réel : `deleteFeltPoint` (`feltPointsRepo.ts:62-68`)
+déclare `Promise<void>` et n'utilise pas le résultat de son propre appel interne à
+`cachedWrite(..., 'delete', ...)` (qui, lui, produit `{ id }` en interne via son writer
+— seul `createFeltPoint`, qui fait `return cachedWrite(...)`, propage effectivement ce
+que `cachedWrite` retourne) — `deleteFeltPoint` résout donc aujourd'hui à `undefined`,
+pas à `{ id }`. Peu importe pour la conception : quelle que soit la valeur réelle que
+`perform()` retourne pour un `delete` (`undefined`, `{ id }`, ou autre chose selon la
+fonction), `after` dans `ActionHistoryEntry` (§3.1, `null` pour un `delete`) n'est de
+toute façon PAS simplement ce résultat : `undoableWrite` force `after` à `null` quand
 `operation === 'delete'`, indépendamment de ce que `perform()` a retourné, exactement
 comme l'interface de §3.1 l'exige. Pour `insert`/`update`, `result` EST déjà l'objet
 domaine complet retourné par `createX`/`updateX` — pas de transformation nécessaire dans
@@ -586,9 +593,18 @@ Pour l'UI : boutons grisés quand `hasUndoableAction`/`hasRedoableAction` renvoi
 
 Le mode hors-ligne déjà livré (cache-through, synchro, indicateur) et le chantier
 "erreurs non bloquantes" (upload plan intérieur, calibration, bilan global) restent
-inchangés. `handleResetLine` et le reste de `SiteMapView.tsx` en dehors du mécanisme
-d'annulation local retiré (§3.6) restent inchangés. Ce chantier ajoute de nouvelles
-fonctions et un nouveau store, modifie `db.ts` (migration, §3.0), et retire le
-mécanisme d'annulation local devenu redondant (§3.6) — aucune autre modification de
-l'existant en dehors de l'ajout de l'appel à `undoableWrite` dans les fonctions de
-repo concernées.
+inchangés. `handleResetLine` reste inchangé.
+
+**Précision ajoutée en relecture (round 6)** : contrairement à ce qu'une version
+précédente de cette section laissait entendre, `SiteMapView.tsx` n'est PAS limité à la
+seule suppression du mécanisme d'annulation local (§3.6) — la fonction de recalage de
+grille (le `useEffect` de calibration, lignes ~429-469) est elle aussi modifiée : le
+`Promise.all(...)` de la ligne ~452 devient une boucle séquentielle, et les appels à
+`updateGridInstanceOrigin`/`updateLinePoints` gagnent les arguments `batchId`/`planId`
+(§3.3, "Site d'appel du recalage de grille"). C'est un changement distinct de §3.6 (qui
+concerne `handleLineChanged`/`handleUndo`/le bouton local, douleur n°3) — celui-ci
+concerne le recalage de grille (douleur n°2). En dehors de ces deux zones de
+`SiteMapView.tsx` (§3.3 pour le recalage, §3.6 pour le retrait du mécanisme local) et de
+l'ajout de l'appel à `undoableWrite`/du nouveau paramètre `planId` dans les fonctions de
+repo concernées, ce chantier ajoute de nouvelles fonctions et un nouveau store, et
+modifie `db.ts` (migration, §3.0) — aucune autre modification de l'existant.
