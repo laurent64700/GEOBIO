@@ -271,18 +271,35 @@ reste un volume négligeable pour IndexedDB même sur des centaines de missions.
 
 Les 4 repos concernés par ce chantier qui ont création+suppression annulables
 (`feltPointsRepo`, `feltSegmentsRepo`, `phenomenaRepo`, `contextObjectsRepo`) gagnent
-une fonction `restoreX(item: X, options?: UndoableOptions): Promise<X>` (voir §3.3
-pour `UndoableOptions`) qui réinsère l'objet domaine complet (id compris) via
-`cachedWrite(store, table, 'insert', item, toRow, writer)` — la même signature que
-`createX` utilise déjà, sauf que `item`/`writer` portent l'id ORIGINAL de l'objet
-(celui qu'il avait avant suppression) au lieu d'appeler `generateClientId()` pour en
-créer un nouveau. C'est du code nouveau (une petite variante du chemin d'insertion déjà
-éprouvé par `createX`), pas une fonctionnalité déjà existante à réutiliser telle
-quelle. `gridInstancesRepo` et `gridLinesRepo` n'ont besoin d'aucune `restoreX` :
-seules leurs opérations de mise à jour sont annulables (§2), et annuler une mise à jour
-utilise la fonction de mise à jour déjà existante, jamais une réinsertion.
-`freeformNetworksRepo` est explicitement exclu de l'annulation (§2), donc n'a pas
-besoin de `restoreX` non plus.
+une fonction `restoreX(item: X): Promise<X>` qui réinsère l'objet domaine complet (id
+compris) via `cachedWrite(store, table, 'insert', item, toRow, writer)` — la même
+signature que `createX` utilise déjà, sauf que `item`/`writer` portent l'id ORIGINAL de
+l'objet (celui qu'il avait avant suppression) au lieu d'appeler `generateClientId()`
+pour en créer un nouveau. C'est du code nouveau (une petite variante du chemin
+d'insertion déjà éprouvé par `createX`), pas une fonctionnalité déjà existante à
+réutiliser telle quelle.
+
+**`restoreX` n'accepte PAS d'`options?: UndoableOptions` et n'appelle PAS
+`undoableWrite` — point précisé en relecture (round 4), pour lever une ambiguïté entre
+cette sous-section et §3.1/§3.3.** Contrairement à `createX`/`deleteX`/
+`updateGridInstanceOrigin`/`updateLinePoints` (qui sont des fonctions déjà appelées par
+l'UI pour de vraies actions utilisateur, et qui ont donc besoin de savoir, via
+`options.record`, si l'appel en cours vient d'un annuler/refaire ou d'un geste normal),
+`restoreX` n'a **aucun autre appelant que `undo()`/`redo()`** dans toute la conception :
+une action de relevé "restaure un objet supprimé" n'existe pas comme geste utilisateur
+direct, seulement comme la moitié annuler-d'une-suppression ou refaire-d'une-insertion
+(§3.1). `restoreX` serait donc TOUJOURS appelée avec l'équivalent de `{ record: false }`
+— un paramètre `options` sur cette fonction ne serait jamais utilisé avec une autre
+valeur, du code mort. `undo()`/`redo()` appellent `restoreX` directement (écriture
+réelle via `cachedWrite`, sans passer par `undoableWrite`) puis basculent eux-mêmes le
+champ `undone` de l'entrée concernée, exactement comme §3.1 le décrit déjà pour le reste
+de leur logique de bookkeeping sur `action_history`.
+
+`gridInstancesRepo` et `gridLinesRepo` n'ont besoin d'aucune `restoreX` : seules leurs
+opérations de mise à jour sont annulables (§2), et annuler une mise à jour utilise la
+fonction de mise à jour déjà existante, jamais une réinsertion. `freeformNetworksRepo`
+est explicitement exclu de l'annulation (§2), donc n'a pas besoin de `restoreX` non
+plus.
 
 ### 3.3 Wrapper d'enregistrement : `undoableWrite`
 
@@ -361,10 +378,30 @@ les deux repos se comportent différemment :**
   déjà retenu pour `ActionHistoryEntry.planId` lui-même (§3.1 : fourni explicitement,
   jamais déduit de l'indexation propre de l'entité).
 
-**Signatures publiques modifiées** :
-- `updateGridInstanceOrigin(instanceId, x, y, options?: UndoableOptions)`
-- `updateAdjustedPoints(lineId, adjustedPoints, planId: string, options?: UndoableOptions)`
-- `updateLinePoints(lineId, theoreticalPoints, adjustedPoints, planId: string, options?: UndoableOptions)`
+**Signatures publiques modifiées — liste complète des 10 fonctions concernées (précisée
+en relecture, round 4 : la version précédente n'énumérait que les 3 fonctions des repos
+de grille, alors que le paragraphe juste au-dessus annonce 6 repos concernés) :**
+- `feltPointsRepo` : `createFeltPoint(..., options?: UndoableOptions)`,
+  `deleteFeltPoint(id, options?: UndoableOptions)` (`restoreFeltPoint(item)` existe
+  aussi, §3.2, mais n'a pas de paramètre `options` — voir §3.2).
+- `feltSegmentsRepo` : `createFeltSegment(..., options?: UndoableOptions)`,
+  `deleteFeltSegment(id, options?: UndoableOptions)` (+ `restoreFeltSegment(item)`).
+- `phenomenaRepo` : `createPhenomenon(..., options?: UndoableOptions)`,
+  `deletePhenomenon(id, options?: UndoableOptions)` (+ `restorePhenomenon(item)`).
+- `contextObjectsRepo` : `createContextObject(..., options?: UndoableOptions)`,
+  `deleteContextObject(id, options?: UndoableOptions)` (+ `restoreContextObject(item)`).
+- `gridInstancesRepo` : `updateGridInstanceOrigin(instanceId, x, y, options?: UndoableOptions)`.
+- `gridLinesRepo` : `updateAdjustedPoints(lineId, adjustedPoints, planId: string, options?: UndoableOptions)`,
+  `updateLinePoints(lineId, theoreticalPoints, adjustedPoints, planId: string, options?: UndoableOptions)`.
+
+`createX` dans les 4 premiers repos n'est en pratique jamais appelée avec
+`options.record: false` (aucun chemin d'annuler/refaire ne rappelle `createX` — un
+refaire d'insertion utilise `restoreX`, §3.1/§3.2) ni avec `batchId` (aucune création
+n'est groupée en lot dans ce chantier) ; le paramètre existe malgré tout par uniformité
+avec `deleteX` et pour rester cohérent avec la règle générale du paragraphe précédent
+("chaque fonction de repo concernée gagne ce paramètre"), sans code mort réel côté
+`undoableWrite` puisque `undoableWrite` reste appelée normalement (juste toujours avec
+les valeurs par défaut dans ce cas précis).
 
 `options?: UndoableOptions` est nécessaire pour que le site d'appel du recalage
 (ci-dessous) puisse passer un `batchId` partagé, et pour que `undo()`/`redo()` (§3.1)
@@ -456,6 +493,19 @@ restaure bien `theoreticalPoints` ET `adjustedPoints` à leurs valeurs `before` 
 seulement `adjustedPoints` — pour garantir que le dispatch "toujours via
 `updateLinePoints`" (§3.1) est réellement appliqué, pas contourné.
 
+**Test dédié à la lecture inconditionnelle de `existing` (§3.3, point ajouté en
+relecture round 4) — spécifiquement sur la branche en ligne réussie.** Le bug que ce
+chantier corrige est que `updateAdjustedPoints`/`updateLinePoints` ne lisaient
+`existing` QUE dans leur branche hors-ligne/repli — un test qui laisserait
+`isOnlineNow()` non forcé (donc potentiellement toujours hors-ligne dans l'environnement
+de test) passerait même si cette correction n'était jamais implémentée, et ne
+prouverait rien. Le test doit forcer explicitement `isOnlineNow()` à `true` et
+`tryOnlineLineUpdate` à réussir (mock), puis vérifier que le `before` enregistré dans
+`action_history` correspond bien à l'état PRÉ-mise à jour de la ligne — pas `undefined`,
+pas l'état post-mise à jour, pas une erreur — pour prouver que la lecture de `existing`
+a bien lieu AVANT l'appel réseau sur ce chemin précis, symétriquement au test déjà décrit
+ci-dessus pour le chemin hors-ligne.
+
 **Test dédié à la non-réenregistrement de undo()/redo() (§3.1, point critique)** :
 créer une action réelle (ex. `createFeltPoint`), l'annuler, puis vérifier
 explicitement que le nombre TOTAL d'entrées dans `action_history` pour ce plan n'a
@@ -471,7 +521,14 @@ Vérifier que le point ressenti réapparaît avec le MÊME id que l'original (pa
 généré à nouveau), et que le nombre d'entités dans le cache local est bien revenu à ce
 qu'il était avant l'annulation (pas deux entités si un nouvel id avait été généré par
 erreur). Vérifier ensuite qu'annuler à nouveau ce refaire fonctionne correctement
-(supprime bien la bonne entité, celle avec l'id d'origine).
+(supprime bien la bonne entité, celle avec l'id d'origine). **Vérifier aussi (précisé en
+relecture round 4, pour couvrir `restoreX` par le même test de non-réenregistrement que
+celui décrit ci-dessus pour `deleteX`)** que le nombre TOTAL d'entrées dans
+`action_history` pour ce plan n'a PAS augmenté ni pendant l'annulation ni pendant le
+refaire (seul le champ `undone` de l'entrée d'origine change, dans un sens puis dans
+l'autre) — ce test couvre spécifiquement `restoreX`, qui n'appelle jamais
+`undoableWrite` (§3.2) et doit donc être vérifié séparément du test de non-
+réenregistrement ci-dessus, qui ne couvre que `deleteX`.
 
 Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 LOTS par plan
 (pas 10 lignes brutes, pas globale — un test dédié doit couvrir le cas d'un seul lot
