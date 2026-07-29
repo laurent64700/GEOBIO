@@ -958,7 +958,9 @@ git commit -m "feat: add undoableWrite wiring to gridInstancesRepo.updateGridIns
 
 **Breaking signature change:** both functions gain a new 3rd positional parameter `planId: string`, pushing `options` to 4th. Every existing call site and test must be updated.
 
-- [ ] **Step 1: Update the 5 existing tests that call `updateAdjustedPoints`/`updateLinePoints` without a cache seed or without `planId`**
+**This task's commit temporarily breaks `tsc -b` outside this file — expected, fixed in Task 12.** `src/components/SiteMapView.tsx` calls `updateAdjustedPoints(updated.id, updated.adjustedPoints)` (2 args) and `updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints)` (3 args) at 3 call sites — all missing the new required `planId` argument. `vitest` (this project's test runner) transpiles via esbuild without type-checking, so `npm test -- src/data/gridLinesRepo.test.ts` in Step 5 below will pass even though `npm run build` (`tsc -b && vite build`) would now fail on `SiteMapView.tsx`. This is fine: Task 12 (Chunk 5) updates every call site in `SiteMapView.tsx` to pass `planId`. Do not attempt to fix `SiteMapView.tsx` from within this task — its own task (12) does it as part of a larger, coordinated rewrite of that file. Just be aware `npm run build` is red between this task's commit and Task 12's commit; that's expected, not a regression to chase down.
+
+- [ ] **Step 1: Update the 6 existing tests that call `updateAdjustedPoints`/`updateLinePoints` without a cache seed or without `planId`**
 
 In `src/data/gridLinesRepo.test.ts`:
 
@@ -992,11 +994,41 @@ In `src/data/gridLinesRepo.test.ts`:
 
 2. `'updates both theoretical and adjusted points of a line (grid recalibration)'` (~line 90): same pattern — add a `db.put('grid_line', {...})` seed and `'p1'` as the 4th positional arg to `updateLinePoints`.
 
-3. `'throws a descriptive French error when updating adjusted points fails'` (~line 125): add the same `db.put` seed (otherwise it now throws the "introuvable" error instead of reaching the network mock) and `'p1'` as the 3rd arg.
+3. `'throws a descriptive French error when updating adjusted points fails'` (~line 125): add the same `db.put` seed (otherwise it now throws the "introuvable" error instead of reaching the network mock) and `'p1'` as the 3rd arg:
+
+```ts
+  it('throws a descriptive French error when updating adjusted points fails', async () => {
+    const db = await getDB()
+    await db.put('grid_line', {
+      id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+      theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    })
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(updateAdjustedPoints('gl1', [{ x: 0, y: 0 }], 'p1')).rejects.toThrow(
+      'Impossible de mettre à jour la ligne : network down'
+    )
+  })
+```
 
 4. In the `describe('gridLinesRepo — offline behavior', ...)` block: `'mirrors the full server row into the cache on a successful online updateAdjustedPoints'` and `'...updateLinePoints'` (~lines 223, 246) both already seed the cache via `db.put` — just add `'p1'` as the extra positional arg to the `updateAdjustedPoints`/`updateLinePoints` calls.
 
 5. The two offline-patch tests (`'applies just the adjustedPoints patch...'`, `'applies just the points patch...'`, ~lines 273, 304) and the `'merges sequential offline updates...'` test (~line 418) already seed the cache — add `'p1'` as the extra positional arg everywhere `updateAdjustedPoints`/`updateLinePoints` is called in this file.
+
+6. `'throws a clear error when updating a line that is not in the local cache while offline'` (~line 409–416): this test deliberately does NOT seed the cache (it's testing the missing-line error path) — no `db.put` needed, just add `'p1'` as the 3rd arg so the call still type-checks:
+
+```ts
+  it('throws a clear error when updating a line that is not in the local cache while offline', async () => {
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    const writerFrom = vi.fn()
+    vi.mocked(supabase).from = writerFrom
+
+    await expect(updateAdjustedPoints('missing-id', [{ x: 0, y: 0 }], 'p1')).rejects.toThrow()
+    expect(writerFrom).not.toHaveBeenCalled()
+  })
+```
 
 - [ ] **Step 2: Write the new failing tests**
 
@@ -1086,28 +1118,10 @@ describe('gridLinesRepo — undo/redo integration', () => {
     const entries = await getEntriesForPlan('p1')
     expect(entries[0].batchId).toBe('batch-a')
   })
-
-  it('an undo of an action originally recorded via updateAdjustedPoints restores BOTH theoreticalPoints and adjustedPoints via updateLinePoints (spec §3.1 dispatch rule)', async () => {
-    // This exercises the *dispatch* rule end to end using the real repo function,
-    // without going through undo()/redo() (Task 10 implements those) — it directly
-    // calls updateLinePoints with the recorded `before` snapshot's BOTH fields,
-    // exactly as undo()'s dispatch will, and checks theoreticalPoints survives
-    // (updateAdjustedPoints alone would never touch it).
-    vi.mocked(supabase).from = createSupabaseChainMock({
-      data: {
-        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
-        theoretical_points: seeded.theoreticalPoints, adjusted_points: seeded.adjustedPoints,
-      },
-      error: null,
-    }).from
-
-    const restored = await updateLinePoints('gl1', seeded.theoreticalPoints, seeded.adjustedPoints, 'p1', { record: false })
-
-    expect(restored.theoreticalPoints).toEqual(seeded.theoreticalPoints)
-    expect(restored.adjustedPoints).toEqual(seeded.adjustedPoints)
-  })
 })
 ```
+
+This chunk deliberately does NOT add a test asserting "undo always goes through `updateLinePoints`, never `updateAdjustedPoints`" — that's a property of `undo()`'s dispatch logic, which doesn't exist yet (Task 10, Chunk 4). Task 10 covers it directly (`'undoes an update on grid_line ALWAYS via updateLinePoints...'`).
 
 - [ ] **Step 3: Run to confirm failure**
 
@@ -1115,6 +1129,17 @@ Run: `npm test -- src/data/gridLinesRepo.test.ts`
 Expected: FAIL — signature mismatch (`planId` missing) and no recording happens yet.
 
 - [ ] **Step 4: Implement the unconditional read, `planId` param, and `undoableWrite` wiring**
+
+Also update the doc comment directly above `getCachedLineOrThrow` (currently: "the offline path always reads the EXISTING cached line first...") — it's now inaccurate, since both functions read it unconditionally, not just on the offline path:
+
+```ts
+// updateAdjustedPoints and updateLinePoints share the same cached grid_line
+// record, so BOTH read the EXISTING cached line first (unconditionally, even
+// on the online success path — see undoableWrite's `before` requirement) and
+// patch only their own field(s) on top of it — this way updating
+// adjustedPoints never clobbers theoreticalPoints, and vice versa.
+async function getCachedLineOrThrow(lineId: string, errorPrefix: string): Promise<GridLine> {
+```
 
 Replace `updateAdjustedPoints`/`updateLinePoints` in `src/data/gridLinesRepo.ts`:
 
@@ -1231,8 +1256,8 @@ Append to `src/offline/actionHistory.test.ts`:
 ```ts
 import { undo, redo, hasUndoableAction, hasRedoableAction } from './actionHistory'
 import { createFeltPoint, deleteFeltPoint, listFeltPointsForPlan } from '../data/feltPointsRepo'
-import { createGridInstance, updateGridInstanceOrigin } from '../data/gridInstancesRepo'
-import { createGridLines, updateLinePoints, listGridLinesForInstance } from '../data/gridLinesRepo'
+import { updateGridInstanceOrigin } from '../data/gridInstancesRepo'
+import { updateAdjustedPoints, updateLinePoints } from '../data/gridLinesRepo'
 import { deletePhenomenon, createPhenomenon } from '../data/phenomenaRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
@@ -1447,11 +1472,33 @@ describe('undo/redo — dispatch', () => {
     // 4 entries recorded, but ONE logical batch.
     expect(await getEntriesForPlan('p1')).toHaveLength(4)
 
-    // Undo restores ALL 4 (origin + 3 lines) in one call.
-    vi.mocked(supabase).from = createSupabaseChainMock({
-      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 },
-      error: null,
-    }).from
+    // undo() makes 4 SEQUENTIAL network round-trips for this batch (one per
+    // entry, in insertion order: grid_instance, then gl1, gl2, gl3) — a
+    // single reused createSupabaseChainMock would hand every one of those 4
+    // calls the SAME response shape (the mock's `from` is table-agnostic),
+    // silently corrupting the 3 grid_line writes with a grid_instance-shaped
+    // payload. Use mockImplementationOnce to queue one response per call, in
+    // that exact order.
+    const undoFrom = vi.fn()
+    undoFrom.mockImplementationOnce(
+      () => createSupabaseChainMock({
+        data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 },
+        error: null,
+      }).chain
+    )
+    for (const l of lines) {
+      undoFrom.mockImplementationOnce(
+        () => createSupabaseChainMock({
+          data: {
+            id: l.id, grid_instance_id: 'gi1', family: l.family, polarity: l.polarity, reinforced: l.reinforced,
+            theoretical_points: l.theoreticalPoints, adjusted_points: l.adjustedPoints,
+          },
+          error: null,
+        }).chain
+      )
+    }
+    vi.mocked(supabase).from = undoFrom
+
     await undo('p1')
 
     const restoredInstance = await db.get('grid_instance', 'gi1')
@@ -1463,6 +1510,41 @@ describe('undo/redo — dispatch', () => {
     // All 4 entries flipped together — none left half-undone.
     const entriesAfterUndo = await getEntriesForPlan('p1')
     expect(entriesAfterUndo.every((e) => e.undone)).toBe(true)
+
+    // redo() must restore the SHIFTED state, again as one 4-call batch, in
+    // the same insertion order.
+    const redoFrom = vi.fn()
+    redoFrom.mockImplementationOnce(
+      () => createSupabaseChainMock({
+        data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+        error: null,
+      }).chain
+    )
+    for (const l of lines) {
+      const shifted = { theoretical: l.theoreticalPoints.map((p) => ({ x: p.x + 5, y: p.y + 3 })), adjusted: l.adjustedPoints.map((p) => ({ x: p.x + 5, y: p.y + 3 })) }
+      redoFrom.mockImplementationOnce(
+        () => createSupabaseChainMock({
+          data: {
+            id: l.id, grid_instance_id: 'gi1', family: l.family, polarity: l.polarity, reinforced: l.reinforced,
+            theoretical_points: shifted.theoretical, adjusted_points: shifted.adjusted,
+          },
+          error: null,
+        }).chain
+      )
+    }
+    vi.mocked(supabase).from = redoFrom
+
+    await redo('p1')
+
+    const redoneInstance = await db.get('grid_instance', 'gi1')
+    expect(redoneInstance.originX).toBe(5)
+    expect(redoneInstance.originY).toBe(3)
+    for (const l of lines) {
+      const redoneLine = await db.get('grid_line', l.id)
+      expect(redoneLine.theoreticalPoints).toEqual(l.theoreticalPoints.map((p) => ({ x: p.x + 5, y: p.y + 3 })))
+    }
+    const entriesAfterRedo = await getEntriesForPlan('p1')
+    expect(entriesAfterRedo.every((e) => !e.undone)).toBe(true)
   })
 
   it('undoing then redoing a mixed sequence (insert felt_point, update grid_instance, delete phenomenon) restores the correct final cache state at each step', async () => {
@@ -1510,13 +1592,36 @@ describe('undo/redo — dispatch', () => {
     await undo('p1')
     expect((await listFeltPointsForPlan('p1')).find((p) => p.id === 'fp1')).toBeUndefined()
 
-    // Redo all 3 back, in the reverse order.
+    // Redo #1: redoes the felt point insert. redo() always picks the undone
+    // entry with the SMALLEST id (spec §3.1: "plus ANCIENNE entrée annulée")
+    // — original recording order was fp1 (id 1), gi1 (id 2), ph1 (id 3), so
+    // once all 3 are undone, redo proceeds fp1 → gi1 → ph1, in that fixed
+    // order, regardless of the order they were undone in (which happened to
+    // be the reverse: ph1, gi1, fp1, since undo always targets the LARGEST id).
     vi.mocked(supabase).from = createSupabaseChainMock({
       data: { id: 'fp1', plan_id: 'p1', network_name: 'Hartmann', x: 0, y: 0, created_at: '2026-07-29T10:00:00Z' },
       error: null,
     }).from
     await redo('p1')
     expect((await listFeltPointsForPlan('p1')).find((p) => p.id === 'fp1')).toBeDefined()
+
+    // Redo #2: redoes the grid_instance origin update.
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+      error: null,
+    }).from
+    await redo('p1')
+    expect((await db.get('grid_instance', 'gi1')).originX).toBe(5)
+
+    // Redo #3: redoes the phenomenon delete.
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: { id: 'ph1' }, error: null }).from
+    await redo('p1')
+    expect(await db.get('phenomenon', 'ph1')).toBeUndefined()
+
+    // Fully redone — no entries left to redo, none left to undo... actually
+    // all 3 are un-undone now, so undo is available again; redo is exhausted.
+    expect(await hasRedoableAction('p1')).toBe(false)
+    expect(await hasUndoableAction('p1')).toBe(true)
   })
 
   it('persists across a simulated reload (fresh IndexedDB connection)', async () => {
@@ -1686,7 +1791,7 @@ Expected: PASS — all tests in this file, across all 3 tasks.
 - [ ] **Step 5: Run the FULL test suite to catch any cross-file regression from the circular import or the `gridLinesRepo`/`gridInstancesRepo` signature changes**
 
 Run: `npm test`
-Expected: PASS — every test file in the repo, including `SiteMapView.test.tsx` (not yet updated for Task 12 — if any of ITS assertions fail here due to the `updateGridInstanceOrigin`/`updateLinePoints`/`updateAdjustedPoints` signature changes, note them now; Task 12 fixes them explicitly, so seeing them fail here is expected and NOT a blocker for this task's commit).
+Expected: every test file passes EXCEPT `src/components/SiteMapView.test.tsx` — that one file is allowed to fail, specifically on assertions that call `updateGridInstanceOrigin`/`updateLinePoints`/`updateAdjustedPoints` with the old (pre-`planId`/`batchId`) argument counts (Task 12, Chunk 5, fixes this file explicitly). Any failure in ANY OTHER file, or any failure in `SiteMapView.test.tsx` that ISN'T about one of those 3 call signatures, is a real regression from this task — stop and investigate before committing.
 
 - [ ] **Step 6: Commit**
 
@@ -1783,8 +1888,27 @@ describe('UndoRedoControls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Fermer' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
+
+  it('re-checks hasUndoableAction/hasRedoableAction on the poll interval, not just on mount (regression test for the interval actually being wired up)', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+      // Mount-time call only.
+      expect(vi.mocked(actionHistory.hasUndoableAction)).toHaveBeenCalledTimes(1)
+
+      vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
+      await vi.advanceTimersByTimeAsync(1500) // POLL_INTERVAL_MS
+
+      expect(vi.mocked(actionHistory.hasUndoableAction)).toHaveBeenCalledTimes(2)
+      expect(await screen.findByRole('button', { name: /annuler/i })).toBeEnabled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 ```
+
+The `vi.useFakeTimers()`/`vi.useRealTimers()` pair is scoped to this one test (`try`/`finally`) so it doesn't affect the other tests in this file, none of which need fake timers.
 
 - [ ] **Step 2: Run to confirm failure**
 
@@ -1983,14 +2107,19 @@ Replace the recalibration `useEffect` (currently lines 429–469):
 
     async function runRecalibration() {
       const batchId = crypto.randomUUID()
-      await updateGridInstanceOrigin(instance!.id, crossing!.x, crossing!.y, { batchId })
+      // No `!` needed: `instance`/`crossing` are `const` bindings narrowed to
+      // non-null/non-undefined by the two guards above, and TypeScript's
+      // control-flow narrowing for `const` survives into this nested closure
+      // (it can only lose narrowing across a closure for `let`/`var`, which
+      // could be reassigned before the closure runs).
+      await updateGridInstanceOrigin(instance.id, crossing.x, crossing.y, { batchId })
       // Sequential, not Promise.all: each write triggers action_history's
       // purge/FIFO-eviction logic, which reads then writes the plan's entry
       // count — concurrent calls on the same plan could race on that
       // read-then-write (spec §3.3). A recalibration is an occasional
       // action, not a hot path, so the sequential cost is negligible.
       for (const line of translatedLines) {
-        await updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints, instance!.planId, { batchId })
+        await updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints, instance.planId, { batchId })
       }
     }
 
@@ -2105,7 +2234,14 @@ Expected: PASS — all pre-existing tests (the local-undo button had no dedicate
 Run: `npm test`
 Expected: PASS — every test file in the repo, confirming Chunk 3's earlier "expected failures" in this file are now resolved and nothing else regressed.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Run a full TypeScript build — the only point in this entire plan that verifies compile-time correctness**
+
+`vitest` (used by every `npm test` run throughout this plan) transpiles via esbuild WITHOUT type-checking — it would happily pass even if a call site were missing a required argument. Tasks 8, 9, and this task all made breaking signature changes (`options?` added to 9 functions; `planId`/`options?` added to `updateAdjustedPoints`/`updateLinePoints`). This step is the first and only place anything in the plan actually type-checks the whole tree.
+
+Run: `npm run build`
+Expected: succeeds with no TypeScript errors (the `tsc -b` step). If it fails, the error will point at a stale call site somewhere that still uses an old argument count/order — fix it before proceeding to commit.
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx
@@ -2116,10 +2252,12 @@ git commit -m "feat: wire undo/redo into SiteMapView — remove local undo mecha
 
 ## Manual verification (after all tasks, before finishing the branch)
 
-Not automatable via unit tests alone — a quick manual pass in the running app, covering the plan's 3 motivating pain points (spec §1):
+Not automatable via unit tests alone — a quick manual pass in the running app, covering the plan's 3 motivating pain points (spec §1) AND every entity type that gained a new `restoreX` function in Chunk 2 (each is a real new insert-with-explicit-id network call, the riskiest new code path in the feature — none of them get an end-to-end manual check unless done here explicitly):
 
 1. Place a felt point in the wrong spot → click **Annuler** → it disappears → click **Refaire** → it reappears in the same spot.
-2. Recalibrate a grid onto a wrong crossing → click **Annuler** → the whole grid (origin + every line) snaps back in one click, not just the last-touched line.
-3. Drag a grid line to a bad position → click **Annuler** → it snaps back to its pre-drag position.
-4. Reload the page mid-session → **Annuler** still works on actions from before the reload (persistence).
-5. Do 11 distinct undoable actions on one plan → the very first one can no longer be undone (FIFO cap), but the other 10 still can.
+2. Place a felt segment, a phenomenon, and a context object (one each) → **Annuler** each one → each disappears → **Refaire** each one → each reappears (exercises `restoreFeltSegment`/`restorePhenomenon`/`restoreContextObject`, not just `restoreFeltPoint`).
+3. Delete an existing felt point (not just undo a fresh insert) → click **Annuler** → it reappears (exercises the delete→`restoreX(before)` path specifically, distinct from #1's insert→delete path).
+4. Recalibrate a grid onto a wrong crossing → click **Annuler** → the whole grid (origin + every line) snaps back in one click, not just the last-touched line → click **Refaire** → the whole grid re-snaps forward to the recalibrated position in one click (the redo side of the batch, not just undo).
+5. Drag a grid line to a bad position → click **Annuler** → it snaps back to its pre-drag position.
+6. Reload the page mid-session → **Annuler** still works on actions from before the reload (persistence).
+7. Do 11 distinct undoable actions on one plan → the very first one can no longer be undone (FIFO cap), but the other 10 still can.
