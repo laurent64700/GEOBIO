@@ -369,7 +369,7 @@ describe('MissionWorkspace', () => {
     expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
   })
 
-  it('shows a non-blocking banner (not the full-page error) when saving the interior plan fails, distinct from PlanCalibrationTool\'s own alert', async () => {
+  it('shows a non-blocking banner (not the full-page error) when saving the interior plan fails', async () => {
     vi.mocked(plansRepo.createPlan)
       .mockResolvedValueOnce({ id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null })
       .mockRejectedValueOnce(new Error('network down'))
