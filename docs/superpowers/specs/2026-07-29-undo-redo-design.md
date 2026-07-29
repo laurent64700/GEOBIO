@@ -134,6 +134,32 @@ interface ActionHistoryEntry {
 }
 ```
 
+**Point critique découvert en relecture — annuler/refaire ne doivent JAMAIS
+s'enregistrer eux-mêmes comme une nouvelle action.** `undo()`/`redo()` appellent les
+mêmes fonctions de repo déjà existantes que l'action d'origine (§3.3 explique que ces
+fonctions passent normalement par `undoableWrite`, qui enregistre une entrée
+d'historique à chaque appel réussi). Sans précaution, le simple fait d'appeler
+`deleteX`/`restoreX`/`updateGridInstanceOrigin`/`updateLinePoints` DEPUIS `undo()`
+enregistrerait une toute nouvelle entrée `undone: false` — au lieu de marquer l'entrée
+existante `undone: true`, ce qui casserait la règle "annuler = dernière entrée non
+annulée, `id` maximum" (le deuxième clic sur Annuler retrouverait cette entrée
+fantôme au lieu de continuer à remonter dans le vrai historique), et contredirait
+directement la règle de purge (§3.1 plus bas), qui suppose déjà implicitement une
+distinction entre "vraie nouvelle action utilisateur" et "écriture déclenchée par un
+annuler/refaire" sans jamais préciser comment cette distinction est faite.
+
+**Fix retenu** : chaque fonction de repo concernée accepte un paramètre optionnel
+`options?: { record?: boolean; batchId?: string }` (défaut `record: true`), transmis
+tel quel à `undoableWrite` (§3.3). `undo()`/`redo()` appellent ces mêmes fonctions
+publiques avec `{ record: false }` — l'écriture réelle a bien lieu (même chemin
+cache-through/hors-ligne que d'habitude), mais AUCUNE entrée d'historique n'est créée.
+`undo()`/`redo()` sont eux-mêmes responsables de basculer le champ `undone` des
+entrées concernées (une opération directe sur `action_history`, distincte de
+`undoableWrite`), APRÈS que l'écriture compensatoire a réussi. La règle de purge (plus
+bas) ne se déclenche donc jamais pour une écriture faite par `undo()`/`redo()`,
+puisqu'aucune entrée n'est enregistrée pour ces écritures-là — la distinction "action
+normale" vs "annuler/refaire" est donc bien réelle, pas seulement supposée.
+
 **Annuler** = trouve la dernière entrée non annulée (`undone: false`, `id` maximum)
 pour le plan courant (via l'index `plan_id`). Si son `batchId` est non nul, TOUTES les
 entrées non annulées partageant ce `batchId` sont incluses dans l'opération (voir
@@ -232,29 +258,66 @@ reste un volume négligeable pour IndexedDB même sur des centaines de missions.
 
 Les 4 repos concernés par ce chantier qui ont création+suppression annulables
 (`feltPointsRepo`, `feltSegmentsRepo`, `phenomenaRepo`, `contextObjectsRepo`) gagnent
-une fonction `restoreX(item: X): Promise<X>` qui réinsère l'objet domaine complet
-(id compris) via `cachedWrite(store, table, 'insert', item, toRow, writer)` — la même
-signature que `createX` utilise déjà, sauf que `item`/`writer` portent l'id ORIGINAL de
-l'objet (celui qu'il avait avant suppression) au lieu d'appeler `generateClientId()`
-pour en créer un nouveau. C'est du code nouveau (une petite variante du chemin
-d'insertion déjà éprouvé par `createX`), pas une fonctionnalité déjà existante à
-réutiliser telle quelle. `gridInstancesRepo` et
-`gridLinesRepo` n'ont besoin d'aucune `restoreX` : seules leurs opérations de mise à
-jour sont annulables (§2), et annuler une mise à jour utilise la fonction de mise à
-jour déjà existante, jamais une réinsertion. `freeformNetworksRepo` est explicitement
-exclu de l'annulation (§2), donc n'a pas besoin de `restoreX` non plus.
+une fonction `restoreX(item: X, options?: UndoableOptions): Promise<X>` (voir §3.3
+pour `UndoableOptions`) qui réinsère l'objet domaine complet (id compris) via
+`cachedWrite(store, table, 'insert', item, toRow, writer)` — la même signature que
+`createX` utilise déjà, sauf que `item`/`writer` portent l'id ORIGINAL de l'objet
+(celui qu'il avait avant suppression) au lieu d'appeler `generateClientId()` pour en
+créer un nouveau. C'est du code nouveau (une petite variante du chemin d'insertion déjà
+éprouvé par `createX`), pas une fonctionnalité déjà existante à réutiliser telle
+quelle. `gridInstancesRepo` et `gridLinesRepo` n'ont besoin d'aucune `restoreX` :
+seules leurs opérations de mise à jour sont annulables (§2), et annuler une mise à jour
+utilise la fonction de mise à jour déjà existante, jamais une réinsertion.
+`freeformNetworksRepo` est explicitement exclu de l'annulation (§2), donc n'a pas
+besoin de `restoreX` non plus.
 
 ### 3.3 Wrapper d'enregistrement : `undoableWrite`
 
-Plutôt que de compter sur chaque composant UI pour se souvenir d'enregistrer une
-action, un petit wrapper `undoableWrite(planId, entityType, operation, before, after,
-writer: () => Promise<T>, batchId?: string): Promise<T>` s'intercale entre chaque
-fonction de repo concernée et son `cachedWrite`/`cachedList` déjà existant : il exécute
-l'écriture normale, puis (si elle réussit) enregistre l'entrée d'historique — y compris
-la purge et l'éviction FIFO au niveau du lot décrites en §3.1. Seuls les 6 repos avec au
-moins une opération annulable du §2 l'utilisent (`feltPointsRepo`, `feltSegmentsRepo`,
-`phenomenaRepo`, `contextObjectsRepo`, `gridInstancesRepo`, `gridLinesRepo`) ;
-`plansRepo`, `gridTemplatesRepo` et `freeformNetworksRepo` n'y touchent pas.
+**Corrigé en relecture** : la version précédente de cette section décrivait
+`undoableWrite` comme s'intercalant "entre chaque fonction de repo et son
+`cachedWrite`/`cachedList`" — c'est inexact et ne fonctionne pas pour tous les repos
+concernés : `gridInstancesRepo`/`gridLinesRepo` n'appellent PAS `cachedWrite`/
+`cachedList` (vérifié dans le code réel — ce sont des variantes cache-through
+écrites à la main, avec leur propre branchement en ligne/hors-ligne, comme
+`gridTemplatesRepo`). `undoableWrite` doit donc envelopper l'ENSEMBLE de l'appel
+existant (peu importe sa forme interne — `cachedWrite` générique ou branchement
+manuel), pas un point précis à l'intérieur.
+
+```ts
+interface UndoableOptions {
+  record?: boolean   // défaut true — false quand appelé depuis undo()/redo() (§3.1)
+  batchId?: string    // défaut absent — regroupe plusieurs appels en un seul lot (§3.1)
+}
+
+async function undoableWrite<T>(
+  planId: string,
+  entityType: ActionHistoryEntry['entityType'],
+  operation: ActionHistoryEntry['operation'],
+  before: unknown | null,
+  perform: () => Promise<T>,   // l'appel complet à cachedWrite OU au branchement
+                                // manuel existant — undoableWrite ne regarde jamais
+                                // à l'intérieur, juste avant/après
+  options?: UndoableOptions,
+): Promise<T> {
+  const after = await perform()
+  if (options?.record ?? true) {
+    // enregistre l'entrée d'historique (planId, entityType, operation, before,
+    // after, options?.batchId ?? null) — y compris purge et éviction FIFO §3.1
+  }
+  return after
+}
+```
+
+Chaque fonction de repo concernée gagne un paramètre optionnel final
+`options?: UndoableOptions`, transmis tel quel à son appel `undoableWrite`. Plutôt que
+de compter sur chaque composant UI pour se souvenir d'enregistrer une action, c'est la
+fonction de repo elle-même qui appelle `undoableWrite` — mais désormais avec un
+mécanisme explicite (`options.record`) pour que `undo()`/`redo()` (§3.1) puissent
+réutiliser cette même fonction SANS déclencher un nouvel enregistrement. Seuls les 6
+repos avec au moins une opération annulable du §2 gagnent ce paramètre
+(`feltPointsRepo`, `feltSegmentsRepo`, `phenomenaRepo`, `contextObjectsRepo`,
+`gridInstancesRepo`, `gridLinesRepo`) ; `plansRepo`, `gridTemplatesRepo` et
+`freeformNetworksRepo` n'y touchent pas.
 
 Pour les opérations `update` (recalage de grille, édition de ligne), le `before` est
 déjà naturellement disponible : les fonctions concernées (`updateGridInstanceOrigin`,
@@ -262,11 +325,32 @@ déjà naturellement disponible : les fonctions concernées (`updateGridInstance
 avant de la patcher (patron établi lors du chantier hors-ligne, Task 3.7/4.1) — pas de
 lecture supplémentaire à ajouter.
 
+**Signatures publiques modifiées** : `updateGridInstanceOrigin(instanceId, x, y,
+options?: UndoableOptions)` et `updateLinePoints(lineId, theoreticalPoints,
+adjustedPoints, options?: UndoableOptions)` (et `updateAdjustedPoints` de la même
+façon) gagnent chacune ce paramètre optionnel final, transmis à leur appel
+`undoableWrite` interne — nécessaire pour que le site d'appel du recalage (ci-dessous)
+puisse leur passer un `batchId` partagé, et pour que `undo()`/`redo()` (§3.1) puissent
+leur passer `{ record: false }`.
+
 **Site d'appel du recalage de grille** (`SiteMapView.tsx`, fonction autour de la ligne
-448) génère un `batchId` (`crypto.randomUUID()`) une fois pour tout le geste, et le
-passe à l'appel `undoableWrite` enveloppant `updateGridInstanceOrigin` ET à chacun des
-appels `undoableWrite` enveloppant `updateLinePoints` (un par ligne translatée) — tous
-partagent le même `batchId`, formant un seul lot annulable/refaisable (§3.1).
+448) génère un `batchId` (`crypto.randomUUID()`) une fois pour tout le geste, et
+l'utilise pour CHAQUE appel de la séquence : `updateGridInstanceOrigin(instance.id,
+crossing.x, crossing.y, { batchId })`, puis chaque `updateLinePoints(line.id,
+line.theoreticalPoints, line.adjustedPoints, { batchId })` — tous partagent le même
+`batchId`, formant un seul lot annulable/refaisable (§3.1).
+
+**Séquentiel, pas `Promise.all`** : le code actuel utilise `Promise.all(...)` pour
+lancer toutes les mises à jour de lignes en parallèle (`SiteMapView.tsx:452`). Ce
+chantier remplace ce `Promise.all` par une boucle séquentielle (`for...of` avec
+`await`) sur les lignes du lot. Raison : chaque `updateLinePoints` réussi déclenche la
+logique de purge/éviction FIFO (§3.1), qui lit puis écrit l'état de `action_history`
+pour ce plan — plusieurs appels concurrents sur le même plan pourraient interférer
+(l'un lit le compte avant que l'autre ait fini d'écrire). Un recalage de grille reste
+une action ponctuelle, pas un chemin chaud ; le coût d'une exécution séquentielle
+plutôt que parallèle est négligeable pour l'utilisateur (quelques dizaines de lignes au
+pire), largement compensé par la garantie de ne pas avoir à raisonner sur des écritures
+concurrentes dans `action_history`.
 
 ### 3.4 UI
 
@@ -305,7 +389,10 @@ une fois le lot correspondant déjà annulé/refait globalement.
 **Décision retenue** : ce chantier **supprime** `undoStack`, `handleUndo` et le bouton
 "Annuler" local de `SiteMapView.tsx`, entièrement remplacés par le nouveau mécanisme
 global (§3.1-§3.4), qui couvre le même besoin (annuler un glissement de ligne) en
-mieux — persistant, pas limité à `editMode`, pas limité aux lignes de grille. `handleLineChanged`
+mieux — persistant, pas limité à `editMode`, pas limité aux lignes de grille. Les deux
+boutons globaux **↶ Annuler** / **↷ Refaire** de la sidebar (§3.4), toujours visibles
+pendant le relevé terrain, sont ce qui prend la place du bouton local retiré à cet
+endroit précis de l'écran. `handleLineChanged`
 reste, moins l'empilement dans `undoStack` (l'enregistrement dans l'historique se fait
 désormais automatiquement via `undoableWrite`, à l'intérieur de `updateAdjustedPoints`
 lui-même — plus besoin que `SiteMapView` s'en occupe). `handleResetLine`
@@ -326,6 +413,15 @@ seul `adjustedPoints` a changé au moment de l'action) et vérifie que l'annulat
 restaure bien `theoreticalPoints` ET `adjustedPoints` à leurs valeurs `before` — pas
 seulement `adjustedPoints` — pour garantir que le dispatch "toujours via
 `updateLinePoints`" (§3.1) est réellement appliqué, pas contourné.
+
+**Test dédié à la non-réenregistrement de undo()/redo() (§3.1, point critique)** :
+créer une action réelle (ex. `createFeltPoint`), l'annuler, puis vérifier
+explicitement que le nombre TOTAL d'entrées dans `action_history` pour ce plan n'a
+PAS augmenté après l'annulation (seul le champ `undone` de l'entrée existante a
+changé). Ensuite, appeler `undo()` une seconde fois sur ce même plan (pile déjà vide
+après le premier undo) et vérifier que c'est un no-op — PAS une ré-annulation de la
+même entrée, PAS la création d'une entrée fantôme. Ce test aurait attrapé le bug de
+ré-enregistrement identifié en relecture.
 
 Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 LOTS par plan
 (pas 10 lignes brutes, pas globale — un test dédié doit couvrir le cas d'un seul lot
