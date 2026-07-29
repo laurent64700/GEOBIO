@@ -1783,7 +1783,7 @@ Expected: PASS — all tests in this file, across all 3 tasks.
 - [ ] **Step 5: Run the FULL test suite to catch any cross-file regression from the circular import or the `gridLinesRepo`/`gridInstancesRepo` signature changes**
 
 Run: `npm test`
-Expected: every test file passes EXCEPT `src/components/SiteMapView.test.tsx` — that one file is allowed to fail, specifically on assertions that call `updateLinePoints`/`updateAdjustedPoints` with the old (pre-`planId`) argument counts (Task 12, Chunk 5, fixes this file explicitly). `updateGridInstanceOrigin` only gained an OPTIONAL trailing `options?` parameter in Task 8 — old 3-arg call sites remain valid, so a failure involving `updateGridInstanceOrigin` is NOT covered by this exception and IS a real regression. Any failure in ANY OTHER file, or any failure in `SiteMapView.test.tsx` that isn't about `updateLinePoints`/`updateAdjustedPoints`'s argument count, is a real regression from this task — stop and investigate before committing.
+Expected: PASS — every test file in the repo, with NO exceptions, including `src/components/SiteMapView.test.tsx`. That file fully auto-mocks `gridInstancesRepo`/`gridLinesRepo` (`vi.mock('../data/gridInstancesRepo')`/`vi.mock('../data/gridLinesRepo')`, no factory) and `SiteMapView.tsx`'s own call sites aren't touched until Task 12 — so its `updateLinePoints`/`updateAdjustedPoints` assertions still match the OLD (pre-`planId`) argument count at this point, and continue to pass. `vitest` transpiles via esbuild without type-checking, so it never notices that `SiteMapView.tsx` now calls a real function whose TypeScript signature it no longer matches — per Task 9's own note, only `npm run build` (`tsc -b`) goes red between Task 9's commit and Task 12's, not `npm test`. Any failure anywhere in this step is a real regression — stop and investigate before committing.
 
 - [ ] **Step 6: Commit**
 
@@ -2242,7 +2242,7 @@ Expected: PASS — every test file in the repo, confirming Chunk 3's earlier "ex
 
 - [ ] **Step 8: Run a full TypeScript build — the only point in this entire plan that verifies compile-time correctness**
 
-`vitest` (used by every `npm test` run throughout this plan) transpiles via esbuild WITHOUT type-checking — it would happily pass even if a call site were missing a required argument. Tasks 8, 9, and this task all made breaking signature changes (`options?` added to 9 functions; `planId`/`options?` added to `updateAdjustedPoints`/`updateLinePoints`). This step is the first and only place anything in the plan actually type-checks the whole tree.
+`vitest` (used by every `npm test` run throughout this plan) transpiles via esbuild WITHOUT type-checking — it would happily pass even if a call site were missing a required argument. Task 9 made a genuinely breaking change (a new required `planId` parameter on `updateAdjustedPoints`/`updateLinePoints`), and this task's own Step 3/Step 4 edits are what actually fix the resulting stale call sites in `SiteMapView.tsx`. (Task 8 only added an optional trailing `options?` parameter to `updateGridInstanceOrigin` — not a breaking change, no stale call sites from it.) This step is the first and only place anything in the plan actually type-checks the whole tree, including the `runRecalibration` narrowing shape from Step 3 above.
 
 Run: `npm run build`
 Expected: succeeds with no TypeScript errors (the `tsc -b` step). If it fails, the error will point at a stale call site somewhere that still uses an old argument count/order — fix it before proceeding to commit.
@@ -2262,7 +2262,7 @@ Not automatable via unit tests alone — a quick manual pass in the running app,
 
 1. Place a felt point in the wrong spot → click **Annuler** → it disappears → click **Refaire** → it reappears in the same spot.
 2. Place a felt segment, a phenomenon, and a context object (one each) → **Annuler** each one → each disappears → **Refaire** each one → each reappears (exercises `restoreFeltSegment`/`restorePhenomenon`/`restoreContextObject`, not just `restoreFeltPoint`).
-3. Delete an existing felt point (not just undo a fresh insert) → click **Annuler** → it reappears (exercises the delete→`restoreX(before)` path specifically, distinct from #1's insert→delete path).
+3. Delete an existing felt point AND an existing felt segment (not just undo a fresh insert) → click **Annuler** each time → each reappears (exercises the delete→`restoreX(before)` path specifically, distinct from #1/#2's insert→undo→redo path, and across 2 of the 4 entity types — `restoreX`'s body doesn't branch on before-vs-after or on entity type beyond its own repo, so this is representative of `restorePhenomenon`/`restoreContextObject` too without needing all 4 exercised both ways).
 4. Recalibrate a grid onto a wrong crossing → click **Annuler** → the whole grid (origin + every line) snaps back in one click, not just the last-touched line → click **Refaire** → the whole grid re-snaps forward to the recalibrated position in one click (the redo side of the batch, not just undo).
 5. Drag a grid line to a bad position → click **Annuler** → it snaps back to its pre-drag position.
 6. Reload the page mid-session → **Annuler** still works on actions from before the reload (persistence).
