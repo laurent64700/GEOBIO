@@ -66,6 +66,16 @@ const ACTION_LABELS: Record<NonBlockingErrorAction, string> = {
   assessment: 'Bilan global : ',
 }
 
+function NonBlockingErrorBanner({ error }: { error: NonBlockingError | null }) {
+  if (!error) return null
+  return (
+    <p role="alert">
+      {ACTION_LABELS[error.action]}
+      {error.message}
+    </p>
+  )
+}
+
 export interface MissionWorkspaceProps {
   initialResumePhase?: ResumePhase
 }
@@ -78,6 +88,12 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
           : initialResumePhase)
       : { name: 'creating-mission' }
   )
+  // Some MissionWorkspace failures still hard-fail to `phase: 'error'` (mission
+  // creation, origin-setting, parcel confirmation, the FIRST global-assessment
+  // save) — those happen before the terrain screen exists, so there's no
+  // in-progress field work to preserve. The 3 actions below happen once the
+  // terrain screen is already up; a failure there shouldn't cost the operator
+  // their place.
   const [nonBlockingError, setNonBlockingError] = useState<NonBlockingError | null>(null)
 
   async function handleMissionCreated(mission: Mission) {
@@ -204,12 +220,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       const { originLat, originLng } = phase.mission
       return (
         <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
-          {nonBlockingError && (
-            <p role="alert">
-              {ACTION_LABELS[nonBlockingError.action]}
-              {nonBlockingError.message}
-            </p>
-          )}
+          <NonBlockingErrorBanner error={nonBlockingError} />
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView
               planId={phase.exteriorPlan.id}
@@ -258,12 +269,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
     case 'calibrating-interior':
       return (
         <>
-          {nonBlockingError && (
-            <p role="alert">
-              {ACTION_LABELS[nonBlockingError.action]}
-              {nonBlockingError.message}
-            </p>
-          )}
+          <NonBlockingErrorBanner error={nonBlockingError} />
           <PlanCalibrationTool
             imageUrl={phase.imageUrl}
             missionOrigin={{ lat: phase.mission.originLat!, lng: phase.mission.originLng! }}
