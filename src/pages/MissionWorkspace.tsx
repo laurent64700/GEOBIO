@@ -242,8 +242,13 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
               bovisRate: phase.mission.bovisRate ?? 0,
             }}
             onChange={async (values) => {
-              const updated = await setGlobalAssessment(phase.mission.id, values)
-              setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan })
+              setNonBlockingError(null)
+              try {
+                const updated = await setGlobalAssessment(phase.mission.id, values)
+                setPhase({ name: 'ready-no-interior', mission: updated, exteriorPlan: phase.exteriorPlan })
+              } catch (err) {
+                setNonBlockingError({ action: 'assessment', message: messageOf(err) })
+              }
             }}
           />
         </div>

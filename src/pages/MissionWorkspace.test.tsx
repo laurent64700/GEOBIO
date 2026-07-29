@@ -457,6 +457,60 @@ describe('MissionWorkspace', () => {
     )
   })
 
+  it('shows a non-blocking banner when saving the global assessment fails, without an unhandled rejection', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+
+    render(<MissionWorkspace />)
+    // advanceToOriginSetting() lui-même configure setGlobalAssessment pour
+    // RÉSOUDRE (c'est cet appel qui fait avancer de global-assessment vers
+    // setting-origin) — donc on ne peut PAS pré-configurer le rejet avant cet
+    // appel, il serait écrasé. On reconfigure setGlobalAssessment pour rejeter
+    // seulement APRÈS être arrivé sur ready-no-interior, juste avant de
+    // déclencher le changement de curseur qu'on veut faire échouer.
+    await advanceToOriginSetting()
+    await advanceToReadyNoInterior()
+    await screen.findByTestId('global-assessment-bar')
+    vi.mocked(missionsRepo.setGlobalAssessment).mockRejectedValue(new Error('network down'))
+
+    fireEvent.click(screen.getByText('simulate-bar-change'))
+
+    await waitFor(() =>
+      expect(screen.getByText(/bilan global.*network down/i)).toBeInTheDocument()
+    )
+    // Toujours ready-no-interior, pas l'écran d'erreur plein page.
+    expect(screen.getByTestId('site-map-view')).toBeInTheDocument()
+  })
+
+  it('clears a stale banner from one action when a different action starts a new attempt', async () => {
+    vi.mocked(plansRepo.createPlan).mockResolvedValue({
+      id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
+    })
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(planImageStorage.uploadPlanImage).mockRejectedValue(new Error('upload failed'))
+    // Pas besoin de reconfigurer setGlobalAssessment ici : advanceToOriginSetting()
+    // le configure déjà pour résoudre (nécessaire pour avancer jusqu'à
+    // ready-no-interior), et ce test n'a pas besoin d'une réponse précise — il
+    // vérifie seulement que setNonBlockingError(null), appelé au tout début du
+    // handler onChange (avant même l'appel réseau), efface le message d'upload
+    // encore affiché.
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    await advanceToReadyNoInterior()
+    await screen.findByLabelText(/importer un plan intérieur/i)
+
+    const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
+    fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
+    await screen.findByText(/import du plan intérieur.*upload failed/i)
+
+    fireEvent.click(screen.getByText('simulate-bar-change'))
+
+    await waitFor(() => expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument())
+  })
+
   it('centers the setting-origin map on the geocoded address when available', async () => {
     vi.mocked(plansRepo.createPlan).mockResolvedValue({
       id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
