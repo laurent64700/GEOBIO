@@ -190,10 +190,23 @@ Puis marque toutes les entrées concernées (le lot entier, ou l'entrée seule s
 parmi les annulées — les entrées annulées forment toujours un suffixe contigu du plus
 récent au plus ancien non-encore-refait, grâce à la purge décrite ci-dessous). Si son
 `batchId` est non nul, inclut de la même façon toutes les entrées annulées partageant
-ce `batchId`. Réapplique l'action d'origine vers `after` au lieu de `before` pour
-chaque entrée concernée (même règle de dispatch que ci-dessus — `grid_line` toujours
-via `updateLinePoints`), marque l'entrée (ou le lot)
-`undone: false`.
+ce `batchId`. Réapplique l'action d'origine pour chaque entrée concernée — **règle de
+dispatch pour refaire, symétrique de celle d'annuler ci-dessus, PAS un simple "rejouer
+la même fonction que l'action d'origine"** :
+- `insert` → appelle **`restoreX(after)`** (jamais `createX` à nouveau : `createX`
+  génère systématiquement un nouvel id via `generateClientId()`, ce qui produirait un id
+  différent de celui déjà enregistré dans `entityId`/`after`, orphelinerait l'entrée
+  d'historique, et casserait un futur "annuler" de ce même refaire — qui chercherait à
+  supprimer l'id d'origine, pas le nouveau). `restoreX(after)` réinsère avec le MÊME id
+  que l'insertion d'origine, exactement symétrique de `delete` → `restoreX(before)` côté
+  annuler.
+- `delete` → appelle la fonction `deleteX` déjà existante (symétrique de `insert` →
+  `deleteX` côté annuler).
+- `update` → même règle de dispatch que pour annuler (`grid_instance` via
+  `updateGridInstanceOrigin`, `grid_line` toujours via `updateLinePoints`), avec les
+  valeurs de `after` au lieu de `before`.
+
+Marque l'entrée (ou le lot) `undone: false`.
 
 **Pile vide** : `undo()`/`redo()` sur une pile vide (pour le plan courant) est un
 no-op silencieux — cohérent avec le fait que les boutons sont grisés dans ce cas
@@ -273,15 +286,19 @@ besoin de `restoreX` non plus.
 
 ### 3.3 Wrapper d'enregistrement : `undoableWrite`
 
-**Corrigé en relecture** : la version précédente de cette section décrivait
-`undoableWrite` comme s'intercalant "entre chaque fonction de repo et son
-`cachedWrite`/`cachedList`" — c'est inexact et ne fonctionne pas pour tous les repos
-concernés : `gridInstancesRepo`/`gridLinesRepo` n'appellent PAS `cachedWrite`/
-`cachedList` (vérifié dans le code réel — ce sont des variantes cache-through
-écrites à la main, avec leur propre branchement en ligne/hors-ligne, comme
-`gridTemplatesRepo`). `undoableWrite` doit donc envelopper l'ENSEMBLE de l'appel
-existant (peu importe sa forme interne — `cachedWrite` générique ou branchement
-manuel), pas un point précis à l'intérieur.
+**Corrigé en relecture (deux fois — voir note en fin de sous-section).** La version
+précédente disait "`gridInstancesRepo`/`gridLinesRepo` n'appellent PAS `cachedWrite`/
+`cachedList`" — **inexact pour `gridInstancesRepo`**, vérifié en lisant le fichier
+réel dans son intégralité : `createGridInstance` (ligne 54), `listGridInstancesForPlan`
+(ligne 63) ET `updateGridInstanceOrigin` (ligne 90) utilisent bien `cachedWrite`/
+`cachedList`. **Seul `gridLinesRepo` est réellement une variante écrite à la main**
+(son propre branchement en ligne/hors-ligne via `isOnlineNow()`/`tryOnlineLineUpdate`,
+confirmé en lisant le fichier réel dans son intégralité — aucun appel à
+`cachedWrite`/`cachedList` nulle part dans ce fichier). Peu importe : `undoableWrite`
+doit envelopper l'ENSEMBLE de l'appel existant (peu importe sa forme interne —
+`cachedWrite` générique ou branchement manuel), pas un point précis à l'intérieur —
+cette partie de la conception reste correcte et fonctionne uniformément pour les deux
+formes.
 
 ```ts
 interface UndoableOptions {
@@ -319,26 +336,51 @@ repos avec au moins une opération annulable du §2 gagnent ce paramètre
 `gridInstancesRepo`, `gridLinesRepo`) ; `plansRepo`, `gridTemplatesRepo` et
 `freeformNetworksRepo` n'y touchent pas.
 
-Pour les opérations `update` (recalage de grille, édition de ligne), le `before` est
-déjà naturellement disponible : les fonctions concernées (`updateGridInstanceOrigin`,
-`updateAdjustedPoints`/`updateLinePoints`) lisent déjà l'entité existante du cache
-avant de la patcher (patron établi lors du chantier hors-ligne, Task 3.7/4.1) — pas de
-lecture supplémentaire à ajouter.
+**`before` et `planId` — vérifié précisément fonction par fonction dans le code réel,
+les deux repos se comportent différemment :**
 
-**Signatures publiques modifiées** : `updateGridInstanceOrigin(instanceId, x, y,
-options?: UndoableOptions)` et `updateLinePoints(lineId, theoreticalPoints,
-adjustedPoints, options?: UndoableOptions)` (et `updateAdjustedPoints` de la même
-façon) gagnent chacune ce paramètre optionnel final, transmis à leur appel
-`undoableWrite` interne — nécessaire pour que le site d'appel du recalage (ci-dessous)
-puisse leur passer un `batchId` partagé, et pour que `undo()`/`redo()` (§3.1) puissent
-leur passer `{ record: false }`.
+- `updateGridInstanceOrigin` (`gridInstancesRepo.ts:70-101`) : lit déjà
+  inconditionnellement `existing` du cache AVANT toute branche en ligne/hors-ligne
+  (lignes 81-87, patron déjà établi lors du chantier hors-ligne, Task 3.7) — `before`
+  est directement `existing`, aucune lecture supplémentaire à ajouter. `GridInstance` a
+  un champ `planId` propre (`existing.planId`), donc l'appel `undoableWrite` interne
+  peut l'utiliser directement — aucun paramètre `planId` supplémentaire nécessaire sur
+  cette fonction.
+- `updateAdjustedPoints`/`updateLinePoints` (`gridLinesRepo.ts:196-261`) :
+  **actuellement, `existing` n'est lu QUE dans la branche hors-ligne/repli**
+  (`getCachedLineOrThrow`, lignes 214/247) — la branche en ligne réussie
+  (`tryOnlineLineUpdate` retourne une ligne non nulle) ne lit jamais l'état précédent,
+  elle écrit directement la ligne retournée par Supabase dans le cache. **Ce chantier
+  modifie ces deux fonctions** pour lire `existing` inconditionnellement, AVANT toute
+  branche, exactement comme `updateGridInstanceOrigin` le fait déjà — c'est un vrai
+  changement de code, pas juste une réutilisation de logique déjà là. De plus, `GridLine`
+  n'a PAS de champ `planId` (seulement `gridInstanceId`, confirmé dans
+  `domain/types.ts` et par grep sur tout `gridLinesRepo.ts`) — ces deux fonctions
+  gagnent donc un paramètre `planId: string` explicite, fourni par l'appelant (qui le
+  connaît déjà — `SiteMapView.tsx` reçoit `planId` en prop), suivant le même principe
+  déjà retenu pour `ActionHistoryEntry.planId` lui-même (§3.1 : fourni explicitement,
+  jamais déduit de l'indexation propre de l'entité).
+
+**Signatures publiques modifiées** :
+- `updateGridInstanceOrigin(instanceId, x, y, options?: UndoableOptions)`
+- `updateAdjustedPoints(lineId, adjustedPoints, planId: string, options?: UndoableOptions)`
+- `updateLinePoints(lineId, theoreticalPoints, adjustedPoints, planId: string, options?: UndoableOptions)`
+
+`options?: UndoableOptions` est nécessaire pour que le site d'appel du recalage
+(ci-dessous) puisse passer un `batchId` partagé, et pour que `undo()`/`redo()` (§3.1)
+puissent passer `{ record: false }`.
 
 **Site d'appel du recalage de grille** (`SiteMapView.tsx`, fonction autour de la ligne
-448) génère un `batchId` (`crypto.randomUUID()`) une fois pour tout le geste, et
-l'utilise pour CHAQUE appel de la séquence : `updateGridInstanceOrigin(instance.id,
-crossing.x, crossing.y, { batchId })`, puis chaque `updateLinePoints(line.id,
-line.theoreticalPoints, line.adjustedPoints, { batchId })` — tous partagent le même
-`batchId`, formant un seul lot annulable/refaisable (§3.1).
+448) a déjà `instance.planId` en scope (`GridInstance` le porte). Il génère un
+`batchId` (`crypto.randomUUID()`) une fois pour tout le geste, et l'utilise pour
+CHAQUE appel de la séquence : `updateGridInstanceOrigin(instance.id, crossing.x,
+crossing.y, { batchId })`, puis chaque `updateLinePoints(line.id,
+line.theoreticalPoints, line.adjustedPoints, instance.planId, { batchId })` — tous
+partagent le même `batchId`, formant un seul lot annulable/refaisable (§3.1). L'appel à
+`updateAdjustedPoints` dans `handleLineChanged` (§3.6, glissement de ligne manuel —
+cette fonction survit, seul l'empilement dans l'ancien `undoStack` local est retiré)
+passe de même le `planId` déjà reçu par `SiteMapView` en prop ; pas de `batchId` dans
+ce cas, c'est une action simple à un seul appel.
 
 **Séquentiel, pas `Promise.all`** : le code actuel utilise `Promise.all(...)` pour
 lancer toutes les mises à jour de lignes en parallèle (`SiteMapView.tsx:452`). Ce
@@ -422,6 +464,14 @@ changé). Ensuite, appeler `undo()` une seconde fois sur ce même plan (pile dé
 après le premier undo) et vérifier que c'est un no-op — PAS une ré-annulation de la
 même entrée, PAS la création d'une entrée fantôme. Ce test aurait attrapé le bug de
 ré-enregistrement identifié en relecture.
+
+**Test dédié au dispatch refaire d'une insertion (§3.1, point critique)** : créer une
+action réelle (`createFeltPoint`), l'annuler (supprime l'entité), puis la refaire.
+Vérifier que le point ressenti réapparaît avec le MÊME id que l'original (pas un id
+généré à nouveau), et que le nombre d'entités dans le cache local est bien revenu à ce
+qu'il était avant l'annulation (pas deux entités si un nouvel id avait été généré par
+erreur). Vérifier ensuite qu'annuler à nouveau ce refaire fonctionne correctement
+(supprime bien la bonne entité, celle avec l'id d'origine).
 
 Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 LOTS par plan
 (pas 10 lignes brutes, pas globale — un test dédié doit couvrir le cas d'un seul lot
