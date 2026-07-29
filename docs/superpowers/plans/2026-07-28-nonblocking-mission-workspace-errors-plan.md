@@ -63,7 +63,6 @@ it('shows a non-blocking banner (not the full-page error) when the interior file
   )
   // Le reste de l'écran terrain reste monté — pas basculé en page d'erreur pleine page.
   expect(screen.getByTestId('site-map-view')).toBeInTheDocument()
-  expect(screen.queryByRole('alert', { name: /network down/i })?.closest('body')).toBeTruthy()
 })
 
 it('clears a stale upload error banner once a retry on the same action succeeds', async () => {
@@ -91,10 +90,11 @@ it('clears a stale upload error banner once a retry on the same action succeeds'
 })
 ```
 
-Note : la première assertion `screen.queryByRole('alert', {name: /network down/i})?.closest('body')`
-est une vérification légère "l'alerte est bien dans le DOM du document, pas dans un
-sous-arbre détaché" — le point important de ce test est surtout la ligne juste avant
-(`site-map-view` toujours présent).
+Note : `role="alert"` n'expose pas son texte comme "accessible name" (pas de
+`nameFrom: 'contents'` pour ce rôle ARIA) — `getByRole('alert', {name: /.../})` ne
+matcherait jamais sur le texte affiché. C'est pour ça que ce test (et tous les
+suivants de ce plan) vérifie le message via `getByText`/`queryByText`, jamais via le
+paramètre `name` de `getByRole`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -299,12 +299,18 @@ it('shows a non-blocking banner when saving the global assessment fails, without
     id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
   })
   vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
-  vi.mocked(missionsRepo.setGlobalAssessment).mockRejectedValue(new Error('network down'))
 
   render(<MissionWorkspace />)
+  // advanceToOriginSetting() lui-même configure setGlobalAssessment pour
+  // RÉSOUDRE (c'est cet appel qui fait avancer de global-assessment vers
+  // setting-origin) — donc on ne peut PAS pré-configurer le rejet avant cet
+  // appel, il serait écrasé. On reconfigure setGlobalAssessment pour rejeter
+  // seulement APRÈS être arrivé sur ready-no-interior, juste avant de
+  // déclencher le changement de curseur qu'on veut faire échouer.
   await advanceToOriginSetting()
   await advanceToReadyNoInterior()
   await screen.findByTestId('global-assessment-bar')
+  vi.mocked(missionsRepo.setGlobalAssessment).mockRejectedValue(new Error('network down'))
 
   fireEvent.click(screen.getByText('simulate-bar-change'))
 
@@ -321,10 +327,12 @@ it('clears a stale banner from one action when a different action starts a new a
   })
   vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
   vi.mocked(planImageStorage.uploadPlanImage).mockRejectedValue(new Error('upload failed'))
-  vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue({
-    ...missionWithOrigin, causeArchitectural: 0, causeElectromagnetique: 0, causeGeobiologique: 0,
-    causeParanormale: 0, causeAutres: 0, bovisRate: 12000,
-  })
+  // Pas besoin de reconfigurer setGlobalAssessment ici : advanceToOriginSetting()
+  // le configure déjà pour résoudre (nécessaire pour avancer jusqu'à
+  // ready-no-interior), et ce test n'a pas besoin d'une réponse précise — il
+  // vérifie seulement que setNonBlockingError(null), appelé au tout début du
+  // handler onChange (avant même l'appel réseau), efface le message d'upload
+  // encore affiché.
 
   render(<MissionWorkspace />)
   await advanceToOriginSetting()
