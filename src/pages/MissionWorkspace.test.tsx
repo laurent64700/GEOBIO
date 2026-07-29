@@ -369,6 +369,31 @@ describe('MissionWorkspace', () => {
     expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
   })
 
+  it('shows a non-blocking banner (not the full-page error) when saving the interior plan fails, distinct from PlanCalibrationTool\'s own alert', async () => {
+    vi.mocked(plansRepo.createPlan)
+      .mockResolvedValueOnce({ id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null })
+      .mockRejectedValueOnce(new Error('network down'))
+    vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
+    vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
+
+    render(<MissionWorkspace />)
+    await advanceToOriginSetting()
+    await advanceToReadyNoInterior()
+    await screen.findByLabelText(/importer un plan intérieur/i)
+    const file = new File(['x'], 'plan.jpg', { type: 'image/jpeg' })
+    fireEvent.change(screen.getByLabelText(/importer un plan intérieur/i), { target: { files: [file] } })
+    await screen.findByText('simulate-calibrated')
+
+    fireEvent.click(screen.getByText('simulate-calibrated'))
+
+    await waitFor(() =>
+      expect(screen.getByText(/calage du plan.*network down/i)).toBeInTheDocument()
+    )
+    // Toujours dans calibrating-interior, PAS l'écran d'erreur plein page — le
+    // bouton de simulation de calibration (rendu par PlanCalibrationTool) reste là.
+    expect(screen.getByText('simulate-calibrated')).toBeInTheDocument()
+  })
+
   it('shows the global assessment form after the exterior plan, then proceeds to origin-setting', async () => {
     vi.mocked(plansRepo.createPlan).mockResolvedValue({
       id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,

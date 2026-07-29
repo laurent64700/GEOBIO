@@ -150,6 +150,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
 
   async function handleInteriorCalibrated(calibration: AffineTransform) {
     if (phase.name !== 'calibrating-interior') return
+    setNonBlockingError(null)
     try {
       await createPlan({
         missionId: phase.mission.id,
@@ -161,7 +162,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       // overlay visually (see this task's scope note).
       setPhase({ name: 'ready-no-interior', mission: phase.mission, exteriorPlan: phase.exteriorPlan })
     } catch (err) {
-      setPhase({ name: 'error', message: messageOf(err) })
+      setNonBlockingError({ action: 'calibration', message: messageOf(err) })
     }
   }
 
@@ -251,12 +252,20 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
 
     case 'calibrating-interior':
       return (
-        <PlanCalibrationTool
-          imageUrl={phase.imageUrl}
-          missionOrigin={{ lat: phase.mission.originLat!, lng: phase.mission.originLng! }}
-          mapCenter={[phase.mission.originLat!, phase.mission.originLng!]}
-          onCalibrated={handleInteriorCalibrated}
-        />
+        <>
+          {nonBlockingError && (
+            <p role="alert">
+              {ACTION_LABELS[nonBlockingError.action]}
+              {nonBlockingError.message}
+            </p>
+          )}
+          <PlanCalibrationTool
+            imageUrl={phase.imageUrl}
+            missionOrigin={{ lat: phase.mission.originLat!, lng: phase.mission.originLng! }}
+            mapCenter={[phase.mission.originLat!, phase.mission.originLng!]}
+            onCalibrated={handleInteriorCalibrated}
+          />
+        </>
       )
 
     case 'error':
