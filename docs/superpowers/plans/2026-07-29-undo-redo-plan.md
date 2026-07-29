@@ -958,7 +958,7 @@ git commit -m "feat: add undoableWrite wiring to gridInstancesRepo.updateGridIns
 
 **Breaking signature change:** both functions gain a new 3rd positional parameter `planId: string`, pushing `options` to 4th. Every existing call site and test must be updated.
 
-**This task's commit temporarily breaks `tsc -b` outside this file — expected, fixed in Task 12.** `src/components/SiteMapView.tsx` calls `updateAdjustedPoints(updated.id, updated.adjustedPoints)` (2 args) and `updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints)` (3 args) at 3 call sites — all missing the new required `planId` argument. `vitest` (this project's test runner) transpiles via esbuild without type-checking, so `npm test -- src/data/gridLinesRepo.test.ts` in Step 5 below will pass even though `npm run build` (`tsc -b && vite build`) would now fail on `SiteMapView.tsx`. This is fine: Task 12 (Chunk 5) updates every call site in `SiteMapView.tsx` to pass `planId`. Do not attempt to fix `SiteMapView.tsx` from within this task — its own task (12) does it as part of a larger, coordinated rewrite of that file. Just be aware `npm run build` is red between this task's commit and Task 12's commit; that's expected, not a regression to chase down.
+**This task's commit temporarily breaks `tsc -b` outside this file — expected, fixed in Task 12.** `src/components/SiteMapView.tsx` calls `updateAdjustedPoints(updated.id, updated.adjustedPoints)` (2 args) and `updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints)` (3 args) at 3 call sites — all missing the new required `planId` argument. `vitest` (this project's test runner) transpiles via esbuild without type-checking, so `npm test -- src/data/gridLinesRepo.test.ts` in Step 5 below will pass even though `npm run build` (`tsc -b && vite build`) would now fail on `SiteMapView.tsx`. This is fine: Task 12 (Chunk 5) resolves all 3 — 2 of them (`handleLineChanged`'s `updateAdjustedPoints` call, the recalibration effect's `updateLinePoints` call) are updated to pass `planId`; the 3rd (`updateAdjustedPoints` inside `handleUndo`) is removed entirely, since Task 12 Step 1 deletes `handleUndo` along with the rest of the local undo mechanism it belongs to (spec §3.6) rather than updating it. Do not attempt to fix `SiteMapView.tsx` from within this task — its own task (12) does it as part of a larger, coordinated rewrite of that file. Just be aware `npm run build` is red between this task's commit and Task 12's commit; that's expected, not a regression to chase down.
 
 - [ ] **Step 1: Update the 6 existing tests that call `updateAdjustedPoints`/`updateLinePoints` without a cache seed or without `planId`**
 
@@ -1258,7 +1258,7 @@ import { undo, redo, hasUndoableAction, hasRedoableAction } from './actionHistor
 import { createFeltPoint, deleteFeltPoint, listFeltPointsForPlan } from '../data/feltPointsRepo'
 import { updateGridInstanceOrigin } from '../data/gridInstancesRepo'
 import { updateAdjustedPoints, updateLinePoints } from '../data/gridLinesRepo'
-import { deletePhenomenon, createPhenomenon } from '../data/phenomenaRepo'
+import { deletePhenomenon } from '../data/phenomenaRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import * as connectivity from '../offline/connectivity'
@@ -1650,18 +1650,10 @@ Append to `src/offline/actionHistory.ts`:
 
 ```ts
 import type { FeltPoint, FeltSegment, Phenomenon, ContextObject, GridInstance, GridLine } from '../domain/types'
-import {
-  createFeltPoint, deleteFeltPoint, restoreFeltPoint,
-} from '../data/feltPointsRepo'
-import {
-  createFeltSegment, deleteFeltSegment, restoreFeltSegment,
-} from '../data/feltSegmentsRepo'
-import {
-  createPhenomenon, deletePhenomenon, restorePhenomenon,
-} from '../data/phenomenaRepo'
-import {
-  createContextObject, deleteContextObject, restoreContextObject,
-} from '../data/contextObjectsRepo'
+import { deleteFeltPoint, restoreFeltPoint } from '../data/feltPointsRepo'
+import { deleteFeltSegment, restoreFeltSegment } from '../data/feltSegmentsRepo'
+import { deletePhenomenon, restorePhenomenon } from '../data/phenomenaRepo'
+import { deleteContextObject, restoreContextObject } from '../data/contextObjectsRepo'
 import { updateGridInstanceOrigin } from '../data/gridInstancesRepo'
 import { updateLinePoints } from '../data/gridLinesRepo'
 
@@ -1791,7 +1783,7 @@ Expected: PASS — all tests in this file, across all 3 tasks.
 - [ ] **Step 5: Run the FULL test suite to catch any cross-file regression from the circular import or the `gridLinesRepo`/`gridInstancesRepo` signature changes**
 
 Run: `npm test`
-Expected: every test file passes EXCEPT `src/components/SiteMapView.test.tsx` — that one file is allowed to fail, specifically on assertions that call `updateGridInstanceOrigin`/`updateLinePoints`/`updateAdjustedPoints` with the old (pre-`planId`/`batchId`) argument counts (Task 12, Chunk 5, fixes this file explicitly). Any failure in ANY OTHER file, or any failure in `SiteMapView.test.tsx` that ISN'T about one of those 3 call signatures, is a real regression from this task — stop and investigate before committing.
+Expected: every test file passes EXCEPT `src/components/SiteMapView.test.tsx` — that one file is allowed to fail, specifically on assertions that call `updateLinePoints`/`updateAdjustedPoints` with the old (pre-`planId`) argument counts (Task 12, Chunk 5, fixes this file explicitly). `updateGridInstanceOrigin` only gained an OPTIONAL trailing `options?` parameter in Task 8 — old 3-arg call sites remain valid, so a failure involving `updateGridInstanceOrigin` is NOT covered by this exception and IS a real regression. Any failure in ANY OTHER file, or any failure in `SiteMapView.test.tsx` that isn't about `updateLinePoints`/`updateAdjustedPoints`'s argument count, is a real regression from this task — stop and investigate before committing.
 
 - [ ] **Step 6: Commit**
 
@@ -1816,7 +1808,7 @@ Create `src/components/UndoRedoControls.test.tsx`:
 
 ```tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { UndoRedoControls } from './UndoRedoControls'
 import * as actionHistory from '../offline/actionHistory'
 
@@ -1897,10 +1889,17 @@ describe('UndoRedoControls', () => {
       expect(vi.mocked(actionHistory.hasUndoableAction)).toHaveBeenCalledTimes(1)
 
       vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
-      await vi.advanceTimersByTimeAsync(1500) // POLL_INTERVAL_MS
+      // Must be wrapped in act() — the interval's setState calls happen
+      // outside any React act() boundary otherwise, and with fake timers
+      // active, findByRole's own polling never observes the DOM update
+      // (confirmed empirically: without this wrapper, the test hangs until
+      // Vitest's timeout, with an "update ... not wrapped in act(...)" warning).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1500) // POLL_INTERVAL_MS
+      })
 
       expect(vi.mocked(actionHistory.hasUndoableAction)).toHaveBeenCalledTimes(2)
-      expect(await screen.findByRole('button', { name: /annuler/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /annuler/i })).toBeEnabled()
     } finally {
       vi.useRealTimers()
     }
@@ -2105,13 +2104,20 @@ Replace the recalibration `useEffect` (currently lines 429–469):
     const delta = { x: crossing.x - instance.originX, y: crossing.y - instance.originY }
     const translatedLines = (linesByInstance[instance.id] ?? []).map((line) => translateGridLine(line, delta))
 
-    async function runRecalibration() {
+    // Must be `const runRecalibration = async () => {...}` (a function
+    // EXPRESSION), not `async function runRecalibration() {...}` (a function
+    // DECLARATION) — verified against the real TypeScript compiler
+    // (tsc -p tsconfig.app.json --noEmit): a function declaration invoked as
+    // a separate later statement does NOT inherit the outer `const`
+    // narrowing of `instance`/`crossing` from the two guards above (TS
+    // treats it as a possibly-hoisted, independently-callable declaration,
+    // unlike an arrow function/function expression in the same position,
+    // which does inherit the narrowing). Using the declaration form here
+    // reintroduces the exact "possibly undefined" errors the `!` assertions
+    // used to silence — Task 12 Step 8's `npm run build` gate would catch
+    // this immediately if it were written the other way.
+    const runRecalibration = async () => {
       const batchId = crypto.randomUUID()
-      // No `!` needed: `instance`/`crossing` are `const` bindings narrowed to
-      // non-null/non-undefined by the two guards above, and TypeScript's
-      // control-flow narrowing for `const` survives into this nested closure
-      // (it can only lose narrowing across a closure for `let`/`var`, which
-      // could be reassigned before the closure runs).
       await updateGridInstanceOrigin(instance.id, crossing.x, crossing.y, { batchId })
       // Sequential, not Promise.all: each write triggers action_history's
       // purge/FIFO-eviction logic, which reads then writes the plan's entry
