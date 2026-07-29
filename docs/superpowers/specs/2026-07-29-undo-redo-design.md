@@ -53,10 +53,13 @@ hors-ligne, sans aucun code de synchronisation dédié à écrire.
   d'exclusion.
 
 **Principe général retenu** (règle simple, vérifiable par repo) : une opération n'est
-annulable que si le repo expose déjà les deux directions nécessaires — soit une paire
-création/suppression existante (l'annulation de la suppression utilise la nouvelle
-`restoreX`, §3.2), soit une mise à jour qui peut être réappliquée dans l'autre sens.
-Une création sans suppression existante reste hors périmètre plutôt que de justifier
+annulable que si le repo expose déjà, ou peut recevoir sans changement de périmètre,
+les deux directions nécessaires — soit une paire création/suppression déjà existante
+(l'annulation de la suppression utilise la nouvelle `restoreX`, §3.2, une petite
+variante de code que ce chantier ajoute — pas une réutilisation de fonctionnalité déjà
+là), soit une mise à jour qui peut être réappliquée dans l'autre sens avec la fonction
+de mise à jour déjà existante (aucun nouveau code de repo nécessaire dans ce cas).
+Une création SANS suppression existante reste hors périmètre plutôt que de justifier
 l'ajout d'une nouvelle fonction de suppression (qui poserait ses propres questions,
 ex. suppression en cascade des lignes d'une instance de grille — hors sujet ici).
 
@@ -70,10 +73,40 @@ bloquantes") :
 
 ## 3. Conception
 
+### 3.0 Migration du schéma IndexedDB — point critique
+
+Le mode hors-ligne est déjà en production (mergé sur `master` le 27/07/2026) : des
+utilisateurs ont déjà une base `geobio-offline` en version 1 sur leur machine.
+`src/offline/db.ts`'s `upgrade(db)` actuel (sans paramètre `oldVersion`) recrée
+inconditionnellement TOUS les stores à chaque fois qu'il s'exécute — `createObjectStore`
+lève une exception si le store existe déjà. Bumper `DB_VERSION` à `2` pour ajouter
+`action_history` SANS modifier `upgrade()` ferait planter l'ouverture de la base pour
+tout utilisateur ayant déjà l'ancienne version, dès son prochain chargement de l'app.
+
+**Fix requis** : restructurer `upgrade(db, oldVersion)` pour ne créer que ce qui manque
+selon `oldVersion`, patron standard idb :
+
+```ts
+const DB_VERSION = 2
+
+upgrade(db, oldVersion) {
+  if (oldVersion < 1) {
+    // ... exactement le contenu actuel de upgrade() (tous les stores existants)
+  }
+  if (oldVersion < 2) {
+    const historyStore = db.createObjectStore('action_history', {
+      keyPath: 'id', autoIncrement: true,
+    })
+    historyStore.createIndex('plan_id', 'planId')
+  }
+}
+```
+
 ### 3.1 Mécanisme central : actions compensatoires
 
-Chaque action annulable enregistre un instantané complet dans un nouveau store
-IndexedDB, `action_history` :
+Chaque action annulable enregistre un instantané complet dans le nouveau store
+IndexedDB `action_history` (indexé par `plan_id`, voir §3.0 — chaque requête décrite
+ci-dessous filtre d'abord par `planId`) :
 
 ```ts
 interface ActionHistoryEntry {
@@ -94,20 +127,43 @@ interface ActionHistoryEntry {
 ```
 
 **Annuler** = trouve la dernière entrée non annulée (`undone: false`, `id` maximum)
-pour le plan courant, applique l'inverse :
+pour le plan courant (via l'index `plan_id`), applique l'inverse :
 - `insert` → appelle la fonction `deleteX` déjà existante du repo concerné.
 - `delete` → appelle une nouvelle fonction `restoreX(item)` (une par repo concerné —
   voir §3.2) qui réinsère l'objet exact avec son id d'origine.
-- `update` → appelle la fonction `updateX` déjà existante avec les valeurs de
-  `before`.
+- `update` sur `grid_instance` → appelle `updateGridInstanceOrigin` avec les
+  coordonnées de `before`.
+- `update` sur `grid_line` → appelle **toujours** `updateLinePoints` (jamais
+  `updateAdjustedPoints`), avec `before.theoreticalPoints` ET `before.adjustedPoints` —
+  jamais `updateAdjustedPoints` seul. Raison (point de conception important, pas un
+  détail) : `before`/`after` sont des instantanés complets de l'objet `GridLine`, qui
+  portent toujours les deux champs, quelle que soit la fonction d'origine réellement
+  appelée par l'action (`updateAdjustedPoints` OU `updateLinePoints`). Si l'annulation
+  utilisait `updateAdjustedPoints` (qui ne touche que `adjustedPoints`), un recalage de
+  grille (qui modifie `theoreticalPoints` via `updateLinePoints`) ne serait restauré
+  qu'à moitié — reproduirait exactement le bug "la grille part de travers" qui motive
+  ce chantier (douleur n°2). `updateLinePoints` fixe les deux champs
+  inconditionnellement, donc l'utiliser systématiquement pour l'annulation est toujours
+  correct, quelle que soit l'action d'origine.
 
 Puis marque l'entrée `undone: true`.
 
 **Refaire** = trouve la plus ANCIENNE entrée annulée (`undone: true`, `id` minimum
 parmi les annulées — les entrées annulées forment toujours un suffixe contigu du plus
 récent au plus ancien non-encore-refait, grâce à la purge décrite ci-dessous),
-réapplique l'action d'origine (même logique que l'action initiale, vers `after` au
-lieu de `before` pour un update), marque l'entrée `undone: false`.
+réapplique l'action d'origine vers `after` au lieu de `before` (même règle de
+dispatch que ci-dessus — `grid_line` toujours via `updateLinePoints`), marque l'entrée
+`undone: false`.
+
+**Pile vide** : `undo()`/`redo()` sur une pile vide (pour le plan courant) est un
+no-op silencieux — cohérent avec le fait que les boutons sont grisés dans ce cas
+(§3.4), mais la fonction elle-même doit aussi être sûre à appeler sans précondition
+(défense en profondeur).
+
+**Requêtes d'état pour l'UI** : deux fonctions `hasUndoableAction(planId): Promise<boolean>`
+et `hasRedoableAction(planId): Promise<boolean>` (existence d'au moins une entrée
+`undone: false` / `undone: true` pour ce `planId`) pilotent le grisage des boutons
+(§3.4).
 
 **Purge sur nouvelle action** : dès qu'une nouvelle action (autre qu'un
 annuler/refaire) est enregistrée pour un plan, TOUTES les entrées `undone: true` de ce
@@ -117,15 +173,29 @@ obsolète).
 
 **Éviction FIFO à 10** : après insertion d'une nouvelle entrée (non-undo/redo), si le
 plan a plus de 10 entrées au total, la plus ancienne (`id` minimum pour ce `planId`)
-est supprimée. La limite est **par plan**, pas globale.
+est supprimée. La limite est **par plan**, pas globale. Comme la purge ci-dessus
+s'exécute toujours avant cette étape, le compte peut déjà être bien en dessous de 10
+au moment de l'éviction — dans ce cas l'éviction ne se déclenche simplement pas
+(condition `> 10`, pas de contradiction avec la purge).
+
+**Croissance à long terme (limite acceptée)** : la limite de 10 est par plan, pas
+globale — le nombre total d'entrées dans `action_history` grossit donc avec le nombre
+de missions relevées au fil des mois (aucune fonctionnalité de suppression de
+plan/mission n'existe dans l'app aujourd'hui). Accepté comme limite connue plutôt que
+de construire une purge inter-missions hors sujet ici (YAGNI) — 10 entrées par plan
+reste un volume négligeable pour IndexedDB même sur des centaines de missions.
 
 ### 3.2 Nouvelle primitive par repo : `restoreX`
 
 Les 4 repos concernés par ce chantier qui ont création+suppression annulables
 (`feltPointsRepo`, `feltSegmentsRepo`, `phenomenaRepo`, `contextObjectsRepo`) gagnent
 une fonction `restoreX(item: X): Promise<X>` qui réinsère l'objet domaine complet
-(id compris) via `cachedWrite('insert', ...)`, en sautant la génération d'un nouvel id
-(contrairement à `createX`, qui génère toujours un id neuf). `gridInstancesRepo` et
+(id compris) via `cachedWrite(store, table, 'insert', item, toRow, writer)` — la même
+signature que `createX` utilise déjà, sauf que `item`/`writer` portent l'id ORIGINAL de
+l'objet (celui qu'il avait avant suppression) au lieu d'appeler `generateClientId()`
+pour en créer un nouveau. C'est du code nouveau (une petite variante du chemin
+d'insertion déjà éprouvé par `createX`), pas une fonctionnalité déjà existante à
+réutiliser telle quelle. `gridInstancesRepo` et
 `gridLinesRepo` n'ont besoin d'aucune `restoreX` : seules leurs opérations de mise à
 jour sont annulables (§2), et annuler une mise à jour utilise la fonction de mise à
 jour déjà existante, jamais une réinsertion. `freeformNetworksRepo` est explicitement
@@ -166,13 +236,31 @@ spécifique à ce chantier.
 
 ## 4. Tests
 
+Pour la migration IndexedDB (§3.0) : un test dédié simulant une base déjà en version 1
+(stores existants pré-créés) puis ouvrant en version 2, vérifiant qu'aucune exception
+n'est levée et que les stores existants ET `action_history` sont tous présents à la
+fin — c'est le test qui aurait attrapé le bug de migration identifié en relecture.
+
 Pour chaque repo concerné : test de la nouvelle fonction `restoreX` (réinsère avec
-l'id d'origine, pas un nouvel id généré). Pour le mécanisme central : purge sur
-nouvelle action, éviction FIFO à 10 par plan (pas globale), annuler/refaire une
-séquence insert→update→delete et vérifier l'état final du cache à chaque étape,
-persistance de l'historique après un rechargement simulé (fermeture/réouverture de la
-connexion IndexedDB). Pour l'UI : boutons grisés quand la pile est vide, clic
-déclenche bien la bonne fonction de repo selon `entityType`/`operation`.
+l'id d'origine, pas un nouvel id généré). Pour `gridLinesRepo` spécifiquement : un test
+qui annule une action enregistrée à l'origine via `updateAdjustedPoints` (donc dont
+seul `adjustedPoints` a changé au moment de l'action) et vérifie que l'annulation
+restaure bien `theoreticalPoints` ET `adjustedPoints` à leurs valeurs `before` — pas
+seulement `adjustedPoints` — pour garantir que le dispatch "toujours via
+`updateLinePoints`" (§3.1) est réellement appliqué, pas contourné.
+
+Pour le mécanisme central : purge sur nouvelle action, éviction FIFO à 10 par plan (pas
+globale), annuler/refaire une séquence d'actions couvrant un mélange d'entités (une
+insertion sur `felt_point`, une mise à jour sur `grid_instance`, une suppression sur
+`phenomenon` par exemple — pas une seule entité qui passerait par les 3 opérations,
+puisqu'aucun repo ne les expose toutes les 3) et vérifier l'état final du cache à
+chaque étape ; `undo()`/`redo()` sur une pile vide ne fait rien et ne lève pas
+d'erreur ; persistance de l'historique après un rechargement simulé (fermeture/
+réouverture de la connexion IndexedDB).
+
+Pour l'UI : boutons grisés quand `hasUndoableAction`/`hasRedoableAction` renvoie
+`false` pour le plan courant, clic déclenche bien la bonne fonction de repo selon
+`entityType`/`operation`.
 
 ## 5. Ce qui ne change pas
 
