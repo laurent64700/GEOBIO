@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
-import { createPhenomenon, deletePhenomenon, listPhenomenaForPlan } from './phenomenaRepo'
+import { createPhenomenon, deletePhenomenon, listPhenomenaForPlan, restorePhenomenon } from './phenomenaRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
 import { listPendingMutations } from '../offline/pendingMutations'
 import * as connectivity from '../offline/connectivity'
+import { getEntriesForPlan } from '../offline/actionHistory'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 vi.mock('../offline/connectivity')
@@ -67,6 +68,10 @@ describe('phenomenaRepo', () => {
   })
 
   it('deletes a phenomenon', async () => {
+    const db = await getDB()
+    await db.put('phenomenon', {
+      id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+    })
     const { from, chain } = createSupabaseChainMock({ data: null, error: null })
     vi.mocked(supabase).from = from
 
@@ -77,6 +82,10 @@ describe('phenomenaRepo', () => {
   })
 
   it('throws a descriptive French error when deletion fails', async () => {
+    const db = await getDB()
+    await db.put('phenomenon', {
+      id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+    })
     const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
     vi.mocked(supabase).from = from
 
@@ -127,5 +136,85 @@ describe('phenomenaRepo — offline behavior', () => {
 
     const db = await getDB()
     expect(await db.get('phenomenon', phenomenon.id)).toEqual(phenomenon)
+  })
+})
+
+describe('phenomenaRepo — undo/redo integration', () => {
+  const phenomenon = {
+    id: 'ph1', planId: 'p1', kind: 'spire-vortex' as const, x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+  }
+
+  beforeEach(async () => {
+    const db = await getDB()
+    await db.clear('phenomenon')
+    await db.clear('pending_mutations')
+    await db.clear('action_history')
+  })
+
+  it('restorePhenomenon reinserts with the SAME id (not a freshly generated one)', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: { id: 'ph1', plan_id: 'p1', kind: 'spire-vortex', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const restored = await restorePhenomenon(phenomenon)
+
+    expect(chain.insert).toHaveBeenCalledWith(expect.objectContaining({ id: 'ph1' }))
+    expect(restored.id).toBe('ph1')
+    const db = await getDB()
+    expect(await db.get('phenomenon', 'ph1')).toBeDefined()
+  })
+
+  it('createPhenomenon records an insert entry by default', async () => {
+    const { from } = createSupabaseChainMock({
+      data: { id: 'ph1', plan_id: 'p1', kind: 'spire-vortex', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createPhenomenon({ planId: 'p1', kind: 'spire-vortex', x: 1, y: 1 })
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'phenomenon', operation: 'insert' })
+  })
+
+  it('createPhenomenon does NOT record an entry when options.record is false', async () => {
+    const { from } = createSupabaseChainMock({
+      data: { id: 'ph1', plan_id: 'p1', kind: 'spire-vortex', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createPhenomenon({ planId: 'p1', kind: 'spire-vortex', x: 1, y: 1 }, { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deletePhenomenon records a delete entry with before = the full pre-deletion object', async () => {
+    const db = await getDB()
+    await db.put('phenomenon', phenomenon)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deletePhenomenon('ph1')
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'phenomenon', operation: 'delete', before: phenomenon, after: null })
+  })
+
+  it('deletePhenomenon does NOT record an entry when options.record is false', async () => {
+    const db = await getDB()
+    await db.put('phenomenon', phenomenon)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deletePhenomenon('ph1', { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deletePhenomenon throws a clear error when the phenomenon is not in the local cache', async () => {
+    await expect(deletePhenomenon('missing-id')).rejects.toThrow()
   })
 })
