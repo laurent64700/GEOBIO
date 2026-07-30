@@ -77,3 +77,34 @@ export async function evictOldestBatchIfOverLimit(planId: string): Promise<void>
   }
   await tx.done
 }
+
+export async function undoableWrite<T>(
+  planId: string,
+  entityType: ActionEntityType,
+  operation: ActionOperation,
+  before: unknown | null,
+  perform: () => Promise<T>,
+  options?: UndoableOptions
+): Promise<T> {
+  const result = await perform()
+  if (options?.record ?? true) {
+    const after = operation === 'delete' ? null : (result as unknown)
+    const entityId =
+      before !== null ? (before as { id: string }).id : (after as { id: string }).id
+
+    await purgeUndoneEntries(planId)
+    await appendEntry({
+      planId,
+      entityType,
+      entityId,
+      operation,
+      before,
+      after,
+      batchId: options?.batchId ?? null,
+      undone: false,
+      createdAt: new Date().toISOString(),
+    })
+    await evictOldestBatchIfOverLimit(planId)
+  }
+  return result
+}
