@@ -88,23 +88,34 @@ export async function undoableWrite<T>(
 ): Promise<T> {
   const result = await perform()
   if (options?.record ?? true) {
+    if (operation === 'delete' && before === null) {
+      throw new Error('undoableWrite: delete requires a non-null before snapshot')
+    }
+
     const after = operation === 'delete' ? null : (result as unknown)
     const entityId =
       before !== null ? (before as { id: string }).id : (after as { id: string }).id
 
-    await purgeUndoneEntries(planId)
-    await appendEntry({
-      planId,
-      entityType,
-      entityId,
-      operation,
-      before,
-      after,
-      batchId: options?.batchId ?? null,
-      undone: false,
-      createdAt: new Date().toISOString(),
-    })
-    await evictOldestBatchIfOverLimit(planId)
+    try {
+      await purgeUndoneEntries(planId)
+      await appendEntry({
+        planId,
+        entityType,
+        entityId,
+        operation,
+        before,
+        after,
+        batchId: options?.batchId ?? null,
+        undone: false,
+        createdAt: new Date().toISOString(),
+      })
+      await evictOldestBatchIfOverLimit(planId)
+    } catch (err) {
+      // Recording undo/redo history is best-effort bookkeeping layered on top
+      // of the real write, which already succeeded above — never let a
+      // recording failure surface as if the write itself failed.
+      console.warn('[undo/redo] failed to record action_history entry', err)
+    }
   }
   return result
 }

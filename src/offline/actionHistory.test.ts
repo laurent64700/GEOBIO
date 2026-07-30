@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 import { getDB } from './db'
+import * as dbModule from './db'
 import {
   type ActionHistoryEntry,
   appendEntry,
@@ -163,5 +164,28 @@ describe('undoableWrite', () => {
     expect(entries.find((e) => e.entityId === 'fp0')).toBeUndefined() // oldest evicted (11 batches -> 10)
     expect(entries.find((e) => e.entityId === 'fp10')).toBeDefined() // the new one is kept
     expect(entries).toHaveLength(10)
+  })
+
+  it('resolves with perform()\'s result and warns (does not throw) when the recording step fails', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const getDBSpy = vi.spyOn(dbModule, 'getDB').mockRejectedValueOnce(new Error('quota exceeded'))
+
+    const result = await undoableWrite('p1', 'felt_point', 'insert', null, async () => ({ id: 'fp1' }))
+
+    expect(result).toEqual({ id: 'fp1' })
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[undo/redo] failed to record action_history entry',
+      expect.any(Error)
+    )
+    expect(await getEntriesForPlan('p1')).toHaveLength(0) // recording never completed
+
+    getDBSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('throws a clear error (not a raw TypeError) when operation is delete and before is null', async () => {
+    await expect(
+      undoableWrite('p1', 'felt_point', 'delete', null, async () => ({ id: 'x' }))
+    ).rejects.toThrow('undoableWrite: delete requires a non-null before snapshot')
   })
 })
