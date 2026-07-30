@@ -2,7 +2,9 @@ import { supabase } from '../lib/supabaseClient'
 import type { FeltSegment, GridLinePolarity, Point } from '../domain/types'
 import { cachedList, cachedWrite } from '../offline/cacheThrough'
 import { generateClientId } from '../offline/clientId'
+import { getDB } from '../offline/db'
 import { SupabaseQueryError } from '../offline/supabaseQueryError'
+import { undoableWrite, type UndoableOptions } from '../offline/actionHistory'
 
 export interface CreateFeltSegmentInput {
   planId: string
@@ -42,7 +44,10 @@ function mapRowToFeltSegment(row: FeltSegmentRow): FeltSegment {
   }
 }
 
-export async function createFeltSegment(input: CreateFeltSegmentInput): Promise<FeltSegment> {
+export async function createFeltSegment(
+  input: CreateFeltSegmentInput,
+  options?: UndoableOptions
+): Promise<FeltSegment> {
   const id = generateClientId()
   const createdAt = new Date().toISOString()
   const polarityA = input.polarityA ?? null
@@ -70,19 +75,57 @@ export async function createFeltSegment(input: CreateFeltSegmentInput): Promise<
     createdAt,
   }
 
-  return cachedWrite('felt_segment', 'felt_segment', 'insert', item, () => row, async () => {
-    const { data, error } = await supabase.from('felt_segment').insert(row).select().single()
+  return undoableWrite(input.planId, 'felt_segment', 'insert', null, () =>
+    cachedWrite('felt_segment', 'felt_segment', 'insert', item, () => row, async () => {
+      const { data, error } = await supabase.from('felt_segment').insert(row).select().single()
 
-    if (error) throw new SupabaseQueryError(`Impossible d'enregistrer le segment ressenti : ${error.message}`)
-    return mapRowToFeltSegment(data as FeltSegmentRow)
-  })
+      if (error) throw new SupabaseQueryError(`Impossible d'enregistrer le segment ressenti : ${error.message}`)
+      return mapRowToFeltSegment(data as FeltSegmentRow)
+    }),
+  options)
 }
 
-export async function deleteFeltSegment(id: string): Promise<void> {
-  await cachedWrite('felt_segment', 'felt_segment', 'delete', { id }, () => ({ id }), async () => {
-    const { error } = await supabase.from('felt_segment').delete().eq('id', id)
-    if (error) throw new SupabaseQueryError(`Impossible de supprimer le segment ressenti : ${error.message}`)
-    return { id }
+export async function deleteFeltSegment(id: string, options?: UndoableOptions): Promise<void> {
+  // Read the entity before deleting it — undoableWrite needs the full
+  // pre-deletion object as `before`, so undo() can later call
+  // restoreFeltSegment with the exact original state (not just the id).
+  const db = await getDB()
+  const existing = (await db.get('felt_segment', id)) as FeltSegment | undefined
+  if (!existing) {
+    throw new Error(`Impossible de supprimer le segment ressenti : ${id} est introuvable dans le cache local`)
+  }
+
+  await undoableWrite(existing.planId, 'felt_segment', 'delete', existing, () =>
+    cachedWrite('felt_segment', 'felt_segment', 'delete', { id }, () => ({ id }), async () => {
+      const { error } = await supabase.from('felt_segment').delete().eq('id', id)
+      if (error) throw new SupabaseQueryError(`Impossible de supprimer le segment ressenti : ${error.message}`)
+      return { id }
+    }),
+  options)
+}
+
+// Deliberately does NOT accept UndoableOptions / route through undoableWrite,
+// unlike createFeltSegment/deleteFeltSegment above — this is only ever meant
+// to be called by undo()/redo() (a later task), which records its own
+// history bookkeeping directly when replaying a restore. Calling this from
+// feature code directly would silently bypass undo/redo tracking.
+export async function restoreFeltSegment(item: FeltSegment): Promise<FeltSegment> {
+  const row: FeltSegmentRow = {
+    id: item.id,
+    plan_id: item.planId,
+    network_name: item.networkName,
+    ax: item.pointA.x,
+    ay: item.pointA.y,
+    bx: item.pointB.x,
+    by: item.pointB.y,
+    polarity_a: item.polarityA,
+    polarity_b: item.polarityB,
+    created_at: item.createdAt,
+  }
+  return cachedWrite('felt_segment', 'felt_segment', 'insert', item, () => row, async () => {
+    const { data, error } = await supabase.from('felt_segment').insert(row).select().single()
+    if (error) throw new SupabaseQueryError(`Impossible de restaurer le segment ressenti : ${error.message}`)
+    return mapRowToFeltSegment(data as FeltSegmentRow)
   })
 }
 

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
-import { createFeltSegment, deleteFeltSegment, listFeltSegmentsForPlan } from './feltSegmentsRepo'
+import { createFeltSegment, deleteFeltSegment, listFeltSegmentsForPlan, restoreFeltSegment } from './feltSegmentsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
 import { listPendingMutations } from '../offline/pendingMutations'
 import * as connectivity from '../offline/connectivity'
+import { getEntriesForPlan } from '../offline/actionHistory'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 vi.mock('../offline/connectivity')
@@ -105,6 +106,12 @@ describe('feltSegmentsRepo', () => {
   })
 
   it('deletes a felt segment', async () => {
+    const db = await getDB()
+    await db.put('felt_segment', {
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+      polarityA: '+', polarityB: '-', createdAt: '2026-07-23T10:00:00Z',
+    })
     const { from, chain } = createSupabaseChainMock({ data: null, error: null })
     vi.mocked(supabase).from = from
 
@@ -115,6 +122,12 @@ describe('feltSegmentsRepo', () => {
   })
 
   it('throws a descriptive French error when deletion fails', async () => {
+    const db = await getDB()
+    await db.put('felt_segment', {
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+      polarityA: '+', polarityB: '-', createdAt: '2026-07-23T10:00:00Z',
+    })
     const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
     vi.mocked(supabase).from = from
 
@@ -170,5 +183,107 @@ describe('feltSegmentsRepo — offline behavior', () => {
 
     const db = await getDB()
     expect(await db.get('felt_segment', segment.id)).toEqual(segment)
+  })
+})
+
+describe('feltSegmentsRepo — undo/redo integration', () => {
+  const segment = {
+    id: 'fs1', planId: 'p1', networkName: 'Hartmann',
+    pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+    polarityA: '+' as const, polarityB: '-' as const, createdAt: '2026-07-23T10:00:00Z',
+  }
+
+  beforeEach(async () => {
+    const db = await getDB()
+    await db.clear('felt_segment')
+    await db.clear('pending_mutations')
+    await db.clear('action_history')
+  })
+
+  it('restoreFeltSegment reinserts with the SAME id (not a freshly generated one)', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: {
+        id: 'fs1', plan_id: 'p1', network_name: 'Hartmann',
+        ax: 5, ay: -1, bx: 5, by: 1, polarity_a: '+', polarity_b: '-',
+        created_at: '2026-07-23T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const restored = await restoreFeltSegment(segment)
+
+    expect(chain.insert).toHaveBeenCalledWith(expect.objectContaining({ id: 'fs1' }))
+    expect(restored.id).toBe('fs1')
+    const db = await getDB()
+    expect(await db.get('felt_segment', 'fs1')).toBeDefined()
+  })
+
+  it('createFeltSegment records an insert entry by default', async () => {
+    const { from } = createSupabaseChainMock({
+      data: {
+        id: 'fs1', plan_id: 'p1', network_name: 'Hartmann',
+        ax: 5, ay: -1, bx: 5, by: 1, polarity_a: '+', polarity_b: '-',
+        created_at: '2026-07-23T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createFeltSegment({
+      planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+      polarityA: '+', polarityB: '-',
+    })
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'felt_segment', operation: 'insert' })
+  })
+
+  it('createFeltSegment does NOT record an entry when options.record is false', async () => {
+    const { from } = createSupabaseChainMock({
+      data: {
+        id: 'fs1', plan_id: 'p1', network_name: 'Hartmann',
+        ax: 5, ay: -1, bx: 5, by: 1, polarity_a: '+', polarity_b: '-',
+        created_at: '2026-07-23T10:00:00Z',
+      },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createFeltSegment({
+      planId: 'p1', networkName: 'Hartmann',
+      pointA: { x: 5, y: -1 }, pointB: { x: 5, y: 1 },
+      polarityA: '+', polarityB: '-',
+    }, { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deleteFeltSegment records a delete entry with before = the full pre-deletion object', async () => {
+    const db = await getDB()
+    await db.put('felt_segment', segment)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deleteFeltSegment('fs1')
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'felt_segment', operation: 'delete', before: segment, after: null })
+  })
+
+  it('deleteFeltSegment does NOT record an entry when options.record is false', async () => {
+    const db = await getDB()
+    await db.put('felt_segment', segment)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deleteFeltSegment('fs1', { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deleteFeltSegment throws a clear error when the segment is not in the local cache', async () => {
+    await expect(deleteFeltSegment('missing-id')).rejects.toThrow()
   })
 })
