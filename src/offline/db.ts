@@ -14,6 +14,7 @@ export const STORE_NAMES = [
   'plan',
   'current_session',
   'pending_mutations',
+  'action_history',
 ] as const
 
 export type StoreName = (typeof STORE_NAMES)[number]
@@ -31,25 +32,34 @@ export const PLAN_ID_STORES = [
 export type PlanIdStoreName = (typeof PLAN_ID_STORES)[number]
 
 const DB_NAME = 'geobio-offline'
-const DB_VERSION = 1
+const DB_VERSION = 2
 
 let dbPromise: Promise<IDBPDatabase> | null = null
 
 export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        for (const store of PLAN_ID_STORES) {
-          const os = db.createObjectStore(store, { keyPath: 'id' })
-          os.createIndex('plan_id', 'planId')
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          for (const store of PLAN_ID_STORES) {
+            const os = db.createObjectStore(store, { keyPath: 'id' })
+            os.createIndex('plan_id', 'planId')
+          }
+          db.createObjectStore('grid_template', { keyPath: 'id' })
+          const lineStore = db.createObjectStore('grid_line', { keyPath: 'id' })
+          lineStore.createIndex('grid_instance_id', 'gridInstanceId')
+          const planStore = db.createObjectStore('plan', { keyPath: 'id' })
+          planStore.createIndex('mission_id', 'missionId')
+          db.createObjectStore('current_session')
+          db.createObjectStore('pending_mutations', { keyPath: 'id', autoIncrement: true })
         }
-        db.createObjectStore('grid_template', { keyPath: 'id' })
-        const lineStore = db.createObjectStore('grid_line', { keyPath: 'id' })
-        lineStore.createIndex('grid_instance_id', 'gridInstanceId')
-        const planStore = db.createObjectStore('plan', { keyPath: 'id' })
-        planStore.createIndex('mission_id', 'missionId')
-        db.createObjectStore('current_session')
-        db.createObjectStore('pending_mutations', { keyPath: 'id', autoIncrement: true })
+        if (oldVersion < 2) {
+          const historyStore = db.createObjectStore('action_history', {
+            keyPath: 'id',
+            autoIncrement: true,
+          })
+          historyStore.createIndex('plan_id', 'planId')
+        }
       },
     })
   }
