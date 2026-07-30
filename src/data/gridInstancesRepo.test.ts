@@ -6,6 +6,7 @@ import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
 import { listPendingMutations } from '../offline/pendingMutations'
 import * as connectivity from '../offline/connectivity'
+import { getEntriesForPlan } from '../offline/actionHistory'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 vi.mock('../offline/connectivity')
@@ -205,5 +206,57 @@ describe('gridInstancesRepo — offline behavior', () => {
 
     await expect(updateGridInstanceOrigin('missing-id', 1, 1)).rejects.toThrow()
     expect(writerFrom).not.toHaveBeenCalled()
+  })
+})
+
+describe('gridInstancesRepo — undo/redo integration', () => {
+  beforeEach(async () => {
+    const db = await getDB()
+    await db.clear('grid_instance')
+    await db.clear('pending_mutations')
+    await db.clear('action_history')
+  })
+
+  it('updateGridInstanceOrigin records an update entry with before = the pre-update instance', async () => {
+    const db = await getDB()
+    const original = { id: 'gi1', planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0 }
+    await db.put('grid_instance', original)
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+      error: null,
+    }).from
+
+    await updateGridInstanceOrigin('gi1', 5, 3)
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'grid_instance', operation: 'update', before: original })
+  })
+
+  it('does not record an entry when options.record is false', async () => {
+    const db = await getDB()
+    await db.put('grid_instance', { id: 'gi1', planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0 })
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+      error: null,
+    }).from
+
+    await updateGridInstanceOrigin('gi1', 5, 3, { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('propagates a batchId onto the recorded entry', async () => {
+    const db = await getDB()
+    await db.put('grid_instance', { id: 'gi1', planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0 })
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+      error: null,
+    }).from
+
+    await updateGridInstanceOrigin('gi1', 5, 3, { batchId: 'batch-a' })
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries[0].batchId).toBe('batch-a')
   })
 })

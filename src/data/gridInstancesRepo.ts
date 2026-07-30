@@ -4,6 +4,7 @@ import { cachedList, cachedWrite } from '../offline/cacheThrough'
 import { generateClientId } from '../offline/clientId'
 import { getDB } from '../offline/db'
 import { SupabaseQueryError } from '../offline/supabaseQueryError'
+import { undoableWrite, type UndoableOptions } from '../offline/actionHistory'
 
 export interface CreateGridInstanceInput {
   planId: string
@@ -70,7 +71,8 @@ export async function listGridInstancesForPlan(planId: string): Promise<GridInst
 export async function updateGridInstanceOrigin(
   instanceId: string,
   originX: number,
-  originY: number
+  originY: number,
+  options?: UndoableOptions
 ): Promise<GridInstance> {
   // cachedWrite needs the FULL updated domain object up front (it's what
   // gets written to the local cache and queued for replay if we're offline
@@ -87,15 +89,17 @@ export async function updateGridInstanceOrigin(
   }
   const item: GridInstance = { ...existing, originX, originY }
 
-  return cachedWrite('grid_instance', 'grid_instance', 'update', item, gridInstanceToRow, async () => {
-    const { data, error } = await supabase
-      .from('grid_instance')
-      .update({ origin_x: originX, origin_y: originY })
-      .eq('id', instanceId)
-      .select()
-      .single()
+  return undoableWrite(existing.planId, 'grid_instance', 'update', existing, () =>
+    cachedWrite('grid_instance', 'grid_instance', 'update', item, gridInstanceToRow, async () => {
+      const { data, error } = await supabase
+        .from('grid_instance')
+        .update({ origin_x: originX, origin_y: originY })
+        .eq('id', instanceId)
+        .select()
+        .single()
 
-    if (error) throw new SupabaseQueryError(`Impossible de recaler la grille : ${error.message}`)
-    return mapRowToGridInstance(data as GridInstanceRow)
-  })
+      if (error) throw new SupabaseQueryError(`Impossible de recaler la grille : ${error.message}`)
+      return mapRowToGridInstance(data as GridInstanceRow)
+    }),
+  options)
 }
