@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
-import { createContextObject, deleteContextObject, listContextObjectsForPlan } from './contextObjectsRepo'
+import { createContextObject, deleteContextObject, listContextObjectsForPlan, restoreContextObject } from './contextObjectsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
 import { listPendingMutations } from '../offline/pendingMutations'
 import * as connectivity from '../offline/connectivity'
+import { getEntriesForPlan } from '../offline/actionHistory'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 vi.mock('../offline/connectivity')
@@ -67,6 +68,10 @@ describe('contextObjectsRepo', () => {
   })
 
   it('deletes a context object', async () => {
+    const db = await getDB()
+    await db.put('context_object', {
+      id: 'co1', planId: 'p1', kind: 'arbre-chene', x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+    })
     const { from, chain } = createSupabaseChainMock({ data: null, error: null })
     vi.mocked(supabase).from = from
 
@@ -77,6 +82,10 @@ describe('contextObjectsRepo', () => {
   })
 
   it('throws a descriptive French error when deletion fails', async () => {
+    const db = await getDB()
+    await db.put('context_object', {
+      id: 'co1', planId: 'p1', kind: 'arbre-chene', x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+    })
     const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
     vi.mocked(supabase).from = from
 
@@ -127,5 +136,85 @@ describe('contextObjectsRepo — offline behavior', () => {
 
     const db = await getDB()
     expect(await db.get('context_object', obj.id)).toEqual(obj)
+  })
+})
+
+describe('contextObjectsRepo — undo/redo integration', () => {
+  const contextObject = {
+    id: 'co1', planId: 'p1', kind: 'arbre-chene' as const, x: 1, y: 1, createdAt: '2026-07-16T10:00:00Z',
+  }
+
+  beforeEach(async () => {
+    const db = await getDB()
+    await db.clear('context_object')
+    await db.clear('pending_mutations')
+    await db.clear('action_history')
+  })
+
+  it('restoreContextObject reinserts with the SAME id (not a freshly generated one)', async () => {
+    const { from, chain } = createSupabaseChainMock({
+      data: { id: 'co1', plan_id: 'p1', kind: 'arbre-chene', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    const restored = await restoreContextObject(contextObject)
+
+    expect(chain.insert).toHaveBeenCalledWith(expect.objectContaining({ id: 'co1' }))
+    expect(restored.id).toBe('co1')
+    const db = await getDB()
+    expect(await db.get('context_object', 'co1')).toBeDefined()
+  })
+
+  it('createContextObject records an insert entry by default', async () => {
+    const { from } = createSupabaseChainMock({
+      data: { id: 'co1', plan_id: 'p1', kind: 'arbre-chene', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createContextObject({ planId: 'p1', kind: 'arbre-chene', x: 1, y: 1 })
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'context_object', operation: 'insert' })
+  })
+
+  it('createContextObject does NOT record an entry when options.record is false', async () => {
+    const { from } = createSupabaseChainMock({
+      data: { id: 'co1', plan_id: 'p1', kind: 'arbre-chene', x: 1, y: 1, created_at: '2026-07-16T10:00:00Z' },
+      error: null,
+    })
+    vi.mocked(supabase).from = from
+
+    await createContextObject({ planId: 'p1', kind: 'arbre-chene', x: 1, y: 1 }, { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deleteContextObject records a delete entry with before = the full pre-deletion object', async () => {
+    const db = await getDB()
+    await db.put('context_object', contextObject)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deleteContextObject('co1')
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ entityType: 'context_object', operation: 'delete', before: contextObject, after: null })
+  })
+
+  it('deleteContextObject does NOT record an entry when options.record is false', async () => {
+    const db = await getDB()
+    await db.put('context_object', contextObject)
+    vi.mocked(supabase).from = createSupabaseChainMock({ data: null, error: null }).from
+
+    await deleteContextObject('co1', { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('deleteContextObject throws a clear error when the object is not in the local cache', async () => {
+    await expect(deleteContextObject('missing-id')).rejects.toThrow()
   })
 })
