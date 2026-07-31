@@ -231,6 +231,16 @@ async function setUndoneFlag(ids: number[], undone: boolean): Promise<void> {
 // undo()/redo() assume the caller (the UI) prevents concurrent calls for the
 // same plan, e.g. by disabling the trigger button while a call is in flight
 // — no reentrancy guard exists at this layer.
+//
+// Known limitation (accepted risk, not fixed): this guard only covers two
+// undo/redo calls racing each other. Nothing prevents an ordinary mutation
+// elsewhere in the UI (e.g. placing a felt point) from landing while an
+// undo/redo is mid-flight — both paths independently read-then-write the
+// same plan's action_history rows (purge/append/evict here vs. undo/redo's
+// entries-snapshot-then-setUndoneFlag). Worst case is a slightly-off FIFO
+// eviction choice, never data loss or corruption (per-id IndexedDB writes
+// stay atomic). Revisit by widening UndoRedoControls's `busy` flag to gate
+// the rest of the mutating UI if this ever proves to matter in the field.
 export async function undo(planId: string): Promise<void> {
   const entries = await getEntriesForPlan(planId)
   const undoable = entries.filter((e) => !e.undone)
