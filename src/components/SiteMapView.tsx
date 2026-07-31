@@ -24,6 +24,7 @@ import {
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { Sidebar } from './Sidebar'
+import { UndoRedoControls } from './UndoRedoControls'
 import { CompassIndicator } from './CompassIndicator'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
@@ -163,7 +164,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   // network at a time in the field, so whichever grid layer is currently
   // visible becomes editable; see the bottom-left OverlayPanel usage below.
   const [editMode, setEditMode] = useState(false)
-  const [undoStack, setUndoStack] = useState<Record<string, GridLine[]>>({}) // per gridInstanceId
   // Grid recalibration ("caler sur un croisement de 2 tiges"): armed like
   // editMode (one global toggle, acts on whichever grid layer is currently
   // visible — same "one network at a time in the field" convention).
@@ -244,43 +244,47 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const armedFeltPointNetwork = placementMode?.kind === 'felt-point' ? placementMode.networkName : null
   const allowedBearings = allowedBearingsForNetwork(armedFeltPointNetwork)
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments, loadedPhenomena, loadedContextObjects, loadedFreeform, loadedPlans] = await Promise.all([
-          listGridInstancesForPlan(planId),
-          listFeltPointsForPlan(planId),
-          listGridTemplates(),
-          listFeltSegmentsForPlan(planId),
-          listPhenomenaForPlan(planId),
-          listContextObjectsForPlan(planId),
-          listFreeformNetworksForPlan(planId),
-          listPlansForMission(missionId),
-        ])
-        setInstances(loadedInstances)
-        setFeltPoints(loadedPoints)
-        setTemplates(loadedTemplates)
-        setFeltSegments(loadedSegments)
-        setPhenomena(loadedPhenomena)
-        setContextObjects(loadedContextObjects)
-        setFreeformNetworks(loadedFreeform)
-        // Only one interior Plan is ever created per mission in the current
-        // flow (MissionWorkspace's handleInteriorCalibrated); imageUrl/
-        // calibration are both required for anything to actually render.
-        setInteriorPlan(
-          loadedPlans.find((p) => p.kind === 'interieur' && p.imageUrl !== null && p.calibration !== null) ?? null
+  async function loadAll() {
+    try {
+      const [loadedInstances, loadedPoints, loadedTemplates, loadedSegments, loadedPhenomena, loadedContextObjects, loadedFreeform, loadedPlans] = await Promise.all([
+        listGridInstancesForPlan(planId),
+        listFeltPointsForPlan(planId),
+        listGridTemplates(),
+        listFeltSegmentsForPlan(planId),
+        listPhenomenaForPlan(planId),
+        listContextObjectsForPlan(planId),
+        listFreeformNetworksForPlan(planId),
+        listPlansForMission(missionId),
+      ])
+      setInstances(loadedInstances)
+      setFeltPoints(loadedPoints)
+      setTemplates(loadedTemplates)
+      setFeltSegments(loadedSegments)
+      setPhenomena(loadedPhenomena)
+      setContextObjects(loadedContextObjects)
+      setFreeformNetworks(loadedFreeform)
+      // Only one interior Plan is ever created per mission in the current
+      // flow (MissionWorkspace's handleInteriorCalibrated); imageUrl/
+      // calibration are both required for anything to actually render.
+      setInteriorPlan(
+        loadedPlans.find((p) => p.kind === 'interieur' && p.imageUrl !== null && p.calibration !== null) ?? null
+      )
+      const entries = await Promise.all(
+        loadedInstances.map(
+          async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
         )
-        const entries = await Promise.all(
-          loadedInstances.map(
-            async (instance) => [instance.id, await listGridLinesForInstance(instance.id)] as const
-          )
-        )
-        setLinesByInstance(Object.fromEntries(entries))
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      }
+      )
+      setLinesByInstance(Object.fromEntries(entries))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
-    load()
+  }
+
+  useEffect(() => {
+    loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadAll closes
+    // over missionId too, but only planId is meant to re-trigger this effect
+    // (matches the pre-existing behavior of the inline `load()` this replaces).
   }, [planId])
 
   // Depend on missionOrigin.lat/lng (primitives), NOT the missionOrigin object
@@ -366,15 +370,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   }
 
   function handleLineChanged(instanceId: string, updated: GridLine, changeKind: 'drag' | 'vertex-added') {
-    setUndoStack((prev) => ({
-      ...prev,
-      [instanceId]: [...(prev[instanceId] ?? []), linesByInstance[instanceId].find((l) => l.id === updated.id)!],
-    }))
     setLinesByInstance((prev) => ({
       ...prev,
       [instanceId]: prev[instanceId].map((l) => (l.id === updated.id ? updated : l)),
     }))
-    updateAdjustedPoints(updated.id, updated.adjustedPoints).catch((err) =>
+    updateAdjustedPoints(updated.id, updated.adjustedPoints, planId).catch((err) =>
       setError(err instanceof Error ? err.message : String(err))
     )
     setLastChangedLine({ instanceId, lineId: updated.id })
@@ -385,20 +385,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // awaitingOrthogonalityReview — see design spec §3: offering to straighten a
     // line the practitioner just deliberately bent to capture a real deviation
     // would be actively confusing.
-  }
-
-  function handleUndo(instanceId: string) {
-    const stack = undoStack[instanceId]
-    if (!stack || stack.length === 0) return
-    const previous = stack[stack.length - 1]
-    setUndoStack((prev) => ({ ...prev, [instanceId]: prev[instanceId].slice(0, -1) }))
-    setLinesByInstance((prev) => ({
-      ...prev,
-      [instanceId]: prev[instanceId].map((l) => (l.id === previous.id ? previous : l)),
-    }))
-    updateAdjustedPoints(previous.id, previous.adjustedPoints).catch((err) =>
-      setError(err instanceof Error ? err.message : String(err))
-    )
   }
 
   function handleResetLine(instanceId: string, lineId: string) {
@@ -447,10 +433,32 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     const delta = { x: crossing.x - instance.originX, y: crossing.y - instance.originY }
     const translatedLines = (linesByInstance[instance.id] ?? []).map((line) => translateGridLine(line, delta))
 
-    updateGridInstanceOrigin(instance.id, crossing.x, crossing.y)
-      .then(() =>
-        Promise.all(translatedLines.map((line) => updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints)))
-      )
+    // Must be `const runRecalibration = async () => {...}` (a function
+    // EXPRESSION), not `async function runRecalibration() {...}` (a function
+    // DECLARATION) — a function declaration invoked as a separate later
+    // statement does NOT inherit the outer `const` narrowing of
+    // `instance`/`crossing` from the two guards above (TS treats it as a
+    // possibly-hoisted, independently-callable declaration, unlike an arrow
+    // function/function expression in the same position, which does inherit
+    // the narrowing). Using the declaration form here would reintroduce
+    // "possibly undefined" compile errors on instance/crossing. This has
+    // been empirically verified against the real TypeScript compiler — use
+    // the arrow-function-expression form exactly as written below, do not
+    // "simplify" it to a function declaration.
+    const runRecalibration = async () => {
+      const batchId = crypto.randomUUID()
+      await updateGridInstanceOrigin(instance.id, crossing.x, crossing.y, { batchId })
+      // Sequential, not Promise.all: each write triggers action_history's
+      // purge/FIFO-eviction logic, which reads then writes the plan's entry
+      // count — concurrent calls on the same plan could race on that
+      // read-then-write. A recalibration is an occasional action, not a hot
+      // path, so the sequential cost is negligible.
+      for (const line of translatedLines) {
+        await updateLinePoints(line.id, line.theoreticalPoints, line.adjustedPoints, instance.planId, { batchId })
+      }
+    }
+
+    runRecalibration()
       .then(() => {
         setInstances((prev) =>
           prev.map((i) => (i.id === instance.id ? { ...i, originX: crossing.x, originY: crossing.y } : i))
@@ -649,6 +657,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
       <Sidebar
         pinned={
           <>
+            <UndoRedoControls planId={planId} onChanged={loadAll} />
             <FeltPointPicker
               activeNetworkName={placementMode?.kind === 'felt-point' ? placementMode.networkName : null}
               onSelectNetwork={handleSelectFeltPointNetwork}
@@ -704,17 +713,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                   {editMode && (
                     <p>Glissez un point pour l'ajuster, cliquez le point central entre deux points pour ajouter un coude.</p>
                   )}
-                  <button
-                    onClick={() => lastChangedLine && handleUndo(lastChangedLine.instanceId)}
-                    disabled={
-                      !editMode ||
-                      !lastChangedLine ||
-                      !(visibility[lastChangedLine.instanceId] ?? false) ||
-                      (undoStack[lastChangedLine.instanceId]?.length ?? 0) === 0
-                    }
-                  >
-                    Annuler
-                  </button>
                   <button
                     onClick={() => lastChangedLine && handleResetLine(lastChangedLine.instanceId, lastChangedLine.lineId)}
                     disabled={!editMode || !lastChangedLine || !(visibility[lastChangedLine.instanceId] ?? false)}

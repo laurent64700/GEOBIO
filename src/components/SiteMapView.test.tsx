@@ -117,6 +117,12 @@ vi.mock('./GuideLineLayer', () => ({
   GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
     anchor !== null && bearingDeg !== null ? <div data-testid="guide-line" /> : null,
 }))
+// UndoRedoControls has its own dedicated test file (UndoRedoControls.test.tsx)
+// — stub it here so this file only exercises SiteMapView's own wiring
+// (planId/onChanged props), not the component's internal polling/behavior.
+vi.mock('./UndoRedoControls', () => ({
+  UndoRedoControls: () => null,
+}))
 vi.mock('./OrthogonalitySuggestion', () => ({
   OrthogonalitySuggestion: () => <div data-testid="orthogonality-preview" />,
 }))
@@ -567,15 +573,26 @@ describe('SiteMapView', () => {
       fireEvent.click(await screen.findByText('simulate-pick-fs1'))
       fireEvent.click(screen.getByText('simulate-pick-fs2'))
 
-      await waitFor(() => expect(gridInstancesRepo.updateGridInstanceOrigin).toHaveBeenCalledWith('gi1', 5, 3))
+      await waitFor(() =>
+        expect(gridInstancesRepo.updateGridInstanceOrigin).toHaveBeenCalledWith(
+          'gi1', 5, 3, { batchId: expect.any(String) }
+        )
+      )
       // hartmannLine's points are [{x:0,y:-10},{x:0,y:10}] and the instance's
       // original origin is (0,0), so translating onto crossing (5,3) shifts
       // every point by exactly (+5,+3).
       expect(gridLinesRepo.updateLinePoints).toHaveBeenCalledWith(
         'gl1',
         [{ x: 5, y: -7 }, { x: 5, y: 13 }],
-        [{ x: 5, y: -7 }, { x: 5, y: 13 }]
+        [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+        'p1',
+        { batchId: expect.any(String) }
       )
+      // Both the origin write and the line write must share the SAME batchId
+      // so undo/redo treats the whole recalibration as one atomic unit.
+      const originCall = vi.mocked(gridInstancesRepo.updateGridInstanceOrigin).mock.calls[0]
+      const lineCall = vi.mocked(gridLinesRepo.updateLinePoints).mock.calls[0]
+      expect(originCall[3]).toEqual({ batchId: lineCall[4]!.batchId })
       // Picking mode closes itself after a successful recalibration.
       expect(screen.queryByText(/tiges déjà relevées/i)).not.toBeInTheDocument()
     })
