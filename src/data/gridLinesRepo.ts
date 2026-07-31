@@ -5,6 +5,7 @@ import { isOnlineNow } from '../offline/connectivity'
 import { generateClientId } from '../offline/clientId'
 import { enqueueMutation } from '../offline/pendingMutations'
 import { SupabaseQueryError } from '../offline/supabaseQueryError'
+import { undoableWrite, type UndoableOptions } from '../offline/actionHistory'
 
 export interface CreateGridLineInput {
   gridInstanceId: string
@@ -181,9 +182,16 @@ async function tryOnlineLineUpdate(
 }
 
 // updateAdjustedPoints and updateLinePoints share the same cached grid_line
-// record, so the offline path always reads the EXISTING cached line first
-// and patches only its own field(s) on top of it — this way updating
-// adjustedPoints never clobbers theoreticalPoints, and vice versa.
+// record, so BOTH read the EXISTING cached line first (unconditionally, even
+// on the online success path — see undoableWrite's `before` requirement) and
+// patch only their own field(s) on top of it — this way updating
+// adjustedPoints never clobbers theoreticalPoints, and vice versa. A
+// consequence: both functions now require the line to already be cached
+// locally, even when online — every current caller (SiteMapView.tsx) already
+// warms the cache via listGridLinesForInstance before any edit is reachable,
+// but a future caller with only an id (no prior list call) would get a
+// confusing "introuvable dans le cache local" error instead of a working
+// online update.
 async function getCachedLineOrThrow(lineId: string, errorPrefix: string): Promise<GridLine> {
   const db = await getDB()
   const existing = (await db.get('grid_line', lineId)) as GridLine | undefined
@@ -193,34 +201,42 @@ async function getCachedLineOrThrow(lineId: string, errorPrefix: string): Promis
   return existing
 }
 
-export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point[]): Promise<GridLine> {
-  if (await isOnlineNow()) {
-    const line = await tryOnlineLineUpdate(
-      lineId,
-      { adjusted_points: adjustedPoints },
-      'Impossible de mettre à jour la ligne'
-    )
-    if (line) {
-      // The write already succeeded — mirroring the full server row into
-      // the cache is a separate step from here on: if THIS throws (a local
-      // storage problem), it must propagate as its own error rather than
-      // being folded into the offline path below.
-      const db = await getDB()
-      await db.put('grid_line', line)
-      return line
-    }
-  }
-
+export async function updateAdjustedPoints(
+  lineId: string,
+  adjustedPoints: Point[],
+  planId: string,
+  options?: UndoableOptions
+): Promise<GridLine> {
   const existing = await getCachedLineOrThrow(lineId, 'Impossible de mettre à jour la ligne')
-  const line: GridLine = { ...existing, adjustedPoints }
-  const db = await getDB()
-  await db.put('grid_line', line)
-  await enqueueMutation({
-    table: 'grid_line',
-    operation: 'update',
-    payload: { id: lineId, adjusted_points: adjustedPoints },
-  })
-  return line
+
+  return undoableWrite(planId, 'grid_line', 'update', existing, async () => {
+    if (await isOnlineNow()) {
+      const line = await tryOnlineLineUpdate(
+        lineId,
+        { adjusted_points: adjustedPoints },
+        'Impossible de mettre à jour la ligne'
+      )
+      if (line) {
+        // The write already succeeded — mirroring the full server row into
+        // the cache is a separate step from here on: if THIS throws (a local
+        // storage problem), it must propagate as its own error rather than
+        // being folded into the offline path below.
+        const db = await getDB()
+        await db.put('grid_line', line)
+        return line
+      }
+    }
+
+    const line: GridLine = { ...existing, adjustedPoints }
+    const db = await getDB()
+    await db.put('grid_line', line)
+    await enqueueMutation({
+      table: 'grid_line',
+      operation: 'update',
+      payload: { id: lineId, adjusted_points: adjustedPoints },
+    })
+    return line
+  }, options)
 }
 
 // Used by grid recalibration (translateGridLine shifts BOTH point arrays by
@@ -229,33 +245,38 @@ export async function updateAdjustedPoints(lineId: string, adjustedPoints: Point
 export async function updateLinePoints(
   lineId: string,
   theoreticalPoints: Point[],
-  adjustedPoints: Point[]
+  adjustedPoints: Point[],
+  planId: string,
+  options?: UndoableOptions
 ): Promise<GridLine> {
-  if (await isOnlineNow()) {
-    const line = await tryOnlineLineUpdate(
-      lineId,
-      { theoretical_points: theoreticalPoints, adjusted_points: adjustedPoints },
-      'Impossible de recaler la ligne'
-    )
-    if (line) {
-      const db = await getDB()
-      await db.put('grid_line', line)
-      return line
-    }
-  }
-
   const existing = await getCachedLineOrThrow(lineId, 'Impossible de recaler la ligne')
-  const line: GridLine = { ...existing, theoreticalPoints, adjustedPoints }
-  const db = await getDB()
-  await db.put('grid_line', line)
-  await enqueueMutation({
-    table: 'grid_line',
-    operation: 'update',
-    payload: {
-      id: lineId,
-      theoretical_points: theoreticalPoints,
-      adjusted_points: adjustedPoints,
-    },
-  })
-  return line
+
+  return undoableWrite(planId, 'grid_line', 'update', existing, async () => {
+    if (await isOnlineNow()) {
+      const line = await tryOnlineLineUpdate(
+        lineId,
+        { theoretical_points: theoreticalPoints, adjusted_points: adjustedPoints },
+        'Impossible de recaler la ligne'
+      )
+      if (line) {
+        const db = await getDB()
+        await db.put('grid_line', line)
+        return line
+      }
+    }
+
+    const line: GridLine = { ...existing, theoreticalPoints, adjustedPoints }
+    const db = await getDB()
+    await db.put('grid_line', line)
+    await enqueueMutation({
+      table: 'grid_line',
+      operation: 'update',
+      payload: {
+        id: lineId,
+        theoretical_points: theoreticalPoints,
+        adjusted_points: adjustedPoints,
+      },
+    })
+    return line
+  }, options)
 }

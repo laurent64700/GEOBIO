@@ -6,6 +6,7 @@ import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
 import { listPendingMutations } from '../offline/pendingMutations'
 import * as connectivity from '../offline/connectivity'
+import { getEntriesForPlan } from '../offline/actionHistory'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 vi.mock('../offline/connectivity')
@@ -70,6 +71,12 @@ describe('gridLinesRepo', () => {
   })
 
   it('updates a single line\'s adjusted points', async () => {
+    const db = await getDB()
+    await db.put('grid_line', {
+      id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+      theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    })
     const { from, chain } = createSupabaseChainMock({
       data: {
         id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
@@ -80,7 +87,7 @@ describe('gridLinesRepo', () => {
     })
     vi.mocked(supabase).from = from
 
-    const line = await updateAdjustedPoints('gl1', [{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
+    const line = await updateAdjustedPoints('gl1', [{ x: 0.3, y: -3 }, { x: 0, y: 3 }], 'p1')
 
     expect(chain.eq).toHaveBeenCalledWith('id', 'gl1')
     expect(chain.update).toHaveBeenCalledWith({ adjusted_points: [{ x: 0.3, y: -3 }, { x: 0, y: 3 }] })
@@ -88,6 +95,12 @@ describe('gridLinesRepo', () => {
   })
 
   it('updates both theoretical and adjusted points of a line (grid recalibration)', async () => {
+    const db = await getDB()
+    await db.put('grid_line', {
+      id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+      theoreticalPoints: [{ x: 2, y: -1 }, { x: 2, y: 5 }],
+      adjustedPoints: [{ x: 2, y: -1 }, { x: 2, y: 5 }],
+    })
     const { from, chain } = createSupabaseChainMock({
       data: {
         id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
@@ -101,7 +114,8 @@ describe('gridLinesRepo', () => {
     const line = await updateLinePoints(
       'gl1',
       [{ x: 2, y: -1 }, { x: 2, y: 5 }],
-      [{ x: 2.4, y: -1 }, { x: 2, y: 5 }]
+      [{ x: 2.4, y: -1 }, { x: 2, y: 5 }],
+      'p1'
     )
 
     expect(chain.eq).toHaveBeenCalledWith('id', 'gl1')
@@ -123,10 +137,16 @@ describe('gridLinesRepo', () => {
   })
 
   it('throws a descriptive French error when updating adjusted points fails', async () => {
+    const db = await getDB()
+    await db.put('grid_line', {
+      id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+      theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    })
     const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
     vi.mocked(supabase).from = from
 
-    await expect(updateAdjustedPoints('gl1', [{ x: 0, y: 0 }])).rejects.toThrow(
+    await expect(updateAdjustedPoints('gl1', [{ x: 0, y: 0 }], 'p1')).rejects.toThrow(
       'Impossible de mettre à jour la ligne : network down'
     )
   })
@@ -235,7 +255,7 @@ describe('gridLinesRepo — offline behavior', () => {
     }
     vi.mocked(supabase).from = createSupabaseChainMock({ data: serverRow, error: null }).from
 
-    const line = await updateAdjustedPoints('gl1', [{ x: 0.7, y: -3 }, { x: 0, y: 3 }])
+    const line = await updateAdjustedPoints('gl1', [{ x: 0.7, y: -3 }, { x: 0, y: 3 }], 'p1')
     expect(line.adjustedPoints).toEqual([{ x: 0.7, y: -3 }, { x: 0, y: 3 }])
 
     const cached = await db.get('grid_line', 'gl1')
@@ -261,7 +281,8 @@ describe('gridLinesRepo — offline behavior', () => {
     const line = await updateLinePoints(
       'gl1',
       [{ x: 3, y: -1 }, { x: 3, y: 5 }],
-      [{ x: 3.4, y: -1 }, { x: 3, y: 5 }]
+      [{ x: 3.4, y: -1 }, { x: 3, y: 5 }],
+      'p1'
     )
 
     const cached = await db.get('grid_line', 'gl1')
@@ -283,7 +304,7 @@ describe('gridLinesRepo — offline behavior', () => {
     const writerFrom = vi.fn()
     vi.mocked(supabase).from = writerFrom
 
-    const line = await updateAdjustedPoints('gl1', [{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
+    const line = await updateAdjustedPoints('gl1', [{ x: 0.3, y: -3 }, { x: 0, y: 3 }], 'p1')
 
     expect(writerFrom).not.toHaveBeenCalled()
     expect(line.adjustedPoints).toEqual([{ x: 0.3, y: -3 }, { x: 0, y: 3 }])
@@ -317,7 +338,8 @@ describe('gridLinesRepo — offline behavior', () => {
     const line = await updateLinePoints(
       'gl1',
       [{ x: 3, y: -1 }, { x: 3, y: 5 }],
-      [{ x: 3.4, y: -1 }, { x: 3, y: 5 }]
+      [{ x: 3.4, y: -1 }, { x: 3, y: 5 }],
+      'p1'
     )
 
     expect(writerFrom).not.toHaveBeenCalled()
@@ -411,7 +433,7 @@ describe('gridLinesRepo — offline behavior', () => {
     const writerFrom = vi.fn()
     vi.mocked(supabase).from = writerFrom
 
-    await expect(updateAdjustedPoints('missing-id', [{ x: 0, y: 0 }])).rejects.toThrow()
+    await expect(updateAdjustedPoints('missing-id', [{ x: 0, y: 0 }], 'p1')).rejects.toThrow()
     expect(writerFrom).not.toHaveBeenCalled()
   })
 
@@ -428,12 +450,13 @@ describe('gridLinesRepo — offline behavior', () => {
     vi.mocked(supabase).from = vi.fn()
 
     // First: a felt-adjustment drag touches only adjustedPoints.
-    await updateAdjustedPoints('gl1', [{ x: 0.5, y: 0 }, { x: 0, y: 10 }])
+    await updateAdjustedPoints('gl1', [{ x: 0.5, y: 0 }, { x: 0, y: 10 }], 'p1')
     // Then: a grid recalibration shifts both arrays.
     await updateLinePoints(
       'gl1',
       [{ x: 1, y: 0 }, { x: 1, y: 10 }],
-      [{ x: 1.5, y: 0 }, { x: 1, y: 10 }]
+      [{ x: 1.5, y: 0 }, { x: 1, y: 10 }],
+      'p1'
     )
 
     const final = await db.get('grid_line', 'gl1')
@@ -450,5 +473,88 @@ describe('gridLinesRepo — offline behavior', () => {
       theoretical_points: [{ x: 1, y: 0 }, { x: 1, y: 10 }],
       adjusted_points: [{ x: 1.5, y: 0 }, { x: 1, y: 10 }],
     })
+  })
+})
+
+describe('gridLinesRepo — undo/redo integration', () => {
+  const seeded = {
+    id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a' as const, polarity: '+' as const, reinforced: false,
+    theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    const db = await getDB()
+    await db.clear('grid_line')
+    await db.clear('pending_mutations')
+    await db.clear('action_history')
+    await db.put('grid_line', seeded)
+  })
+
+  it('updateLinePoints reads `existing` and records `before` correctly on the ONLINE success branch (regression test for the unconditional-read fix)', async () => {
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+        theoretical_points: [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+        adjusted_points: [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+      },
+      error: null,
+    }).from
+
+    await updateLinePoints('gl1', [{ x: 5, y: -7 }, { x: 5, y: 13 }], [{ x: 5, y: -7 }, { x: 5, y: 13 }], 'p1')
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].before).toEqual(seeded)
+  })
+
+  it('updateAdjustedPoints reads `existing` and records `before` correctly on the ONLINE success branch (regression test for the unconditional-read fix)', async () => {
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        adjusted_points: [{ x: 0.7, y: -3 }, { x: 0, y: 3 }],
+      },
+      error: null,
+    }).from
+
+    await updateAdjustedPoints('gl1', [{ x: 0.7, y: -3 }, { x: 0, y: 3 }], 'p1')
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0].before).toEqual(seeded)
+  })
+
+  it('does not record an entry when options.record is false', async () => {
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+        theoretical_points: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+        adjusted_points: [{ x: 0.7, y: -3 }, { x: 0, y: 3 }],
+      },
+      error: null,
+    }).from
+
+    await updateAdjustedPoints('gl1', [{ x: 0.7, y: -3 }, { x: 0, y: 3 }], 'p1', { record: false })
+
+    expect(await getEntriesForPlan('p1')).toHaveLength(0)
+  })
+
+  it('propagates a batchId onto the recorded entry', async () => {
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: 'axis-a', polarity: '+', reinforced: false,
+        theoretical_points: [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+        adjusted_points: [{ x: 5, y: -7 }, { x: 5, y: 13 }],
+      },
+      error: null,
+    }).from
+
+    await updateLinePoints('gl1', [{ x: 5, y: -7 }, { x: 5, y: 13 }], [{ x: 5, y: -7 }, { x: 5, y: 13 }], 'p1', { batchId: 'batch-a' })
+
+    const entries = await getEntriesForPlan('p1')
+    expect(entries[0].batchId).toBe('batch-a')
   })
 })
