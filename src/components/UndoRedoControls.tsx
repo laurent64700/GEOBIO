@@ -23,6 +23,15 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // actionHistory.ts's undo()/redo() document that "no reentrancy guard
+  // exists at this layer — the caller (the UI) must prevent concurrent
+  // calls." `canUndo`/`canRedo` only update after refresh() resolves, so
+  // they stay stale for the whole in-flight duration and can't be relied on
+  // to prevent a double-click or an undo-then-immediately-redo race. `busy`
+  // disables BOTH buttons for the duration of any in-flight call, since undo
+  // and redo both touch the same action_history entries and could race
+  // against each other, not just against themselves.
+  const [busy, setBusy] = useState(false)
 
   async function refresh() {
     setCanUndo(await hasUndoableAction(planId))
@@ -38,33 +47,39 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
   }, [planId])
 
   async function handleUndo() {
+    setBusy(true)
     try {
       await undo(planId)
       setError(null)
       onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
     await refresh()
   }
 
   async function handleRedo() {
+    setBusy(true)
     try {
       await redo(planId)
       setError(null)
       onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
     }
     await refresh()
   }
 
   return (
     <div>
-      <button onClick={handleUndo} disabled={!canUndo} aria-label="Annuler">
+      <button onClick={handleUndo} disabled={!canUndo || busy} aria-label="Annuler">
         ↶ Annuler
       </button>
-      <button onClick={handleRedo} disabled={!canRedo} aria-label="Refaire">
+      <button onClick={handleRedo} disabled={!canRedo || busy} aria-label="Refaire">
         ↷ Refaire
       </button>
       {error !== null && (

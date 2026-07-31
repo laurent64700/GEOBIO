@@ -72,6 +72,40 @@ describe('UndoRedoControls', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('disables both Annuler and Refaire while an undo call is in flight (reentrancy guard per actionHistory.ts precondition)', async () => {
+    vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
+    vi.mocked(actionHistory.hasRedoableAction).mockResolvedValue(true)
+
+    let resolveUndo: () => void
+    const pendingUndo = new Promise<void>((resolve) => {
+      resolveUndo = resolve
+    })
+    vi.mocked(actionHistory.undo).mockReturnValue(pendingUndo)
+
+    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+    const undoButton = await screen.findByRole('button', { name: /annuler/i })
+    const redoButton = screen.getByRole('button', { name: /refaire/i })
+    await waitFor(() => expect(undoButton).toBeEnabled())
+    await waitFor(() => expect(redoButton).toBeEnabled())
+
+    fireEvent.click(undoButton)
+
+    // Both buttons must be disabled while the undo call is pending — Refaire
+    // was never clicked, proving the busy flag is shared, not per-button.
+    await waitFor(() => expect(undoButton).toBeDisabled())
+    expect(redoButton).toBeDisabled()
+
+    await act(async () => {
+      resolveUndo!()
+      await pendingUndo
+    })
+
+    // Once settled, state reverts to whatever the (mocked) poll-derived
+    // values say — both true here.
+    await waitFor(() => expect(undoButton).toBeEnabled())
+    expect(redoButton).toBeEnabled()
+  })
+
   it('re-checks hasUndoableAction/hasRedoableAction on the poll interval, not just on mount (regression test for the interval actually being wired up)', async () => {
     vi.useFakeTimers()
     try {
