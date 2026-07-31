@@ -143,6 +143,14 @@ describe('undoableWrite', () => {
     expect(entries[0].batchId).toBe('batch-a')
   })
 
+  it('rejects a batchId combined with insert (batches can only self-heal on retry for update-only operations)', async () => {
+    await expect(
+      undoableWrite('p1', 'felt_point', 'insert', null, async () => ({ id: 'x' }), { batchId: 'b1' })
+    ).rejects.toThrow(
+      'undoableWrite: batchId is only supported for update operations — insert/delete cannot safely retry as part of a batch'
+    )
+  })
+
   it('purges undone entries and evicts the oldest batch past the cap when recording', async () => {
     // Prime: one undone entry (should be purged) + 10 non-undone single
     // batches (already at the cap).
@@ -481,6 +489,104 @@ describe('undo/redo — dispatch', () => {
     }
     const entriesAfterRedo = await getEntriesForPlan('p1')
     expect(entriesAfterRedo.every((e) => !e.undone)).toBe(true)
+  })
+
+  it('a partial batch failure leaves action_history inconsistent-but-recoverable, and a retry self-heals it (proves the comment above undo()\'s loop, not just asserts it)', async () => {
+    const hartmann = {
+      id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5,
+      angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7,
+    }
+    const db = await getDB()
+    await db.put('grid_instance', { id: 'gi1', planId: 'p1', templateSnapshot: hartmann, originX: 0, originY: 0 })
+    const originalLine = {
+      id: 'gl1', gridInstanceId: 'gi1', family: 'axis-a' as const, polarity: '+' as const, reinforced: false,
+      theoreticalPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+      adjustedPoints: [{ x: 0, y: -3 }, { x: 0, y: 3 }],
+    }
+    await db.put('grid_line', originalLine)
+
+    const batchId = 'batch-partial'
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 5, origin_y: 3 },
+      error: null,
+    }).from
+    await updateGridInstanceOrigin('gi1', 5, 3, { batchId })
+
+    const shifted = {
+      theoretical: originalLine.theoreticalPoints.map((p) => ({ x: p.x + 5, y: p.y + 3 })),
+      adjusted: originalLine.adjustedPoints.map((p) => ({ x: p.x + 5, y: p.y + 3 })),
+    }
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: {
+        id: 'gl1', grid_instance_id: 'gi1', family: originalLine.family, polarity: originalLine.polarity, reinforced: originalLine.reinforced,
+        theoretical_points: shifted.theoretical, adjusted_points: shifted.adjusted,
+      },
+      error: null,
+    }).from
+    await updateLinePoints('gl1', shifted.theoretical, shifted.adjusted, 'p1', { batchId })
+
+    const entriesBefore = await getEntriesForPlan('p1')
+    expect(entriesBefore).toHaveLength(2)
+    expect(entriesBefore.every((e) => e.batchId === batchId && !e.undone)).toBe(true)
+
+    // Force the SECOND entry's (grid_line) compensating call to fail: evict
+    // it from the local cache. undoLinePoints's own getCachedLineOrThrow
+    // guard then throws deterministically, before any network call — no
+    // Supabase mocking needed for this half of the batch. The FIRST entry
+    // (grid_instance) is processed first and its network call is mocked to
+    // succeed normally.
+    await db.delete('grid_line', 'gl1')
+    vi.mocked(supabase).from = createSupabaseChainMock({
+      data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 },
+      error: null,
+    }).from
+
+    await expect(undo('p1')).rejects.toThrow()
+
+    // Inconsistent-but-recoverable: the first entry's real mutation went
+    // through (grid_instance reverted to its pre-recalibration origin)...
+    const midFailureInstance = await db.get('grid_instance', 'gi1')
+    expect(midFailureInstance.originX).toBe(0)
+    expect(midFailureInstance.originY).toBe(0)
+    // ...but NEITHER entry flipped `undone` — setUndoneFlag only runs after
+    // the whole batch loop completes, and it didn't.
+    const entriesAfterFailure = await getEntriesForPlan('p1')
+    expect(entriesAfterFailure.every((e) => !e.undone)).toBe(true)
+
+    // Retry: restore the evicted cache entry (simulating whatever transient
+    // condition caused the failure going away) and let both compensating
+    // calls succeed this time.
+    await db.put('grid_line', originalLine)
+    const retryFrom = vi.fn()
+    retryFrom.mockImplementationOnce(
+      () => createSupabaseChainMock({
+        data: { id: 'gi1', plan_id: 'p1', template_snapshot: hartmann, origin_x: 0, origin_y: 0 },
+        error: null,
+      }).chain
+    )
+    retryFrom.mockImplementationOnce(
+      () => createSupabaseChainMock({
+        data: {
+          id: 'gl1', grid_instance_id: 'gi1', family: originalLine.family, polarity: originalLine.polarity, reinforced: originalLine.reinforced,
+          theoretical_points: originalLine.theoreticalPoints, adjusted_points: originalLine.adjustedPoints,
+        },
+        error: null,
+      }).chain
+    )
+    vi.mocked(supabase).from = retryFrom
+
+    await undo('p1') // must not throw this time
+
+    const restoredInstance = await db.get('grid_instance', 'gi1')
+    expect(restoredInstance.originX).toBe(0)
+    expect(restoredInstance.originY).toBe(0)
+    const restoredLine = await db.get('grid_line', 'gl1')
+    expect(restoredLine.theoreticalPoints).toEqual(originalLine.theoreticalPoints)
+    expect(restoredLine.adjustedPoints).toEqual(originalLine.adjustedPoints)
+
+    // The whole batch is now consistently flipped — self-healed via retry.
+    const entriesAfterRetry = await getEntriesForPlan('p1')
+    expect(entriesAfterRetry.every((e) => e.undone)).toBe(true)
   })
 
   it('undoing then redoing a mixed sequence (insert felt_point, update grid_instance, delete phenomenon) restores the correct final cache state at each step', async () => {

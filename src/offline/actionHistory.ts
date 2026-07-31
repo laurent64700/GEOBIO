@@ -1,5 +1,12 @@
 // src/offline/actionHistory.ts
 import { getDB } from './db'
+import type { FeltPoint, FeltSegment, Phenomenon, ContextObject, GridInstance, GridLine } from '../domain/types'
+import { deleteFeltPoint, restoreFeltPoint } from '../data/feltPointsRepo'
+import { deleteFeltSegment, restoreFeltSegment } from '../data/feltSegmentsRepo'
+import { deletePhenomenon, restorePhenomenon } from '../data/phenomenaRepo'
+import { deleteContextObject, restoreContextObject } from '../data/contextObjectsRepo'
+import { updateGridInstanceOrigin } from '../data/gridInstancesRepo'
+import { updateLinePoints } from '../data/gridLinesRepo'
 
 export type ActionEntityType =
   | 'felt_point'
@@ -86,6 +93,18 @@ export async function undoableWrite<T>(
   perform: () => Promise<T>,
   options?: UndoableOptions
 ): Promise<T> {
+  // Batches are only self-healing under partial-batch-failure retry (see the
+  // comment above undo()/redo()'s loops) because every batchId in this
+  // codebase is update-only — retrying an idempotent update is harmless, but
+  // retrying a delete/restore on an already-deleted/restored entity would
+  // throw instead of no-op. Refuse the combination outright rather than let
+  // a future caller land that landmine silently.
+  if (options?.batchId !== undefined && operation !== 'update') {
+    throw new Error(
+      'undoableWrite: batchId is only supported for update operations — insert/delete cannot safely retry as part of a batch'
+    )
+  }
+
   const result = await perform()
   if (options?.record ?? true) {
     if (operation === 'delete' && before === null) {
@@ -119,14 +138,6 @@ export async function undoableWrite<T>(
   }
   return result
 }
-
-import type { FeltPoint, FeltSegment, Phenomenon, ContextObject, GridInstance, GridLine } from '../domain/types'
-import { deleteFeltPoint, restoreFeltPoint } from '../data/feltPointsRepo'
-import { deleteFeltSegment, restoreFeltSegment } from '../data/feltSegmentsRepo'
-import { deletePhenomenon, restorePhenomenon } from '../data/phenomenaRepo'
-import { deleteContextObject, restoreContextObject } from '../data/contextObjectsRepo'
-import { updateGridInstanceOrigin } from '../data/gridInstancesRepo'
-import { updateLinePoints } from '../data/gridLinesRepo'
 
 export async function hasUndoableAction(planId: string): Promise<boolean> {
   const entries = await getEntriesForPlan(planId)
