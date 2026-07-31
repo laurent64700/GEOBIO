@@ -173,9 +173,10 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [calibrating, setCalibrating] = useState(false)
   const [calibrationPicks, setCalibrationPicks] = useState<FeltSegment[]>([])
   const [calibrationError, setCalibrationError] = useState<string | null>(null)
-  // Tracks the line most recently touched by a drag/reset, so the single
-  // "Annuler"/"Réinitialiser" panel knows which instance/line to act on
-  // without a per-line picker UI (not specified by the plan; kept minimal).
+  // Tracks the line most recently touched by a drag/reset, so the
+  // "Réinitialiser" button knows which instance/line to act on without a
+  // per-line picker UI (not specified by the plan; kept minimal). Undo is
+  // now handled globally by UndoRedoControls, not by this local tracking.
   const [lastChangedLine, setLastChangedLine] = useState<{ instanceId: string; lineId: string } | null>(null)
   // Set to a GridLine id right after it's adjusted (drag or reset), so the
   // orthogonality-assist panel (bottom-right OverlayPanel, below)
@@ -701,10 +702,12 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                     per-layer one: Laurent edits one visible network at a time
                     in the field, so whichever grid layer is currently toggled
                     visible becomes draggable while this is on.
-                    "Annuler"/"Réinitialiser" act on the line most recently
-                    dragged or reset (lastChangedLine) rather than through a
-                    per-line picker, since that line is always the one
-                    Laurent just touched. */}
+                    "Réinitialiser" acts on the line most recently dragged or
+                    reset (lastChangedLine) rather than through a per-line
+                    picker, since that line is always the one Laurent just
+                    touched. (Undo is now handled globally by
+                    UndoRedoControls in the sidebar's pinned block, not by a
+                    per-line button here.) */}
                 <div style={CARD_CHROME_STYLE}>
                   <label>
                     <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
