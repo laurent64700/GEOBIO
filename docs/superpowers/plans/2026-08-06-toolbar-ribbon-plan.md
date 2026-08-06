@@ -231,7 +231,7 @@ it('exposes flushNow, which calls flushPendingMutations and refreshes pendingCou
   expect(result.current.pendingCount).toBe(0)
 })
 
-it('propagates a flushNow rejection to the caller (listPendingMutations failing mid-flush is not swallowed)', async () => {
+it('propagates a flushPendingMutations rejection through flushNow, unswallowed (try/finally, not try/catch)', async () => {
   vi.mocked(isOnlineNow).mockResolvedValue(false)
   vi.mocked(listPendingMutations).mockResolvedValueOnce([])
   const { result } = renderHook(() => useOfflineSync())
@@ -1027,12 +1027,17 @@ Expected: FAIL — no such buttons exist yet.
 
 - [ ] **Step 3: Implement**
 
+Add the 2 buttons to the SAME `Toolbar` function Task 9 already wrote — do NOT
+revert Task 9's `onGuideLineSlotReady` callback-ref prop back to a plain
+`guideLineSlotRef`/`ref` while making this change (that was a deliberately fixed
+bug, see Task 9's note on why a plain `useRef` read during render doesn't work):
+
 ```tsx
-export function Toolbar({ children, guideLineSlotRef }: ToolbarProps) {
+export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
   return (
     <div role="toolbar" style={TOOLBAR_STYLE}>
       {children}
-      <div ref={guideLineSlotRef} />
+      <div ref={onGuideLineSlotReady} />
       <button disabled title="Bientôt disponible (Phase 2)">Placer</button>
       <button disabled title="Bientôt disponible (Phase 2)">Tracer</button>
     </div>
@@ -1085,11 +1090,28 @@ correctly (it should call `onNavigateToNewMission`, from Task 5 — that remount
 
 - [ ] **Step 1: Write the failing tests**
 
+**Radix's `DropdownMenu.Trigger` opens on `pointerdown` (and keyboard), not on a
+bare `click`** — this project has no `@testing-library/user-event` dependency,
+and jsdom's `fireEvent.click` doesn't synthesize the pointer-event sequence a
+real click produces, so `fireEvent.click(trigger)` leaves the menu closed and
+every subsequent `findByRole('menuitem', ...)` times out. Every test below (and
+every menu test in Tasks 12/13) must open the trigger via `fireEvent.pointerDown`
++ `fireEvent.pointerUp` instead. Define one local helper and reuse it, rather
+than repeating the 2-line sequence in every test:
+
 ```tsx
 // src/components/MenuBar.test.tsx
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MenuBar } from './MenuBar'
+
+// Radix opens DropdownMenu.Trigger on pointerdown, not a synthetic click —
+// see this task's note above. Reused by every menu test in this file
+// (Fichier here; Modifier/Affichage appended in Tasks 12/13).
+function openMenu(trigger: HTMLElement) {
+  fireEvent.pointerDown(trigger)
+  fireEvent.pointerUp(trigger)
+}
 
 const baseProps = {
   onNavigateToMissionList: vi.fn(),
@@ -1103,14 +1125,14 @@ const baseProps = {
 describe('MenuBar — Fichier', () => {
   it('calls onNavigateToNewMission when "Nouvelle mission" is clicked', async () => {
     render(<MenuBar {...baseProps} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /nouvelle mission/i }))
     expect(baseProps.onNavigateToNewMission).toHaveBeenCalled()
   })
 
   it('calls onNavigateToMissionList when "Mes missions" is clicked', async () => {
     render(<MenuBar {...baseProps} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /mes missions/i }))
     expect(baseProps.onNavigateToMissionList).toHaveBeenCalled()
   })
@@ -1118,28 +1140,28 @@ describe('MenuBar — Fichier', () => {
   it('calls onSaveNow when "Enregistrer" is clicked, and reports an error if it rejects', async () => {
     const onSaveNow = vi.fn().mockRejectedValue(new Error('sync failed'))
     render(<MenuBar {...baseProps} onSaveNow={onSaveNow} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /^enregistrer$/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent('sync failed')
   })
 
   it('calls onDuplicateMission when "Enregistrer sous" is clicked', async () => {
     render(<MenuBar {...baseProps} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /enregistrer sous/i }))
     expect(baseProps.onDuplicateMission).toHaveBeenCalled()
   })
 
   it('renders "Imprimer" disabled with a tooltip', async () => {
     render(<MenuBar {...baseProps} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     const item = await screen.findByRole('menuitem', { name: /imprimer/i })
     expect(item).toHaveAttribute('aria-disabled', 'true')
   })
 
   it('calls onQuitMission when "Quitter la mission" is clicked', async () => {
     render(<MenuBar {...baseProps} />)
-    fireEvent.click(screen.getByRole('button', { name: /fichier/i }))
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /quitter la mission/i }))
     expect(baseProps.onQuitMission).toHaveBeenCalled()
   })
@@ -1240,8 +1262,9 @@ Expected: PASS
 
 `Toolbar.tsx`: add `menuBar?: ReactNode` prop (rendered first, before `children`)
 — keep `Toolbar` itself menu-agnostic, `MissionWorkspace` supplies the actual
-`<MenuBar>` element, consistent with how `children`/`guideLineSlotRef` already
-work.
+`<MenuBar>` element, consistent with how `children`/`onGuideLineSlotReady`
+already work. **Keep the `onGuideLineSlotReady` prop from Task 9 exactly as-is**
+when adding `menuBar` — this is a pure addition, not a replacement of anything.
 
 `MissionWorkspace.tsx`:
 
@@ -1252,7 +1275,7 @@ import { duplicateMission } from '../data/missionsRepo'
 
 ```tsx
           <Toolbar
-            guideLineSlotRef={guideLineSlotRef}
+            onGuideLineSlotReady={setGuideLineSlotEl}
             menuBar={
               <MenuBar
                 onNavigateToMissionList={onNavigateToMissionList}
@@ -1260,7 +1283,7 @@ import { duplicateMission } from '../data/missionsRepo'
                 onShowMissionInfo={() => { /* Task after this one may add a real modal; a minimal window.alert-free placeholder is fine here, not yet specified beyond "opens" per spec §4 */ }}
                 onSaveNow={flushNow}
                 onDuplicateMission={async () => {
-                  const { mission } = await duplicateMission(phase.mission)
+                  await duplicateMission(phase.mission)
                   onNavigateToMissionList() // simplest correct behavior: land back on the list, showing the new duplicate — no separate "jump straight into the new mission" requirement was specified
                 }}
                 onQuitMission={onNavigateToMissionList}
@@ -1269,13 +1292,17 @@ import { duplicateMission } from '../data/missionsRepo'
           >
 ```
 
-`flushNow` needs `useOfflineSync()` called inside `MissionWorkspace` — check
-whether it's already called there or only in `App.tsx`/elsewhere before adding a
-duplicate subscription; if only in `App.tsx`, either lift its result down as a
-prop or call `useOfflineSync()` again here (the hook's internal state is
-independent per call site, but a 2nd `mount`-triggered flush attempt is harmless
-per its own in-flight guard — confirm this reasoning holds by re-reading
-`useOfflineSync.ts`'s doc comment before deciding either way).
+`flushNow` needs `useOfflineSync()` called inside `MissionWorkspace`. It is
+**not** currently called in `App.tsx` — the only existing call site is inside
+`OfflineIndicator.tsx` (its own independent instance). Call `useOfflineSync()`
+again here rather than trying to share that instance: the hook's internal state
+is independent per call site, and a 2nd `mount`-triggered flush attempt is
+harmless per its own in-flight guard (re-read `useOfflineSync.ts`'s doc comment
+to confirm this reasoning before wiring it).
+
+```tsx
+  const { flushNow } = useOfflineSync()
+```
 
 - [ ] **Step 6: Run the full suite**
 
@@ -1298,31 +1325,133 @@ git commit -m "feat: add MenuBar with Fichier menu, wire into Toolbar/MissionWor
 **Files:**
 - Modify: `src/components/MenuBar.tsx`
 - Modify: `src/components/MenuBar.test.tsx`
+- Modify: `src/components/UndoRedoControls.tsx`
+- Modify: `src/components/UndoRedoControls.test.tsx`
+- Modify: `src/pages/MissionWorkspace.tsx`
 
 Per spec §4: Annuler/Refaire (duplicate access to the same undo/redo already in
-`Toolbar` — needs `planId` passed down to call `undo(planId)`/`redo(planId)` from
-`src/offline/actionHistory.ts` directly, same functions `UndoRedoControls` already
-wraps) + "Supprimer l'élément sélectionné" **disabled** in this phase (per this
-plan's Task-writing-time scope decision — no global "selected element" concept
-exists, and introducing one is out of scope for a toolbar reorganization; flag
-this to Laurent as a scope note, same as the `duplicateMission` depth decision in
-Task 4).
+`Toolbar`) + "Supprimer l'élément sélectionné" **disabled** in this phase (per
+this plan's Task-writing-time scope decision — no global "selected element"
+concept exists, and introducing one is out of scope for a toolbar
+reorganization; flag this to Laurent as a scope note, same as the
+`duplicateMission` depth decision in Task 4).
 
-- [ ] **Step 1: Write the failing tests**
+**Reentrancy hazard — must be addressed, not just noted.** `actionHistory.ts`
+documents that `undo()`/`redo()` have NO reentrancy guard of their own — "the
+caller (the UI) must prevent concurrent calls." `UndoRedoControls` (already in
+`Toolbar` since Task 8) satisfies this via its own internal `busy` state, which
+disables both its buttons for the duration of a call. If Modifier's Annuler/
+Refaire called `undo`/`redo` directly with no relationship to that `busy` state,
+a user could trigger Toolbar's Annuler and Menu's Annuler at (nearly) the same
+time, with neither aware of the other — two concurrent `undo(planId)` calls
+racing. Fix: `UndoRedoControls` gains a small, additive `onBusyChange` callback
+prop that mirrors its existing internal `busy` state outward; `MissionWorkspace`
+uses it to track one shared `undoRedoBusy` value and passes it down to disable
+Modifier's Annuler/Refaire while Toolbar's own buttons are mid-operation.
+Modifier's own 2 items also get their own local busy guard (mirroring
+`UndoRedoControls`'s exact pattern), so a rapid double-click on the SAME menu
+item can't race against itself either.
+
+- [ ] **Step 1: `UndoRedoControls.tsx` — expose busy state via a new optional prop**
+
+```tsx
+export interface UndoRedoControlsProps {
+  planId: string
+  onChanged: () => void
+  /** Mirrors this component's internal `busy` state outward — added so a
+   * sibling trigger for the same undo/redo actions (MenuBar's Modifier menu,
+   * toolbar-ribbon plan Task 12) can disable itself while THIS component's
+   * button is mid-operation, satisfying actionHistory.ts's "caller must
+   * prevent concurrent calls" precondition across both triggers, not just
+   * within this one component. Optional — omitting it preserves this
+   * component's exact pre-existing standalone behavior. */
+  onBusyChange?: (busy: boolean) => void
+}
+```
+
+Add a tiny helper so every `setBusy(...)` call also reports outward, rather than
+duplicating the pairing at each of the 4 call sites:
+
+```tsx
+  function updateBusy(value: boolean) {
+    setBusy(value)
+    onBusyChange?.(value)
+  }
+```
+
+Replace every `setBusy(true)`/`setBusy(false)` in `handleUndo`/`handleRedo` with
+`updateBusy(true)`/`updateBusy(false)`.
+
+- [ ] **Step 2: Write the failing test for `onBusyChange`**
+
+```tsx
+// appended to src/components/UndoRedoControls.test.tsx
+it('calls onBusyChange(true) then onBusyChange(false) around an undo call', async () => {
+  const onBusyChange = vi.fn()
+  vi.mocked(hasUndoableAction).mockResolvedValue(true)
+  vi.mocked(undo).mockResolvedValue(undefined)
+  render(<UndoRedoControls planId="p1" onChanged={vi.fn()} onBusyChange={onBusyChange} />)
+  await waitFor(() => expect(screen.getByLabelText('Annuler')).not.toBeDisabled())
+
+  fireEvent.click(screen.getByLabelText('Annuler'))
+
+  expect(onBusyChange).toHaveBeenCalledWith(true)
+  await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(false))
+})
+```
+
+(Match this file's existing mocking conventions for `hasUndoableAction`/`undo` —
+read its current imports before writing this, don't guess the mock shape.)
+
+- [ ] **Step 3: Run test to verify it fails, then implement, then verify it passes**
+
+Run: `npm test -- --run src/components/UndoRedoControls.test.tsx`
+Expected: FAIL, then PASS after Step 1's implementation (including every
+pre-existing test in the file — `onBusyChange` is optional, so omitting it must
+not change any existing behavior).
+
+- [ ] **Step 4: Commit this sub-step**
+
+```bash
+git add src/components/UndoRedoControls.tsx src/components/UndoRedoControls.test.tsx
+git commit -m "feat: expose UndoRedoControls' busy state via onBusyChange"
+```
+
+- [ ] **Step 5: Write the failing `MenuBar` tests**
 
 ```tsx
 // appended to src/components/MenuBar.test.tsx
 describe('MenuBar — Modifier', () => {
   it('calls undo(planId) when "Annuler" is clicked', async () => {
-    render(<MenuBar {...baseProps} planId="p1" />)
-    fireEvent.click(screen.getByRole('button', { name: /modifier/i }))
+    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /^annuler$/i }))
     expect(actionHistory.undo).toHaveBeenCalledWith('p1')
   })
 
+  it('disables Annuler/Refaire when undoRedoBusy is true (Toolbar\'s own control is mid-operation)', async () => {
+    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={true} />)
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
+    expect(await screen.findByRole('menuitem', { name: /^annuler$/i })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: /^refaire$/i })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('disables Annuler/Refaire for the duration of its own in-flight call (self-reentrancy guard)', async () => {
+    let resolveUndo: () => void
+    vi.mocked(actionHistory.undo).mockReturnValue(new Promise((resolve) => { resolveUndo = () => resolve(undefined) }))
+    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^annuler$/i }))
+
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
+    expect(await screen.findByRole('menuitem', { name: /^annuler$/i })).toHaveAttribute('aria-disabled', 'true')
+
+    resolveUndo!()
+  })
+
   it('renders "Supprimer l\'élément sélectionné" disabled', async () => {
-    render(<MenuBar {...baseProps} planId="p1" />)
-    fireEvent.click(screen.getByRole('button', { name: /modifier/i }))
+    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
     expect(await screen.findByRole('menuitem', { name: /supprimer l'élément/i })).toHaveAttribute('aria-disabled', 'true')
   })
 })
@@ -1331,23 +1460,55 @@ describe('MenuBar — Modifier', () => {
 (Add `vi.mock('../offline/actionHistory')` and `import * as actionHistory from
 '../offline/actionHistory'` at the top of the test file.)
 
-- [ ] **Step 2: Run tests to verify they fail**
+**Update Task 11's `baseProps` in the same file to add `planId: 'p1'` and
+`undoRedoBusy: false`** — both are new non-optional `MenuBarProps` fields, so
+every one of Task 11's existing Fichier tests (which spread `{...baseProps}`)
+fails TypeScript's required-prop check until this is done.
+
+- [ ] **Step 6: Run tests to verify they fail**
 
 Run: `npm test -- --run src/components/MenuBar.test.tsx`
 Expected: FAIL
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 7: Implement**
 
-Add `planId: string` to `MenuBarProps`, import `undo, redo` from
-`'../offline/actionHistory'`, add a 2nd `<DropdownMenu.Root>` next to Fichier's:
+Add `planId: string` and `undoRedoBusy: boolean` to `MenuBarProps`, a local
+`busy` state (this menu's own self-reentrancy guard, independent of
+`undoRedoBusy`), and a 2nd `<DropdownMenu.Root>` next to Fichier's:
+
+```tsx
+  const [modifierBusy, setModifierBusy] = useState(false)
+
+  async function handleUndo() {
+    setModifierBusy(true)
+    try {
+      await undo(planId)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err)) // reuse the same dismissible error slot as Enregistrer — Modifier has no separate error UI of its own
+    } finally {
+      setModifierBusy(false)
+    }
+  }
+
+  async function handleRedo() {
+    setModifierBusy(true)
+    try {
+      await redo(planId)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setModifierBusy(false)
+    }
+  }
+```
 
 ```tsx
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild><button>Modifier</button></DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content>
-            <DropdownMenu.Item onSelect={() => undo(planId)}>Annuler</DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={() => redo(planId)}>Refaire</DropdownMenu.Item>
+            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleUndo}>Annuler</DropdownMenu.Item>
+            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleRedo}>Refaire</DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Pas encore disponible — aucune sélection globale n'existe aujourd'hui">
               Supprimer l'élément sélectionné
             </DropdownMenu.Item>
@@ -1356,21 +1517,44 @@ Add `planId: string` to `MenuBarProps`, import `undo, redo` from
       </DropdownMenu.Root>
 ```
 
-- [ ] **Step 4: Run tests, update `MissionWorkspace.tsx`'s `<MenuBar>` call site to pass `planId`**
+Import `undo, redo` from `'../offline/actionHistory'` at the top of
+`MenuBar.tsx`.
+
+- [ ] **Step 8: Run tests, wire `undoRedoBusy` in `MissionWorkspace.tsx`**
+
+```tsx
+  const [undoRedoBusy, setUndoRedoBusy] = useState(false)
+```
+
+```tsx
+            <UndoRedoControls
+              planId={phase.exteriorPlan.id}
+              onChanged={() => setReloadKey((k) => k + 1)}
+              onBusyChange={setUndoRedoBusy}
+            />
+```
+
+```tsx
+              <MenuBar
+                // ...existing props...
+                planId={phase.exteriorPlan.id}
+                undoRedoBusy={undoRedoBusy}
+              />
+```
 
 Run: `npm test -- --run src/components/MenuBar.test.tsx`
 Expected: PASS
 
-- [ ] **Step 5: Run the full suite**
+- [ ] **Step 9: Run the full suite**
 
 Run: `npm test -- --run`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/components/MenuBar.tsx src/components/MenuBar.test.tsx src/pages/MissionWorkspace.tsx
-git commit -m "feat: add Modifier menu (Annuler/Refaire, reserved Supprimer)"
+git commit -m "feat: add Modifier menu (Annuler/Refaire sharing UndoRedoControls' busy state, reserved Supprimer)"
 ```
 
 ---
@@ -1383,14 +1567,18 @@ git commit -m "feat: add Modifier menu (Annuler/Refaire, reserved Supprimer)"
 - Modify: `src/components/SiteMapView.tsx`
 - Modify: `src/pages/MissionWorkspace.tsx`
 
-Per spec §4: Zoom +/− (duplicate of the map's own existing Leaflet control — a
-thin wrapper calling the map instance's `zoomIn()`/`zoomOut()`, needs a map-ref
-plumbed down; check `src/components/MapView.tsx` for whether it already exposes
-one before adding a new mechanism), "Basculer Calques" (uses Task 2's new
-controlled-Accordion support — lift "is Calques open" state into `SiteMapView`),
-"Mode édition" (2nd trigger for the existing `editMode` checkbox, per spec §4's
-clarified wording — checkbox stays in place), "Recentrer sur les parcelles" and
-"Fond de carte" **disabled** (deferred per spec §4's "Note de portée").
+Per spec §4: "Basculer Calques" (uses Task 2's new controlled-Accordion support —
+lift "is Calques open" state into `SiteMapView`), "Mode édition" (2nd trigger for
+the existing `editMode` checkbox, per spec §4's clarified wording — checkbox
+stays in place). **Scope correction from the spec**: Zoom +/− is downgraded to
+disabled/deferred, same as "Recentrer sur les parcelles" and "Fond de carte" —
+the spec assumed this would be "a thin wrapper," but `MapView.tsx` exposes no
+ref/imperative handle today, and `MissionWorkspace` (where `MenuBar` lives) has
+no path to the Leaflet instance, which renders several component layers below
+inside `SiteMapView`. That plumbing is real, separate work, not a menu-wiring
+detail — and per spec §4's own text, the map's native zoom control already
+covers this need ("Contrôles déjà présents sur la carte... dupliqués ici par
+convention"), so nothing is lost by deferring the menu duplicate.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1398,28 +1586,33 @@ clarified wording — checkbox stays in place), "Recentrer sur les parcelles" an
 // appended to src/components/MenuBar.test.tsx
 describe('MenuBar — Affichage', () => {
   it('calls onToggleCalques when "Basculer Calques" is clicked', async () => {
-    render(<MenuBar {...baseProps} planId="p1" onToggleCalques={vi.fn()} onToggleEditMode={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: /affichage/i }))
+    render(<MenuBar {...baseProps} onToggleCalques={vi.fn()} onToggleEditMode={vi.fn()} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /basculer calques/i }))
     expect(baseProps.onToggleCalques).toHaveBeenCalled()
   })
 
   it('calls onToggleEditMode when "Mode édition" is clicked', async () => {
     const onToggleEditMode = vi.fn()
-    render(<MenuBar {...baseProps} planId="p1" onToggleCalques={vi.fn()} onToggleEditMode={onToggleEditMode} />)
-    fireEvent.click(screen.getByRole('button', { name: /affichage/i }))
+    render(<MenuBar {...baseProps} onToggleCalques={vi.fn()} onToggleEditMode={onToggleEditMode} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /mode édition/i }))
     expect(onToggleEditMode).toHaveBeenCalled()
   })
 
-  it('renders "Recentrer sur les parcelles" and "Fond de carte" disabled', async () => {
-    render(<MenuBar {...baseProps} planId="p1" onToggleCalques={vi.fn()} onToggleEditMode={vi.fn()} />)
-    fireEvent.click(screen.getByRole('button', { name: /affichage/i }))
-    expect(await screen.findByRole('menuitem', { name: /recentrer/i })).toHaveAttribute('aria-disabled', 'true')
+  it('renders "Zoom +/-", "Recentrer sur les parcelles" and "Fond de carte" disabled', async () => {
+    render(<MenuBar {...baseProps} onToggleCalques={vi.fn()} onToggleEditMode={vi.fn()} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
+    expect(await screen.findByRole('menuitem', { name: /zoom \+/i })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: /recentrer/i })).toHaveAttribute('aria-disabled', 'true')
     expect(screen.getByRole('menuitem', { name: /fond de carte/i })).toHaveAttribute('aria-disabled', 'true')
   })
 })
 ```
+
+**Update `baseProps` in this same file** to add `planId: 'p1'` and
+`undoRedoBusy: false` (from Task 12 — needed here too since every test in this
+file spreads `{...baseProps}`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1429,19 +1622,15 @@ Expected: FAIL
 - [ ] **Step 3: Implement `MenuBar`'s Affichage menu**
 
 Add `onToggleCalques: () => void` and `onToggleEditMode: () => void` to
-`MenuBarProps`. Zoom +/− needs a map instance — if `MapView.tsx` doesn't already
-expose a ref/imperative handle, add `onZoomIn`/`onZoomOut` callback props to
-`MenuBarProps` too instead of reaching for the map directly from here (keeps
-`MenuBar` map-library-agnostic, consistent with it being a pure presentation
-component elsewhere in this plan).
+`MenuBarProps`.
 
 ```tsx
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild><button>Affichage</button></DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content>
-            <DropdownMenu.Item onSelect={onZoomIn}>Zoom +</DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={onZoomOut}>Zoom −</DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Utilisez les contrôles +/- sur la carte">Zoom +</DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Utilisez les contrôles +/- sur la carte">Zoom −</DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Bientôt disponible">Recentrer sur les parcelles</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={onToggleCalques}>Basculer Calques</DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Bientôt disponible">Fond de carte</DropdownMenu.Item>
