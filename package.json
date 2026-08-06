@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.0",
+    "@radix-ui/react-dropdown-menu": "^2.1.24",
     "@supabase/supabase-js": "^2.110.7",
     "idb": "^8.0.3",
     "js-aruco2": "^2.0.0",
