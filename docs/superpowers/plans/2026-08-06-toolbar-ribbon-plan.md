@@ -283,17 +283,27 @@ git commit -m "feat: expose flushNow (manual sync trigger) from useOfflineSync"
 - Modify: `src/data/missionsRepo.test.ts`
 
 **Scope decision for this plan** (spec §4 explicitly left "quelle profondeur de
-copie exactement" open): duplicate the **mission shell** — address, mission date,
-declination, parcel refs, building footprint — plus a fresh **empty** exterior
-plan (`kind: 'exterieur'`). It deliberately does **not** copy origin lat/lng, the
-5 cause values/Bovis rate, or any survey data (felt points/segments/phenomena/
-context objects/grids/freeform traces/photos) from the source mission — the
-plausible real use case is "same site, new visit" (a follow-up survey), not "an
-exact clone of one specific day's readings," and a full deep copy across 8 entity
+copie exactement" open): duplicate the **mission shell** — address, declination,
+parcel refs, building footprint — plus a fresh **empty** exterior plan (`kind:
+'exterieur'`). It deliberately does **not** copy origin lat/lng, the 5 cause
+values/Bovis rate, or any survey data (felt points/segments/phenomena/context
+objects/grids/freeform traces/photos) from the source mission — the plausible
+real use case is "same site, new visit" (a follow-up survey), not "an exact
+clone of one specific day's readings," and a full deep copy across 8 entity
 types is a much larger feature than this phase's "reorganize existing controls"
 scope. **This is a product judgment call, not purely technical — flag it to
 Laurent for confirmation during/after implementation review**, since the spec
 didn't get his explicit sign-off on this specific depth.
+
+**`missionDate` is NOT copied from the source — it defaults to today's date.**
+Spec §4 also explicitly left "quel nom par défaut proposer" open; this closes
+that question. `address` alone is not a usable default name (`MissionList.tsx`
+renders `{mission.address} — {mission.missionDate}` — copying BOTH fields
+verbatim would make a same-day duplicate byte-identical to the source in the
+mission list, impossible to tell apart), and defaulting to today's date is also
+the more useful default for the actual "follow-up visit" use case this feature
+exists for (a new visit did NOT happen on the original mission's date). Address
+is still copied verbatim (it's the whole point — same site).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -310,16 +320,17 @@ today):
 ```ts
 // appended to src/data/missionsRepo.test.ts
 describe('duplicateMission', () => {
-  it('creates a new mission copying address/date/declination/parcels/footprint, and a fresh empty exterior plan', async () => {
+  it('creates a new mission copying address/declination/parcels/footprint (NOT missionDate — defaults to today), and a fresh empty exterior plan', async () => {
+    const today = new Date().toISOString().slice(0, 10)
     const source: Mission = {
-      id: 'm1', address: '12 rue des Lilas', missionDate: '2026-08-06',
+      id: 'm1', address: '12 rue des Lilas', missionDate: '2026-01-01', // deliberately NOT today, to prove it's not copied
       declinationDeg: 1.5, originLat: 48.85, originLng: 2.35,
       causeArchitectural: 3, causeElectromagnetique: 2, causeGeobiologique: 7,
       causeParanormale: 0, causeAutres: 0, bovisRate: 8000,
       parcelRefs: ['ABC-123'], buildingFootprint: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
     }
     const baseRow = {
-      id: 'm2', address: '12 rue des Lilas', mission_date: '2026-08-06', declination_deg: 1.5,
+      id: 'm2', address: '12 rue des Lilas', mission_date: today, declination_deg: 1.5,
       origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null,
       cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null,
       parcel_refs: [] as string[], building_footprint: null as null | typeof source.buildingFootprint,
@@ -350,6 +361,7 @@ describe('duplicateMission', () => {
 
     expect(result.mission.address).toBe('12 rue des Lilas')
     expect(result.mission.id).toBe('m2')
+    expect(result.mission.missionDate).toBe(today) // today, NOT source.missionDate ('2026-01-01')
     expect(result.mission.originLat).toBeNull() // not copied
     expect(result.mission.causeGeobiologique).toBeNull() // not copied
     expect(result.mission.parcelRefs).toEqual(['ABC-123']) // copied
@@ -401,7 +413,12 @@ before writing this, it takes at minimum `missionId`/`kind`):
 export async function duplicateMission(source: Mission): Promise<{ mission: Mission; exteriorPlan: Plan }> {
   const mission = await createMission({
     address: source.address,
-    missionDate: source.missionDate,
+    // Today's date, NOT source.missionDate — a duplicate defaults to "same
+    // site, new visit," and copying the source's original date verbatim
+    // would make a same-day duplicate indistinguishable from the source in
+    // MissionList (which renders `${address} — ${missionDate}`). Closes
+    // spec §4's open "quel nom par défaut proposer" question.
+    missionDate: new Date().toISOString().slice(0, 10),
     declinationDeg: source.declinationDeg,
   })
   // parcelRefs/buildingFootprint aren't part of CreateMissionInput (createMission
@@ -873,39 +890,56 @@ lifting all of it to `MissionWorkspace` would be a much bigger, riskier change.
 appropriate now): render the guide-line control panel through
 `ReactDOM.createPortal` into a DOM node that `Toolbar` exposes via a ref.
 
-- [ ] **Step 1: `Toolbar.tsx` exposes a named slot via a callback ref**
+- [ ] **Step 1: `Toolbar.tsx` — a "Ligne guide" toggle button, expanding a named slot via a callback ref**
 
-**Not a plain `useRef`**: a plain object ref's `.current` is only populated
-during React's commit phase, *after* the render function has already returned —
-reading `someRef.current` inline in the SAME render pass that attaches it (as
-`MissionWorkspace` would need to, to pass the node down to `SiteMapView` as a
-prop) sees the *previous* render's value, which is `null` on the very first
-render. That would make the guide-line panel fail to portal/render on initial
-mount — the exact bug this whole redesign is meant to fix, reintroduced. Use a
-**callback ref backed by `useState`** instead: React calls the callback
-synchronously during commit with the DOM node, and the resulting `setState` call
-schedules the next render with the node already available — the standard idiom
-for "expose a DOM node to a parent for measurement/portaling after mount."
+The spec (§3 item 5, §8) requires an actual "Ligne guide" **button** — the 8
+controls must stay collapsed until clicked, not render permanently inline in the
+fixed 48px toolbar row (which would overflow with everything else the bar also
+holds: 3 menu triggers, Undo/Redo, Placer/Tracer). `Toolbar` owns a small local
+`guideLinePanelOpen` boolean for this — nothing outside `Toolbar` needs to
+observe it, so it does NOT get lifted to `MissionWorkspace` (unlike
+`guideLineSlotEl`, which `SiteMapView` genuinely needs). The slot `<div>` is only
+rendered while open; when it closes, that `<div>` unmounts, which calls
+`onGuideLineSlotReady(null)` — `SiteMapView`'s portal (Step 3 below) correctly
+stops rendering the moment that happens, no separate "hide" logic needed.
+
+**Not a plain `useRef` for the slot node**: a plain object ref's `.current` is
+only populated during React's commit phase, *after* the render function has
+already returned — reading `someRef.current` inline in the SAME render pass that
+attaches it (as `MissionWorkspace` would need to, to pass the node down to
+`SiteMapView` as a prop) sees the *previous* render's value, which is `null` on
+the very first render. That would make the guide-line panel fail to portal/
+render on initial mount — the exact bug this whole redesign is meant to fix,
+reintroduced. Use a **callback ref backed by `useState`** instead: React calls
+the callback synchronously during commit with the DOM node, and the resulting
+`setState` call schedules the next render with the node already available — the
+standard idiom for "expose a DOM node to a parent for measurement/portaling
+after mount."
 
 ```tsx
 // src/components/Toolbar.tsx
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 
 export interface ToolbarProps {
   children?: ReactNode
   /** Called with the DOM node other components portal secondary content into
    * (e.g. the guide-line control panel, which stays logically owned/stateful
    * inside SiteMapView but must render inside this fixed bar — see Task 9 of
-   * the toolbar-ribbon plan). A callback ref, not a RefObject — see this
+   * the toolbar-ribbon plan) whenever the "Ligne guide" button is open, or
+   * `null` when it's closed. A callback ref, not a RefObject — see this
    * task's note on why a plain useRef would read null on first render. */
   onGuideLineSlotReady?: (node: HTMLDivElement | null) => void
 }
 
 export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
+  const [guideLinePanelOpen, setGuideLinePanelOpen] = useState(false)
   return (
     <div role="toolbar" style={TOOLBAR_STYLE}>
       {children}
-      <div ref={onGuideLineSlotReady} />
+      <button aria-pressed={guideLinePanelOpen} onClick={() => setGuideLinePanelOpen((v) => !v)}>
+        Ligne guide
+      </button>
+      {guideLinePanelOpen && <div ref={onGuideLineSlotReady} />}
     </div>
   )
 }
@@ -957,14 +991,35 @@ matter since it's portaled away):
       )}
 ```
 
-- [ ] **Step 4: Update tests**
+- [ ] **Step 4: Test `Toolbar`'s own "Ligne guide" toggle button**
 
-`SiteMapView.test.tsx` needs a `guideLineSlotEl` value in every render call for
-the guide-line assertions to keep finding the controls. Testing Library's
-`screen` queries `document.body`, so the node must actually be **attached to the
-document**, not just created — `document.createElement('div')` alone produces a
-detached node that `screen.getByRole(...)` etc. will never find, since it isn't
-part of the tree `screen` searches:
+```tsx
+// appended to src/components/Toolbar.test.tsx
+it('reveals the guide-line slot only while "Ligne guide" is toggled open, and reports null when it closes', () => {
+  const onGuideLineSlotReady = vi.fn()
+  render(<Toolbar onGuideLineSlotReady={onGuideLineSlotReady} />)
+  expect(onGuideLineSlotReady).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole('button', { name: /ligne guide/i }))
+  expect(onGuideLineSlotReady).toHaveBeenCalledWith(expect.any(HTMLDivElement))
+
+  fireEvent.click(screen.getByRole('button', { name: /ligne guide/i }))
+  expect(onGuideLineSlotReady).toHaveBeenLastCalledWith(null)
+})
+```
+
+(Add `fireEvent` to this test file's `@testing-library/react` import.)
+
+- [ ] **Step 5: Update `SiteMapView.test.tsx`**
+
+Needs a `guideLineSlotEl` value in every render call for the guide-line
+assertions to keep finding the controls — these tests supply the element
+directly as a prop, independent of `Toolbar`'s own open/closed toggle state
+tested in Step 4 above. Testing Library's `screen` queries `document.body`, so
+the node must actually be **attached to the document**, not just created —
+`document.createElement('div')` alone produces a detached node that
+`screen.getByRole(...)` etc. will never find, since it isn't part of the tree
+`screen` searches:
 
 ```ts
 const guideLineSlotEl = document.body.appendChild(document.createElement('div'))
@@ -978,21 +1033,21 @@ longer there). This touches every one of the ~32 existing `render(<SiteMapView
 step, it's mechanical but wide, the same caveat as Task 13's `editMode`/
 `calquesOpen` lift.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
 
-Run: `npm test -- --run src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.test.tsx`
+Run: `npm test -- --run src/components/Toolbar.test.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.test.tsx`
 Expected: PASS
 
-- [ ] **Step 6: Run the full suite**
+- [ ] **Step 7: Run the full suite**
 
 Run: `npm test -- --run`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/components/Toolbar.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
-git commit -m "feat: portal the guide-line control panel into Toolbar, remove its accordion section"
+git add src/components/Toolbar.tsx src/components/Toolbar.test.tsx src/components/SiteMapView.tsx src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.tsx src/pages/MissionWorkspace.test.tsx
+git commit -m "feat: add Ligne guide toggle button, portal its control panel into Toolbar, remove the accordion section"
 ```
 
 ---
@@ -1028,16 +1083,20 @@ Expected: FAIL — no such buttons exist yet.
 - [ ] **Step 3: Implement**
 
 Add the 2 buttons to the SAME `Toolbar` function Task 9 already wrote — do NOT
-revert Task 9's `onGuideLineSlotReady` callback-ref prop back to a plain
-`guideLineSlotRef`/`ref` while making this change (that was a deliberately fixed
-bug, see Task 9's note on why a plain `useRef` read during render doesn't work):
+revert Task 9's `onGuideLineSlotReady` callback-ref prop, its "Ligne guide"
+toggle button, or the `guideLinePanelOpen`-gated slot rendering while making
+this change (all deliberately added in Task 9 — see its notes on why):
 
 ```tsx
 export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
+  const [guideLinePanelOpen, setGuideLinePanelOpen] = useState(false)
   return (
     <div role="toolbar" style={TOOLBAR_STYLE}>
       {children}
-      <div ref={onGuideLineSlotReady} />
+      <button aria-pressed={guideLinePanelOpen} onClick={() => setGuideLinePanelOpen((v) => !v)}>
+        Ligne guide
+      </button>
+      {guideLinePanelOpen && <div ref={onGuideLineSlotReady} />}
       <button disabled title="Bientôt disponible (Phase 2)">Placer</button>
       <button disabled title="Bientôt disponible (Phase 2)">Tracer</button>
     </div>
@@ -1116,7 +1175,7 @@ function openMenu(trigger: HTMLElement) {
 const baseProps = {
   onNavigateToMissionList: vi.fn(),
   onNavigateToNewMission: vi.fn(),
-  onShowMissionInfo: vi.fn(),
+  missionInfo: { address: '12 rue des Lilas', missionDate: '2026-08-06', parcelRefs: ['ABC-123'] },
   onSaveNow: vi.fn().mockResolvedValue(undefined),
   onDuplicateMission: vi.fn().mockResolvedValue(undefined),
   onQuitMission: vi.fn(),
@@ -1165,6 +1224,19 @@ describe('MenuBar — Fichier', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /quitter la mission/i }))
     expect(baseProps.onQuitMission).toHaveBeenCalled()
   })
+
+  it('shows address/date/parcels from missionInfo when "Infos de la mission" is clicked, and hides them again on "Fermer"', async () => {
+    render(<MenuBar {...baseProps} />)
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /infos de la mission/i }))
+
+    expect(await screen.findByText('12 rue des Lilas')).toBeInTheDocument()
+    expect(screen.getByText('2026-08-06')).toBeInTheDocument()
+    expect(screen.getByText('ABC-123')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /fermer/i }))
+    expect(screen.queryByText('12 rue des Lilas')).not.toBeInTheDocument()
+  })
 })
 ```
 
@@ -1183,7 +1255,10 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 export interface MenuBarProps {
   onNavigateToMissionList: () => void
   onNavigateToNewMission: () => void
-  onShowMissionInfo: () => void
+  /** Read-only fields shown by "Infos de la mission" — MenuBar owns its own
+   * show/hide state (below) and just renders whatever is passed here; it
+   * does not fetch or know anything about Mission beyond these 3 fields. */
+  missionInfo: { address: string; missionDate: string; parcelRefs: string[] }
   onSaveNow: () => Promise<void>
   onDuplicateMission: () => Promise<void>
   onQuitMission: () => void
@@ -1197,12 +1272,13 @@ export interface MenuBarProps {
 export function MenuBar({
   onNavigateToMissionList,
   onNavigateToNewMission,
-  onShowMissionInfo,
+  missionInfo,
   onSaveNow,
   onDuplicateMission,
   onQuitMission,
 }: MenuBarProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [missionInfoOpen, setMissionInfoOpen] = useState(false)
 
   async function handleSaveNow() {
     setSaveError(null)
@@ -1232,6 +1308,14 @@ export function MenuBar({
           <button onClick={() => setSaveError(null)}>Fermer</button>
         </p>
       )}
+      {missionInfoOpen && (
+        <div>
+          <p>{missionInfo.address}</p>
+          <p>{missionInfo.missionDate}</p>
+          <p>{missionInfo.parcelRefs.join(', ')}</p>
+          <button onClick={() => setMissionInfoOpen(false)}>Fermer</button>
+        </div>
+      )}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button>Fichier</button>
@@ -1240,7 +1324,7 @@ export function MenuBar({
           <DropdownMenu.Content>
             <DropdownMenu.Item onSelect={onNavigateToNewMission}>Nouvelle mission</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={onNavigateToMissionList}>Mes missions</DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={onShowMissionInfo}>Infos de la mission</DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => setMissionInfoOpen(true)}>Infos de la mission</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={handleSaveNow}>Enregistrer</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={handleDuplicate}>Enregistrer sous</DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Génération de rapport pas encore disponible">Imprimer</DropdownMenu.Item>
@@ -1271,6 +1355,7 @@ when adding `menuBar` — this is a pure addition, not a replacement of anything
 ```tsx
 import { MenuBar } from '../components/MenuBar'
 import { duplicateMission } from '../data/missionsRepo'
+import { useOfflineSync } from '../hooks/useOfflineSync'
 ```
 
 ```tsx
@@ -1280,7 +1365,7 @@ import { duplicateMission } from '../data/missionsRepo'
               <MenuBar
                 onNavigateToMissionList={onNavigateToMissionList}
                 onNavigateToNewMission={onNavigateToNewMission}
-                onShowMissionInfo={() => { /* Task after this one may add a real modal; a minimal window.alert-free placeholder is fine here, not yet specified beyond "opens" per spec §4 */ }}
+                missionInfo={{ address: phase.mission.address, missionDate: phase.mission.missionDate, parcelRefs: phase.mission.parcelRefs }}
                 onSaveNow={flushNow}
                 onDuplicateMission={async () => {
                   await duplicateMission(phase.mission)
@@ -1610,9 +1695,12 @@ describe('MenuBar — Affichage', () => {
 })
 ```
 
-**Update `baseProps` in this same file** to add `planId: 'p1'` and
-`undoRedoBusy: false` (from Task 12 — needed here too since every test in this
-file spreads `{...baseProps}`).
+**Update `baseProps` in this same file** to add `onToggleCalques: vi.fn()` and
+`onToggleEditMode: vi.fn()` — Task 13's own 2 new non-optional `MenuBarProps`
+fields, needed because every test in this file (including Task 11's Fichier
+tests and Task 12's Modifier tests) spreads `{...baseProps}`. (`planId`/
+`undoRedoBusy` were already added to `baseProps` by Task 12 — don't re-add
+those, just these 2 new ones.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1658,13 +1746,22 @@ reference to it becomes a prop reference instead of local state.
   const [editMode, setEditMode] = useState(false) // matches SiteMapView.tsx:166's current initial value
 ```
 
-Pass both down, plus their setters, to `SiteMapView` and to `MenuBar`:
+Pass both down to `SiteMapView` as controlled props, using the SETTERS directly
+(not toggle wrappers) — `SiteMapView` passes `calquesOpen`/`setCalquesOpen`
+straight through to `Accordion` (Task 2's controlled mode), and `Accordion`
+reports the actual resulting `open` boolean from the native toggle event on
+every call, not just "flip whatever it was." Using a toggle wrapper here instead
+of the real setter would silently discard that reported value and rely on
+React state and the DOM never drifting — exactly the assumption Task 2's own
+`Accordion.tsx` comment says isn't fully guaranteed for `<details>`. `MenuBar`,
+by contrast, only ever needs "toggle" semantics (it has no visibility into the
+Accordion's real DOM state) — it keeps a toggle wrapper:
 
 ```tsx
             <SiteMapView
               // ...existing props...
               calquesOpen={calquesOpen}
-              onToggleCalques={() => setCalquesOpen((v) => !v)}
+              onCalquesOpenChange={setCalquesOpen}
               editMode={editMode}
               onEditModeChange={setEditMode}
             />
@@ -1684,9 +1781,12 @@ Remove the internal `const [editMode, setEditMode] = useState(false)` (line 166)
 entirely; add `editMode: boolean` and `onEditModeChange: (v: boolean) => void` to
 `SiteMapViewProps`, and update the checkbox (`SiteMapView.tsx:711-715`) to read
 `checked={editMode}`/`onChange={(e) => onEditModeChange(e.target.checked)}`. Add
-`calquesOpen: boolean`/`onToggleCalques: () => void` to `SiteMapViewProps`, and
-pass `open={calquesOpen}`/`onToggle={() => onToggleCalques()}` on the "Calques"
-section's entry in `Sidebar`'s `sections` array (Task 2's controlled mode).
+`calquesOpen: boolean`/`onCalquesOpenChange: (v: boolean) => void` to
+`SiteMapViewProps`, and pass `open={calquesOpen}`/`onToggle={onCalquesOpenChange}`
+directly on the "Calques" section's entry in `Sidebar`'s `sections` array (Task
+2's controlled mode) — `onCalquesOpenChange` already has the exact
+`(open: boolean) => void` shape `Accordion`'s `onToggle` calls, no wrapper
+needed.
 
 - [ ] **Step 6: Run tests, fix fallout**
 
