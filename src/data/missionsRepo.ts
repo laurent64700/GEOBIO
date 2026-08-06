@@ -1,6 +1,7 @@
 // src/data/missionsRepo.ts
 import { supabase } from '../lib/supabaseClient'
-import type { Mission, Point } from '../domain/types'
+import type { Mission, Plan, Point } from '../domain/types'
+import { createPlan } from './plansRepo'
 
 export interface CreateMissionInput {
   address: string
@@ -137,4 +138,35 @@ export async function setBuildingFootprint(missionId: string, footprint: Point[]
 
   if (error) throw new Error(`Impossible d'enregistrer le contour du bâtiment : ${error.message}`)
   return mapRowToMission(data as MissionRow)
+}
+
+// Duplicates the mission SHELL only — address, declination, parcel refs,
+// building footprint — plus a fresh empty exterior plan. Deliberately does
+// NOT copy origin lat/lng, the 5 cause values/Bovis rate, or any survey data
+// (felt points/segments/phenomena/context objects/grids/freeform
+// traces/photos): the use case is "same site, new visit" (a follow-up
+// survey), not an exact clone of one specific day's readings.
+export async function duplicateMission(source: Mission): Promise<{ mission: Mission; exteriorPlan: Plan }> {
+  const mission = await createMission({
+    address: source.address,
+    // Today's date, NOT source.missionDate — a duplicate defaults to "same
+    // site, new visit," and copying the source's original date verbatim
+    // would make a same-day duplicate indistinguishable from the source in
+    // MissionList (which renders `${address} — ${missionDate}`). Closes
+    // spec §4's open "quel nom par défaut proposer" question.
+    missionDate: new Date().toISOString().slice(0, 10),
+    declinationDeg: source.declinationDeg,
+  })
+  // parcelRefs/buildingFootprint aren't part of CreateMissionInput (createMission
+  // only accepts address/missionDate/declinationDeg) — set them via the existing
+  // setters, matching how the rest of this file already builds up a Mission
+  // incrementally after creation (see setSelectedParcels/setBuildingFootprint).
+  const withParcels = source.parcelRefs.length > 0
+    ? await setSelectedParcels(mission.id, source.parcelRefs)
+    : mission
+  const final = source.buildingFootprint !== null
+    ? await setBuildingFootprint(withParcels.id, source.buildingFootprint)
+    : withParcels
+  const exteriorPlan = await createPlan({ missionId: final.id, kind: 'exterieur' })
+  return { mission: final, exteriorPlan }
 }

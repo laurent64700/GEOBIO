@@ -1,8 +1,9 @@
 // src/data/missionsRepo.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels, setBuildingFootprint } from './missionsRepo'
+import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels, setBuildingFootprint, duplicateMission } from './missionsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
+import type { Mission } from '../domain/types'
 
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
 
@@ -228,5 +229,83 @@ describe('missionsRepo', () => {
     await expect(setBuildingFootprint('m1', [])).rejects.toThrow(
       "Impossible d'enregistrer le contour du bâtiment : network down"
     )
+  })
+
+  describe('duplicateMission', () => {
+    it('creates a new mission copying address/declination/parcels/footprint (NOT missionDate — defaults to today), and a fresh empty exterior plan', async () => {
+      const today = new Date().toISOString().slice(0, 10)
+      const source: Mission = {
+        id: 'm1', address: '12 rue des Lilas', missionDate: '2026-01-01', // deliberately NOT today, to prove it's not copied
+        declinationDeg: 1.5, originLat: 48.85, originLng: 2.35,
+        causeArchitectural: 3, causeElectromagnetique: 2, causeGeobiologique: 7,
+        causeParanormale: 0, causeAutres: 0, bovisRate: 8000,
+        parcelRefs: ['ABC-123'], buildingFootprint: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
+      }
+      const baseRow = {
+        id: 'm2', address: '12 rue des Lilas', mission_date: today, declination_deg: 1.5,
+        origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null,
+        cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null,
+        parcel_refs: [] as string[], building_footprint: null as null | typeof source.buildingFootprint,
+      }
+      // Only `chain` is used from each instance — `createSupabaseChainMock` also
+      // returns its own standalone `from` mock, but it's discarded here: all 4
+      // calls are dispatched through ONE shared `supabase.from` mock below
+      // instead (via chained `mockReturnValueOnce`), not through 4 independent
+      // `from` mocks.
+      const { chain: chainInsertMission } = createSupabaseChainMock({ data: baseRow, error: null })
+      const { chain: chainUpdateParcels } =
+        createSupabaseChainMock({ data: { ...baseRow, parcel_refs: ['ABC-123'] }, error: null })
+      const { chain: chainUpdateFootprint } = createSupabaseChainMock({
+        data: { ...baseRow, parcel_refs: ['ABC-123'], building_footprint: source.buildingFootprint },
+        error: null,
+      })
+      const { chain: chainInsertPlan } = createSupabaseChainMock({
+        data: { id: 'plan1', mission_id: 'm2', kind: 'exterieur', image_url: null, calibration: null },
+        error: null,
+      })
+      vi.mocked(supabase).from = vi.fn()
+        .mockReturnValueOnce(chainInsertMission)
+        .mockReturnValueOnce(chainUpdateParcels)
+        .mockReturnValueOnce(chainUpdateFootprint)
+        .mockReturnValueOnce(chainInsertPlan)
+
+      const result = await duplicateMission(source)
+
+      expect(result.mission.address).toBe('12 rue des Lilas')
+      expect(result.mission.id).toBe('m2')
+      expect(result.mission.missionDate).toBe(today) // today, NOT source.missionDate ('2026-01-01')
+      expect(result.mission.originLat).toBeNull() // not copied
+      expect(result.mission.causeGeobiologique).toBeNull() // not copied
+      expect(result.mission.parcelRefs).toEqual(['ABC-123']) // copied
+      expect(result.mission.buildingFootprint).toEqual(source.buildingFootprint) // copied
+      expect(result.exteriorPlan.kind).toBe('exterieur')
+      expect(result.exteriorPlan.missionId).toBe('m2')
+    })
+
+    it('skips setSelectedParcels/setBuildingFootprint entirely when the source has neither (only 2 supabase calls)', async () => {
+      const source: Mission = {
+        id: 'm1', address: 'test diag', missionDate: '2026-08-06', declinationDeg: null,
+        originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
+        causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
+        parcelRefs: [], buildingFootprint: null,
+      }
+      const { chain: chainInsertMission } = createSupabaseChainMock({
+        data: { id: 'm2', address: 'test diag', mission_date: '2026-08-06', declination_deg: null,
+          origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null,
+          cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null,
+          parcel_refs: [], building_footprint: null },
+        error: null,
+      })
+      const { chain: chainInsertPlan } = createSupabaseChainMock({
+        data: { id: 'plan1', mission_id: 'm2', kind: 'exterieur', image_url: null, calibration: null },
+        error: null,
+      })
+      const fromMock = vi.fn().mockReturnValueOnce(chainInsertMission).mockReturnValueOnce(chainInsertPlan)
+      vi.mocked(supabase).from = fromMock
+
+      await duplicateMission(source)
+
+      expect(fromMock).toHaveBeenCalledTimes(2) // mission insert + plan insert only — no update calls
+    })
   })
 })
