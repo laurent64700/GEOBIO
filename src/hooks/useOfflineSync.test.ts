@@ -144,4 +144,77 @@ describe('useOfflineSync', () => {
     addSpy.mockRestore()
     removeSpy.mockRestore()
   })
+
+  it('exposes flushNow, which calls flushPendingMutations and refreshes pendingCount', async () => {
+    vi.mocked(isOnlineNow).mockResolvedValue(false) // keep the mount-time auto-flush from firing, isolate this test to the manual trigger
+    vi.mocked(listPendingMutations).mockResolvedValue([{ id: 1 } as never])
+    vi.mocked(flushPendingMutations).mockResolvedValue(undefined)
+
+    const { result } = renderHook(() => useOfflineSync())
+    await waitFor(() => expect(result.current.pendingCount).toBe(1))
+
+    vi.mocked(listPendingMutations).mockResolvedValue([]) // simulate the queue draining
+    await act(async () => {
+      await result.current.flushNow()
+    })
+
+    expect(flushPendingMutations).toHaveBeenCalled()
+    expect(result.current.pendingCount).toBe(0)
+  })
+
+  it('propagates a flushPendingMutations rejection through flushNow, unswallowed (try/finally, not try/catch)', async () => {
+    vi.mocked(isOnlineNow).mockResolvedValue(false)
+    // A persistent default (not `mockResolvedValueOnce`) so this test stays
+    // self-contained regardless of execution order: attemptFlush's `finally`
+    // calls refreshCount(), which calls listPendingMutations() a SECOND
+    // time (after the mount-time call), and that call must resolve to
+    // something with a `.length` no matter how many times it's invoked.
+    vi.mocked(listPendingMutations).mockResolvedValue([])
+    const { result } = renderHook(() => useOfflineSync())
+    await waitFor(() => expect(result.current.pendingCount).toBe(0))
+
+    vi.mocked(flushPendingMutations).mockRejectedValue(new Error('boom'))
+    await expect(result.current.flushNow()).rejects.toThrow('boom')
+  })
+
+  it('no-ops a second flushNow() call while the first is still in flight', async () => {
+    vi.mocked(isOnlineNow).mockResolvedValue(false)
+    vi.mocked(listPendingMutations).mockResolvedValue([mutation(1)])
+
+    let resolveFlush!: () => void
+    const inFlight = new Promise<void>((resolve) => {
+      resolveFlush = resolve
+    })
+    vi.mocked(flushPendingMutations).mockReturnValue(inFlight)
+
+    const { result } = renderHook(() => useOfflineSync())
+    await waitFor(() => expect(result.current.pendingCount).toBe(1))
+
+    let firstResolved = false
+    let secondResolved = false
+    const firstCall = result.current.flushNow().then(() => {
+      firstResolved = true
+    })
+    const secondCall = result.current.flushNow().then(() => {
+      secondResolved = true
+    })
+
+    // The second call resolves immediately (the in-flight guard makes it a
+    // no-op) even though flushPendingMutations itself hasn't resolved yet —
+    // a caller awaiting flushNow() cannot distinguish "actually flushed"
+    // from "silently skipped because one was already running".
+    await act(async () => {
+      await secondCall
+    })
+    expect(secondResolved).toBe(true)
+    expect(firstResolved).toBe(false)
+    expect(flushPendingMutations).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveFlush()
+      await firstCall
+    })
+    expect(firstResolved).toBe(true)
+    expect(flushPendingMutations).toHaveBeenCalledTimes(1)
+  })
 })

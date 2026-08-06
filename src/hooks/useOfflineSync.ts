@@ -28,8 +28,18 @@ import { flushPendingMutations } from '../offline/sync'
  * replay the same queued mutation concurrently — the loser would get a
  * duplicate-key error from Supabase on an insert the winner already
  * completed, leaving a phantom entry that fails forever on retry.
+ *
+ * `flushNow` (== the internal `attemptFlush`) exposes a third, manual entry
+ * point for callers that want to trigger a flush directly (e.g. a "Save"
+ * menu action). It shares the same in-flight guard as the two automatic
+ * triggers: calling it while a flush is already running resolves
+ * immediately as a silent no-op rather than queuing up behind it — a caller
+ * cannot tell "actually flushed" from "skipped" from the resolved promise
+ * alone. It can also reject: the `try/finally` around flushPendingMutations()
+ * only guarantees the `finally` cleanup runs, it does not swallow a
+ * rejection, so callers of `flushNow` must handle that themselves.
  */
-export function useOfflineSync(): { pendingCount: number } {
+export function useOfflineSync(): { pendingCount: number; flushNow: () => Promise<void> } {
   const [pendingCount, setPendingCount] = useState(0)
   const flushingRef = useRef(false)
   const mountedRef = useRef(true)
@@ -80,5 +90,5 @@ export function useOfflineSync(): { pendingCount: number } {
     }
   }, [refreshCount, flushIfReallyOnline])
 
-  return { pendingCount }
+  return { pendingCount, flushNow: attemptFlush }
 }

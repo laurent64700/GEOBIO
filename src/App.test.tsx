@@ -47,7 +47,7 @@ describe('App', () => {
     // for the same pattern applied elsewhere in this codebase).
     vi.clearAllMocks()
     vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
-    vi.mocked(offlineSyncModule.useOfflineSync).mockReturnValue({ pendingCount: 0 })
+    vi.mocked(offlineSyncModule.useOfflineSync).mockReturnValue({ pendingCount: 0, flushNow: vi.fn() })
   })
 
   it('shows the mission list on load, with existing missions from listMissions()', async () => {

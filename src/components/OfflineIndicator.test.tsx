@@ -8,7 +8,7 @@ vi.mock('../hooks/useOfflineSync')
 
 describe('OfflineIndicator', () => {
   it('shows "Synchronisé" and is present in the DOM when there is nothing pending', () => {
-    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 0 })
+    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 0, flushNow: vi.fn() })
     const { container } = render(<OfflineIndicator />)
 
     expect(screen.getByText('Synchronisé')).toBeInTheDocument()
@@ -18,7 +18,7 @@ describe('OfflineIndicator', () => {
   })
 
   it('shows the pending count and stays present when modifications are queued', () => {
-    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 3 })
+    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 3, flushNow: vi.fn() })
     const { container } = render(<OfflineIndicator />)
 
     expect(screen.getByText(/3.*en attente/i)).toBeInTheDocument()
@@ -26,7 +26,7 @@ describe('OfflineIndicator', () => {
   })
 
   it('renders the exact French text for the pending state', () => {
-    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 3 })
+    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 3, flushNow: vi.fn() })
     render(<OfflineIndicator />)
 
     expect(screen.getByText('Hors-ligne — 3 modification(s) en attente')).toBeInTheDocument()
