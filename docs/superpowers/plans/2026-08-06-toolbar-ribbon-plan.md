@@ -86,7 +86,7 @@ describe('Accordion', () => {
     expect(screen.getByText('A').closest('details')).toHaveAttribute('open')
   })
 
-  it('calls onToggle with the new open state when a controlled section is clicked, and does not change on its own', () => {
+  it('calls onToggle with the new open state when the native toggle event fires', () => {
     const onToggle = vi.fn()
     render(
       <Accordion
@@ -96,11 +96,18 @@ describe('Accordion', () => {
       />
     )
     const details = screen.getByText('A').closest('details') as HTMLDetailsElement
-    fireEvent.toggle(details)
+    // `@testing-library/dom`'s `fireEvent` has no `.toggle` shorthand (unlike
+    // `.click`/`.change`) — dispatch a plain Event, and set `.open` on the
+    // element FIRST: a real click on <summary> flips the DOM's native open
+    // state before the 'toggle' event fires, jsdom included. React does not
+    // special-case <details> the way it does <input>/<select> — an existing
+    // `open` prop is only reasserted on React's OWN next render, not
+    // synchronously in response to the native event, so this test simulates
+    // the browser's half (flip `.open`) and asserts only on the handler
+    // receiving the resulting value, not on the DOM reverting by itself.
+    details.open = false
+    fireEvent(details, new Event('toggle'))
     expect(onToggle).toHaveBeenCalledWith(false)
-    // Controlled: still reflects the `open` prop (true), not the DOM's own toggle,
-    // since the parent hasn't re-rendered with a new `open` value in this test.
-    expect(details).toHaveAttribute('open')
   })
 })
 ```
@@ -139,9 +146,14 @@ export interface AccordionProps {
 // own — see spec §12, "par défaut technique le plus simple : indépendant,
 // comme <details> HTML natif". Controlled sections (open/onToggle both set)
 // are the one exception, added 2026-08 for "Basculer Calques" (toolbar-ribbon
-// spec §4/§6) — React reconciles a controlled <details open> back to the
-// `open` prop's value on every render, overriding the DOM's own toggle,
-// exactly like a controlled <input>.
+// spec §4/§6). NOTE this is NOT the same guarantee as a controlled <input>:
+// React does not intercept/re-assert <details>'s `open` on the native toggle
+// event, only on React's own next render — so between a user's click and the
+// parent re-rendering with a (possibly unchanged) `open` value, the DOM
+// briefly reflects the user's raw action. In practice this doesn't matter
+// here: `onToggle` fires synchronously with the real value, and the parent
+// (SiteMapView, see Task 13) re-renders with the authoritative `open` value
+// immediately after via its own state update.
 export function Accordion({ sections }: AccordionProps) {
   return (
     <div>
@@ -230,8 +242,8 @@ it('propagates a flushNow rejection to the caller (listPendingMutations failing 
 })
 ```
 
-(Add `renderHook, waitFor, act` to the existing `@testing-library/react` import
-if not already present; check the file's current imports before assuming.)
+(`useOfflineSync.test.ts` already imports `renderHook, waitFor, act` — no import
+changes needed.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -285,11 +297,18 @@ didn't get his explicit sign-off on this specific depth.
 
 - [ ] **Step 1: Write the failing test**
 
+`duplicateMission` makes 4 SEQUENTIAL `supabase.from(...)` calls in a fixed order
+(mission insert → mission update [parcels] → mission update [footprint] → plan
+insert). `createSupabaseChainMock` (`src/test/supabaseMock.ts`) models exactly
+ONE query round-trip per instance — it explicitly documents it's not for testing
+"two different sequential results from the same chain." Build 4 separate
+instances and dispatch `supabase.from` through them in order via
+`mockReturnValueOnce` chained 4 times (not `vi.mocked(supabase).from = from`,
+which only works for a single-call test, as every other test in this file does
+today):
+
 ```ts
-// appended to src/data/missionsRepo.test.ts — match the file's existing
-// supabase-mocking pattern (check the top of the file for its exact shape
-// before writing this, likely a chained `.from().insert().select().single()`
-// mock builder already used by the createMission tests).
+// appended to src/data/missionsRepo.test.ts
 describe('duplicateMission', () => {
   it('creates a new mission copying address/date/declination/parcels/footprint, and a fresh empty exterior plan', async () => {
     const source: Mission = {
@@ -299,11 +318,33 @@ describe('duplicateMission', () => {
       causeParanormale: 0, causeAutres: 0, bovisRate: 8000,
       parcelRefs: ['ABC-123'], buildingFootprint: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
     }
-    const created: Mission = { ...source, id: 'm2', originLat: null, originLng: null,
-      causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
-      causeParanormale: null, causeAutres: null, bovisRate: null }
-    // mock supabase .from('mission').insert(...).select().single() to resolve `created`
-    // mock supabase .from('plan').insert(...).select().single() to resolve a fresh exterior Plan for m2
+    const baseRow = {
+      id: 'm2', address: '12 rue des Lilas', mission_date: '2026-08-06', declination_deg: 1.5,
+      origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null,
+      cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null,
+      parcel_refs: [] as string[], building_footprint: null as null | typeof source.buildingFootprint,
+    }
+    // Only `chain` is used from each instance — `createSupabaseChainMock` also
+    // returns its own standalone `from` mock, but it's discarded here: all 4
+    // calls are dispatched through ONE shared `supabase.from` mock below
+    // instead (via chained `mockReturnValueOnce`), not through 4 independent
+    // `from` mocks.
+    const { chain: chainInsertMission } = createSupabaseChainMock({ data: baseRow, error: null })
+    const { chain: chainUpdateParcels } =
+      createSupabaseChainMock({ data: { ...baseRow, parcel_refs: ['ABC-123'] }, error: null })
+    const { chain: chainUpdateFootprint } = createSupabaseChainMock({
+      data: { ...baseRow, parcel_refs: ['ABC-123'], building_footprint: source.buildingFootprint },
+      error: null,
+    })
+    const { chain: chainInsertPlan } = createSupabaseChainMock({
+      data: { id: 'plan1', mission_id: 'm2', kind: 'exterieur', image_url: null, calibration: null },
+      error: null,
+    })
+    vi.mocked(supabase).from = vi.fn()
+      .mockReturnValueOnce(chainInsertMission)
+      .mockReturnValueOnce(chainUpdateParcels)
+      .mockReturnValueOnce(chainUpdateFootprint)
+      .mockReturnValueOnce(chainInsertPlan)
 
     const result = await duplicateMission(source)
 
@@ -315,6 +356,32 @@ describe('duplicateMission', () => {
     expect(result.mission.buildingFootprint).toEqual(source.buildingFootprint) // copied
     expect(result.exteriorPlan.kind).toBe('exterieur')
     expect(result.exteriorPlan.missionId).toBe('m2')
+  })
+
+  it('skips setSelectedParcels/setBuildingFootprint entirely when the source has neither (only 2 supabase calls)', async () => {
+    const source: Mission = {
+      id: 'm1', address: 'test diag', missionDate: '2026-08-06', declinationDeg: null,
+      originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
+      causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
+      parcelRefs: [], buildingFootprint: null,
+    }
+    const { chain: chainInsertMission } = createSupabaseChainMock({
+      data: { id: 'm2', address: 'test diag', mission_date: '2026-08-06', declination_deg: null,
+        origin_lat: null, origin_lng: null, cause_architectural: null, cause_electromagnetique: null,
+        cause_geobiologique: null, cause_paranormale: null, cause_autres: null, bovis_rate: null,
+        parcel_refs: [], building_footprint: null },
+      error: null,
+    })
+    const { chain: chainInsertPlan } = createSupabaseChainMock({
+      data: { id: 'plan1', mission_id: 'm2', kind: 'exterieur', image_url: null, calibration: null },
+      error: null,
+    })
+    const fromMock = vi.fn().mockReturnValueOnce(chainInsertMission).mockReturnValueOnce(chainInsertPlan)
+    vi.mocked(supabase).from = fromMock
+
+    await duplicateMission(source)
+
+    expect(fromMock).toHaveBeenCalledTimes(2) // mission insert + plan insert only — no update calls
   })
 })
 ```
@@ -526,13 +593,16 @@ Expected: FAIL — `Toolbar.tsx` doesn't exist.
 import type { ReactNode } from 'react'
 
 export interface ToolbarProps {
-  children: ReactNode
+  children?: ReactNode
 }
 
 // Fixed-height, full-width, top-of-screen bar — spec §3 ("ruban Paint"). Height
 // is a named constant (not just a magic number here) because Sidebar.tsx (Task
-// 7) needs the exact same value to offset its own top position and avoid
-// overlapping this bar.
+// 7) AND MissionWorkspace.tsx's ready-no-interior column (this same task, Step
+// 5) both need the exact same value: Sidebar to offset its own top position,
+// MissionWorkspace to reserve equivalent space in normal flow — position:fixed
+// takes this bar OUT of flow entirely, so nothing below it is pushed down
+// automatically the way a normal flex/block sibling would be.
 export const TOOLBAR_HEIGHT_PX = 48
 
 const TOOLBAR_STYLE = {
@@ -564,25 +634,34 @@ export function Toolbar({ children }: ToolbarProps) {
 Run: `npm test -- --run src/components/Toolbar.test.tsx`
 Expected: PASS
 
-- [ ] **Step 5: Mount it in `MissionWorkspace.tsx`'s `ready-no-interior` case**
+- [ ] **Step 5: Mount it in `MissionWorkspace.tsx`'s `ready-no-interior` case, and reserve space for it**
 
-In `src/pages/MissionWorkspace.tsx`, import `Toolbar` and wrap the existing
-`ready-no-interior` return value's outer `<div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>`
-content with `<Toolbar>{/* empty for now */}</Toolbar>` as its first child (sibling
-of `NonBlockingErrorBanner`, before it).
+In `src/pages/MissionWorkspace.tsx`, import `Toolbar` and `TOOLBAR_HEIGHT_PX`, and
+add `<Toolbar />` as the first child of the `ready-no-interior` case's
+`<div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>` (sibling of `NonBlockingErrorBanner`,
+before it). **`FLEX_COLUMN_FULL_HEIGHT_STYLE` (line 40) is shared with the
+`setting-origin` case (line 197), which does NOT render a Toolbar** — do not add
+padding to that shared constant, or `setting-origin`'s screen gets an unexplained
+empty gap at the top. Since `Toolbar` is `position: fixed` (out of normal flow —
+nothing below it is pushed down automatically), add a 2nd, `ready-no-interior`-only
+style constant instead:
 
 ```tsx
-import { Toolbar } from '../components/Toolbar'
+import { Toolbar, TOOLBAR_HEIGHT_PX } from '../components/Toolbar'
 ```
 
 ```tsx
-        <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
+// Only for the ready-no-interior case, which renders <Toolbar /> — NOT a
+// replacement for FLEX_COLUMN_FULL_HEIGHT_STYLE, which setting-origin still
+// uses unpadded (it has no Toolbar).
+const READY_NO_INTERIOR_STYLE = { ...FLEX_COLUMN_FULL_HEIGHT_STYLE, paddingTop: TOOLBAR_HEIGHT_PX }
+```
+
+```tsx
+        <div style={READY_NO_INTERIOR_STYLE}>
           <Toolbar />
           <NonBlockingErrorBanner error={nonBlockingError} />
 ```
-
-(`Toolbar`'s `children` prop will need to become optional, or pass `null` —
-prefer making `children?: ReactNode` since later tasks fill it progressively.)
 
 - [ ] **Step 6: Run the full suite**
 
@@ -664,18 +743,32 @@ portal, no ref plumbing) at the cost of one new prop.
 
 - [ ] **Step 1: Write the failing test for `SiteMapView`'s new `reloadKey` prop**
 
+`SiteMapView.test.tsx` has no shared `baseProps` constant — all ~32 existing
+`render(<SiteMapView .../>)` calls spell every prop out inline. Copy the props
+from any existing passing test in that file (e.g. its first `render` call) rather
+than inventing a `baseProps` object, and mock every repo the component reads at
+mount — `SiteMapView.tsx` calls `instances.map(...)` unconditionally on render
+(no null-guard), so an unmocked `gridInstancesRepo.listGridInstancesForPlan` (or
+any of the other 7 list-functions its mount effect calls) resolving to
+`undefined` would crash the render, not just fail an assertion:
+
 ```tsx
 // appended to src/components/SiteMapView.test.tsx
 it('re-runs loadAll when reloadKey changes, even if planId does not', async () => {
-  const { rerender } = render(<SiteMapView {...baseProps} reloadKey={0} />)
-  await waitFor(() => expect(listFeltPointsForPlan).toHaveBeenCalledTimes(1))
-  rerender(<SiteMapView {...baseProps} reloadKey={1} />)
-  await waitFor(() => expect(listFeltPointsForPlan).toHaveBeenCalledTimes(2))
+  vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+  vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+  // ...and every other listXForPlan the mount effect calls — copy the FULL set
+  // of mocks from an existing passing test in this file, not just the two shown
+  // here; do not guess which ones are needed, grep loadAll's body for every
+  // list*For call it makes.
+  const props = { /* copy verbatim from an existing render() call in this file */ }
+
+  const { rerender } = render(<SiteMapView {...props} reloadKey={0} />)
+  await waitFor(() => expect(feltPointsRepo.listFeltPointsForPlan).toHaveBeenCalledTimes(1))
+  rerender(<SiteMapView {...props} reloadKey={1} />)
+  await waitFor(() => expect(feltPointsRepo.listFeltPointsForPlan).toHaveBeenCalledTimes(2))
 })
 ```
-
-(Match this file's existing `baseProps`/mock conventions — read the top of
-`SiteMapView.test.tsx` before writing this, don't guess the mock shape.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -718,7 +811,7 @@ import { UndoRedoControls } from '../components/UndoRedoControls'
 ```
 
 ```tsx
-        <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
+        <div style={READY_NO_INTERIOR_STYLE}>
           <Toolbar>
             <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
           </Toolbar>
@@ -738,9 +831,11 @@ import { UndoRedoControls } from '../components/UndoRedoControls'
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `npm test -- --run src/components/SiteMapView.test.tsx src/pages/MissionWorkspace.test.tsx`
-Expected: PASS. `SiteMapView.test.tsx` almost certainly has an existing test
-asserting `UndoRedoControls` renders inside it — that assertion must be removed/
-updated, not left to fail.
+Expected: PASS. `SiteMapView.test.tsx` already mocks `UndoRedoControls` as
+`() => null` (so no other test in the file was ever asserting on it) — that mock
+becomes dead code once `SiteMapView.tsx` stops importing `UndoRedoControls`
+entirely; delete the now-unused `vi.mock('./UndoRedoControls', ...)` block as
+part of this step, rather than leaving it stranded.
 
 - [ ] **Step 6: Run the full suite**
 
@@ -778,7 +873,19 @@ lifting all of it to `MissionWorkspace` would be a much bigger, riskier change.
 appropriate now): render the guide-line control panel through
 `ReactDOM.createPortal` into a DOM node that `Toolbar` exposes via a ref.
 
-- [ ] **Step 1: `Toolbar.tsx` exposes a named slot**
+- [ ] **Step 1: `Toolbar.tsx` exposes a named slot via a callback ref**
+
+**Not a plain `useRef`**: a plain object ref's `.current` is only populated
+during React's commit phase, *after* the render function has already returned —
+reading `someRef.current` inline in the SAME render pass that attaches it (as
+`MissionWorkspace` would need to, to pass the node down to `SiteMapView` as a
+prop) sees the *previous* render's value, which is `null` on the very first
+render. That would make the guide-line panel fail to portal/render on initial
+mount — the exact bug this whole redesign is meant to fix, reintroduced. Use a
+**callback ref backed by `useState`** instead: React calls the callback
+synchronously during commit with the DOM node, and the resulting `setState` call
+schedules the next render with the node already available — the standard idiom
+for "expose a DOM node to a parent for measurement/portaling after mount."
 
 ```tsx
 // src/components/Toolbar.tsx
@@ -786,31 +893,32 @@ import { type ReactNode } from 'react'
 
 export interface ToolbarProps {
   children?: ReactNode
-  /** DOM node other components portal secondary content into (e.g. the
-   * guide-line control panel, which stays logically owned/stateful inside
-   * SiteMapView but must render inside this fixed bar — see Task 9 of the
-   * toolbar-ribbon plan). */
-  guideLineSlotRef?: React.Ref<HTMLDivElement>
+  /** Called with the DOM node other components portal secondary content into
+   * (e.g. the guide-line control panel, which stays logically owned/stateful
+   * inside SiteMapView but must render inside this fixed bar — see Task 9 of
+   * the toolbar-ribbon plan). A callback ref, not a RefObject — see this
+   * task's note on why a plain useRef would read null on first render. */
+  onGuideLineSlotReady?: (node: HTMLDivElement | null) => void
 }
 
-export function Toolbar({ children, guideLineSlotRef }: ToolbarProps) {
+export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
   return (
     <div role="toolbar" style={TOOLBAR_STYLE}>
       {children}
-      <div ref={guideLineSlotRef} />
+      <div ref={onGuideLineSlotReady} />
     </div>
   )
 }
 ```
 
-- [ ] **Step 2: `MissionWorkspace.tsx` owns the ref, passes the node down to `SiteMapView`**
+- [ ] **Step 2: `MissionWorkspace.tsx` owns the state, passes the node down to `SiteMapView`**
 
 ```tsx
-  const guideLineSlotRef = useRef<HTMLDivElement>(null)
+  const [guideLineSlotEl, setGuideLineSlotEl] = useState<HTMLDivElement | null>(null)
 ```
 
 ```tsx
-          <Toolbar guideLineSlotRef={guideLineSlotRef}>
+          <Toolbar onGuideLineSlotReady={setGuideLineSlotEl}>
             <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
           </Toolbar>
 ```
@@ -818,7 +926,7 @@ export function Toolbar({ children, guideLineSlotRef }: ToolbarProps) {
 ```tsx
             <SiteMapView
               // ...existing props...
-              guideLineSlotEl={guideLineSlotRef.current}
+              guideLineSlotEl={guideLineSlotEl}
             />
 ```
 
@@ -851,14 +959,24 @@ matter since it's portaled away):
 
 - [ ] **Step 4: Update tests**
 
-`SiteMapView.test.tsx` needs a `guideLineSlotEl` value in every render call
-(a plain `document.createElement('div')` is enough) for the guide-line assertions
-to keep finding the controls — Testing Library's `screen` queries the whole
-document, so a portaled node is still found by `screen.getByRole(...)` etc. even
-though it's not a DOM descendant of the component under test. Existing guide-line
-tests should keep passing once this element is supplied; if any test specifically
-asserts the controls are *inside* a `Sidebar`/`Accordion` DOM ancestor, that
-assertion needs to change (they're no longer there).
+`SiteMapView.test.tsx` needs a `guideLineSlotEl` value in every render call for
+the guide-line assertions to keep finding the controls. Testing Library's
+`screen` queries `document.body`, so the node must actually be **attached to the
+document**, not just created — `document.createElement('div')` alone produces a
+detached node that `screen.getByRole(...)` etc. will never find, since it isn't
+part of the tree `screen` searches:
+
+```ts
+const guideLineSlotEl = document.body.appendChild(document.createElement('div'))
+```
+
+Existing guide-line tests should keep passing once every render call supplies
+this. If any test specifically asserts the controls are *inside* a
+`Sidebar`/`Accordion` DOM ancestor, that assertion needs to change (they're no
+longer there). This touches every one of the ~32 existing `render(<SiteMapView
+.../>)` call sites in the file (a new required prop) — budget real time for this
+step, it's mechanical but wide, the same caveat as Task 13's `editMode`/
+`calquesOpen` lift.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
