@@ -11,12 +11,23 @@ export const CONTEXT_OBJECTS_LAYER_ID = 'context-objects'
 // from the `visibility` map. Duplicating this list (as a literal OR-chain) in
 // each consumer is exactly how SiteMapView's toggleLayer "forgot" about
 // FELT_SEGMENTS_LAYER_ID once already — see toggleLayer in SiteMapView.tsx.
-// INTERIOR_PLAN_LAYER_ID defaults visible (unlike the other optional layers
-// below it) specifically so a freshly-calibrated photo is seen immediately —
-// the whole point of rendering it at all was the missing visual confirmation
-// that the calibration/scale was right (see CalibratedPlanOverlay's doc
-// comment); defaulting it hidden would just reintroduce a milder version of
-// that same problem.
+//
+// ONLY felt points/segments, the calibrated interior plan, and context
+// objects default visible. Everything else (grid instance lines, Bagua
+// sectors, Hartmann×Curry pathogenic crossings, phenomena, freeform
+// eau/faille traces) is deliberately hidden by default: Laurent does blind
+// sensing ("ressenti aveugle") without any theoretical/reference overlay
+// visible, to avoid biasing what he feels toward what the model predicts or
+// toward markers he already placed — he turns these on afterward, in a
+// separate correction/verification pass. Confirmed explicitly in
+// LayerPanel.test.tsx/SiteMapView.test.tsx test names ("unchecked by
+// default, like Bagua/pathogenic-crossings") — do not add PHENOMENA_LAYER_ID,
+// FREEFORM_NETWORK_LAYER_ID, BAGUA_LAYER_ID, PATHOGENIC_CROSSINGS_LAYER_ID or
+// grid instance ids here without confirming with Laurent first; a field test
+// on 2026-08-06 raised "I can't get X to show" for phenomena/freeform
+// specifically, which looked at first like a default-visibility bug but
+// turned out to conflict with this existing, tested, deliberate design —
+// left as an open question for Laurent to resolve, not silently changed.
 export const DEFAULT_VISIBLE_LAYER_IDS: readonly string[] = [
   FELT_POINTS_LAYER_ID,
   FELT_SEGMENTS_LAYER_ID,
@@ -85,7 +96,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[BAGUA_LAYER_ID] ?? false}
+          checked={visibility[BAGUA_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(BAGUA_LAYER_ID)}
           onChange={() => onToggle(BAGUA_LAYER_ID)}
         />
         Bagua (Pakua)
@@ -93,7 +104,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? false}
+          checked={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(PATHOGENIC_CROSSINGS_LAYER_ID)}
           onChange={() => onToggle(PATHOGENIC_CROSSINGS_LAYER_ID)}
         />
         Croisements pathogènes
@@ -101,7 +112,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[PHENOMENA_LAYER_ID] ?? false}
+          checked={visibility[PHENOMENA_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(PHENOMENA_LAYER_ID)}
           onChange={() => onToggle(PHENOMENA_LAYER_ID)}
         />
         Phénomènes ponctuels
@@ -109,7 +120,7 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
       <label>
         <input
           type="checkbox"
-          checked={visibility[FREEFORM_NETWORK_LAYER_ID] ?? false}
+          checked={visibility[FREEFORM_NETWORK_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FREEFORM_NETWORK_LAYER_ID)}
           onChange={() => onToggle(FREEFORM_NETWORK_LAYER_ID)}
         />
         Tracés eau/faille

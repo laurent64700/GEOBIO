@@ -27,16 +27,25 @@ const uncalibratedPhoto = {
 }
 const calibratedPhoto = { ...uncalibratedPhoto, calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } }
 
+let createdImages: { crossOrigin: string | null }[] = []
+
 describe('RodDetectionPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    createdImages = []
     // jsdom's Image doesn't actually load image bytes — stub it so `new Image()`
-    // fires onload on the next tick, simulating a successful load.
+    // fires onload on the next tick, simulating a successful load. Also records
+    // each instance so tests can assert on properties (like crossOrigin) set on
+    // it before `src` triggers the "load".
     vi.stubGlobal(
       'Image',
       class {
         onload: (() => void) | null = null
         onerror: (() => void) | null = null
+        crossOrigin: string | null = null
+        constructor() {
+          createdImages.push(this)
+        }
         set src(_: string) {
           setTimeout(() => this.onload?.(), 0)
         }
@@ -122,6 +131,31 @@ describe('RodDetectionPanel', () => {
     expect(
       await screen.findByText('1 marqueurs détectés, 1 reconnus (0 tiges complètes, 1 points isolés).')
     ).toBeInTheDocument()
+  })
+
+  it('loads the detection image with crossOrigin="anonymous" (photo.imageUrl is cross-origin Supabase Storage — without this, arucoDetector\'s getImageData throws a canvas-tainted SecurityError)', async () => {
+    vi.mocked(arucoDetector.detectMarkers).mockReturnValue([])
+    vi.mocked(rodMarkersRepo.listRodMarkers).mockResolvedValue([])
+    vi.mocked(arucoMapping.mapDetectionsToPoints).mockReturnValue({
+      recognized: [], totalDetected: 0, totalRecognized: 0,
+    })
+    vi.mocked(arucoMapping.pairIntoSegmentsAndPoints).mockReturnValue({ segments: [], points: [] })
+
+    render(
+      <RodDetectionPanel
+        photo={calibratedPhoto}
+        planId="p1"
+        missionOrigin={{ lat: 48.8566, lng: 2.3522 }}
+        mapCenter={[48.8566, 2.3522]}
+        onCalibrated={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /détecter les tiges/i }))
+
+    await waitFor(() => expect(arucoDetector.detectMarkers).toHaveBeenCalled())
+    expect(createdImages).toHaveLength(1)
+    expect(createdImages[0].crossOrigin).toBe('anonymous')
   })
 
   it('creates a FeltSegment for a paired rod and reports the split in the summary', async () => {

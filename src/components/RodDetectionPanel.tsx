@@ -21,6 +21,13 @@ export interface RodDetectionPanelProps {
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
+    // Required for arucoDetector's ctx.getImageData() to succeed: photo.imageUrl
+    // points at Supabase Storage, a different origin than the app itself, and an
+    // <img> loaded cross-origin without this taints the canvas it's drawn to —
+    // getImageData then throws SecurityError instead of returning pixel data.
+    // Supabase Storage serves public buckets with permissive CORS headers, so
+    // 'anonymous' (no credentials sent) is sufficient.
+    image.crossOrigin = 'anonymous'
     image.onload = () => resolve(image)
     image.onerror = () => reject(new Error("Impossible de charger l'image pour la détection."))
     image.src = url

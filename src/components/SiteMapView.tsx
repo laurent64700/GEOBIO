@@ -621,17 +621,17 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         <BaguaLayer
           footprint={buildingFootprint}
           missionOrigin={missionOrigin}
-          visible={visibility[BAGUA_LAYER_ID] ?? false}
+          visible={visibility[BAGUA_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(BAGUA_LAYER_ID)}
         />
         <PathogenicCrossingsLayer
           crossings={pathogenicCrossings}
           missionOrigin={missionOrigin}
-          visible={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? false}
+          visible={visibility[PATHOGENIC_CROSSINGS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(PATHOGENIC_CROSSINGS_LAYER_ID)}
         />
         <PhenomenaLayer
           phenomena={phenomena}
           missionOrigin={missionOrigin}
-          visible={visibility[PHENOMENA_LAYER_ID] ?? false}
+          visible={visibility[PHENOMENA_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(PHENOMENA_LAYER_ID)}
         />
         <ContextObjectsLayer
           objects={contextObjects}
@@ -646,7 +646,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
         <FreeformNetworkLayer
           networks={freeformNetworks}
           missionOrigin={missionOrigin}
-          visible={visibility[FREEFORM_NETWORK_LAYER_ID] ?? false}
+          visible={visibility[FREEFORM_NETWORK_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FREEFORM_NETWORK_LAYER_ID)}
         />
       </MapView>
       {/* Full-height left sidebar (spec §3) — replaces the former 4 floating
