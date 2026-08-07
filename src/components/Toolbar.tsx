@@ -38,14 +38,27 @@ const TOOLBAR_STYLE = {
   background: 'white',
   borderBottom: '1px solid #ccc',
   zIndex: 1100, // above Sidebar's zIndex: 1000 so nothing overlaps it
-  // Safety net for the row itself: Undo/Redo + Ligne guide + Placer/Tracer
-  // (Phase 2 adds 3 more menu triggers) can exceed a narrow/tablet viewport
-  // width even with the guide-line panel closed. Horizontal scroll keeps
-  // every button reachable rather than silently clipping the rightmost ones
-  // — flagged during Chunk 1-2's holistic review (2026-08), not observed to
-  // trigger yet with only Undo/Redo/Ligne guide/Placer/Tracer present, but
-  // cheap to have in place before Chunk 3's menu bar adds more.
-  overflowX: 'auto' as const,
+  // NO overflowX here — deliberately removed 2026-08 during Task 14's manual
+  // browser smoke check, which caught a real bug jsdom cannot see (it doesn't
+  // implement CSS layout/overflow): a Chunk 1-2 "safety net" had added
+  // `overflowX: 'auto'` to this row to keep every button reachable on a
+  // narrow/tablet viewport. Per the CSS overflow spec, though, giving ONE
+  // axis a used value other than 'visible' silently forces the OTHER axis's
+  // USED value to 'auto' too, even if you explicitly set it to 'visible'
+  // yourself — there is no way to clip only X while truly leaving Y
+  // 'visible' on the same element. That turned this 48px-tall row into a
+  // vertical clipping container, hiding almost all of the Ligne guide panel
+  // (Task 9's `position: absolute; top: 100%` pattern, which depends on
+  // escaping this row's height entirely) behind a sliver — an always-broken,
+  // shipped-but-unusable feature. The safety net itself was never observed
+  // to actually trigger (confirmed again here: no horizontal overflow at
+  // 1280px with the now-complete menu bar + Undo/Redo + Ligne guide +
+  // Placer/Tracer all present). Between a definite, active bug in a shipped
+  // feature and a defensive measure for a not-yet-observed problem, this
+  // keeps the panel working; if real horizontal overflow ever does show up,
+  // the right fix is a proper floating-panel architecture for BOTH the panel
+  // and the row (e.g. portaling the panel outside any scrolling ancestor),
+  // not overflowX on the row that also hosts it.
 }
 
 // The guide-line panel (4 bearing buttons + an angle input + 3 action
