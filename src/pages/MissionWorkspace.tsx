@@ -78,6 +78,11 @@ function NonBlockingErrorBanner({ error }: { error: NonBlockingError | null }) {
 
 export interface MissionWorkspaceProps {
   initialResumePhase?: ResumePhase
+  // Accepted here for plumbing purposes only — not yet wired into the render
+  // tree (no button/menu calls these). A later task in the toolbar/menu plan
+  // wires them into a Fichier menu ("Mes missions" / "Nouvelle mission").
+  onNavigateToMissionList: () => void
+  onNavigateToNewMission: () => void
 }
 
 export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) {

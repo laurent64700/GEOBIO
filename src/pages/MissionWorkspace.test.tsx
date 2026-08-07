@@ -179,7 +179,7 @@ describe('MissionWorkspace', () => {
       id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null,
     })
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
 
     await waitFor(() =>
       expect(plansRepo.createPlan).toHaveBeenCalledWith({ missionId: 'm1', kind: 'exterieur' })
@@ -191,7 +191,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(plansRepo.createPlan).mockRejectedValue(
       new Error('Impossible de créer le plan : network down')
     )
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
 
@@ -202,7 +202,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
     vi.mocked(missionsRepo.setSelectedParcels).mockResolvedValue({ ...missionWithOrigin, parcelRefs: ['A123'] })
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     fireEvent.click(screen.getByText('simulate-map-click'))
 
@@ -231,7 +231,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setSelectedParcels).mockResolvedValue({ ...missionWithOrigin, parcelRefs: ['A123'] })
     vi.mocked(preloadModule.preloadPlanForOffline).mockRejectedValue(new Error('indexeddb unavailable'))
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     fireEvent.click(screen.getByText('simulate-map-click'))
 
@@ -250,7 +250,7 @@ describe('MissionWorkspace', () => {
     })
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
 
@@ -277,7 +277,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
     vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -296,7 +296,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
     vi.mocked(planImageStorage.uploadPlanImage).mockRejectedValue(new Error('network down'))
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -320,7 +320,7 @@ describe('MissionWorkspace', () => {
       .mockRejectedValueOnce(new Error('network down'))
       .mockResolvedValueOnce('https://x/plan.jpg')
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -345,7 +345,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
     vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -376,7 +376,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
     vi.mocked(planImageStorage.uploadPlanImage).mockResolvedValue('https://x/plan.jpg')
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -404,7 +404,7 @@ describe('MissionWorkspace', () => {
       causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
     })
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
 
     fireEvent.click(await screen.findByText('simulate-global-assessment'))
 
@@ -434,7 +434,7 @@ describe('MissionWorkspace', () => {
       .mockResolvedValueOnce(missionAfterGlobalAssessment) // the initial mandatory step
       .mockResolvedValueOnce({ ...missionWithOrigin, bovisRate: 12000 }) // the bar's own change
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior({
       ...missionAfterGlobalAssessment,
@@ -463,7 +463,7 @@ describe('MissionWorkspace', () => {
     })
     vi.mocked(missionsRepo.setMissionOrigin).mockResolvedValue(missionWithOrigin)
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     // advanceToOriginSetting() lui-même configure setGlobalAssessment pour
     // RÉSOUDRE (c'est cet appel qui fait avancer de global-assessment vers
     // setting-origin) — donc on ne peut PAS pré-configurer le rejet avant cet
@@ -497,7 +497,7 @@ describe('MissionWorkspace', () => {
     // handler onChange (avant même l'appel réseau), efface le message d'upload
     // encore affiché.
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     await advanceToOriginSetting()
     await advanceToReadyNoInterior()
     await screen.findByLabelText(/importer un plan intérieur/i)
@@ -518,7 +518,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
     vi.mocked(geocodingService.geocodeAddress).mockResolvedValue({ lat: 45.5, lng: 6.5 })
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     fireEvent.click(await screen.findByText('simulate-global-assessment'))
 
     const mapView = await screen.findByTestId('map-view')
@@ -532,7 +532,7 @@ describe('MissionWorkspace', () => {
     vi.mocked(missionsRepo.setGlobalAssessment).mockResolvedValue(missionAfterGlobalAssessment)
     vi.mocked(geocodingService.geocodeAddress).mockResolvedValue(null)
 
-    render(<MissionWorkspace />)
+    render(<MissionWorkspace onNavigateToMissionList={vi.fn()} onNavigateToNewMission={vi.fn()} />)
     fireEvent.click(await screen.findByText('simulate-global-assessment'))
 
     const mapView = await screen.findByTestId('map-view')
@@ -548,6 +548,8 @@ describe('MissionWorkspace', () => {
     render(
       <MissionWorkspace
         initialResumePhase={{ name: 'global-assessment', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
       />
     )
     expect(await screen.findByText('simulate-global-assessment')).toBeInTheDocument()
@@ -559,6 +561,8 @@ describe('MissionWorkspace', () => {
     render(
       <MissionWorkspace
         initialResumePhase={{ name: 'setting-origin', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
       />
     )
     expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
@@ -568,6 +572,8 @@ describe('MissionWorkspace', () => {
     render(
       <MissionWorkspace
         initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
       />
     )
     const siteMapView = await screen.findByTestId('site-map-view')

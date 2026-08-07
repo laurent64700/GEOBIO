@@ -56,6 +56,19 @@ function App() {
     }
   }
 
+  async function handleNavigateToMissionList() {
+    try {
+      const missions = await listMissions()
+      setPhase({ name: 'mission-list', missions })
+    } catch (err) {
+      setPhase({ name: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  function handleNavigateToNewMission() {
+    setPhase({ name: 'creating' })
+  }
+
   return (
     <>
       <div style={{ height: '100vh', width: '100%' }}>
@@ -67,8 +80,19 @@ function App() {
             onCreateNew={() => setPhase({ name: 'creating' })}
           />
         )}
-        {phase.name === 'creating' && <MissionWorkspace />}
-        {phase.name === 'resuming' && <MissionWorkspace initialResumePhase={phase.resumePhase} />}
+        {phase.name === 'creating' && (
+          <MissionWorkspace
+            onNavigateToMissionList={handleNavigateToMissionList}
+            onNavigateToNewMission={handleNavigateToNewMission}
+          />
+        )}
+        {phase.name === 'resuming' && (
+          <MissionWorkspace
+            initialResumePhase={phase.resumePhase}
+            onNavigateToMissionList={handleNavigateToMissionList}
+            onNavigateToNewMission={handleNavigateToNewMission}
+          />
+        )}
         {phase.name === 'error' && <p role="alert">{phase.message}</p>}
       </div>
       {/* Sibling of the phase-driven container, not nested inside any phase

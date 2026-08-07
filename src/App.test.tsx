@@ -23,10 +23,27 @@ vi.mock('./hooks/useOfflineSync')
 // receives) without needing to also stand up MissionWorkspace's full child
 // tree (SiteMapView, MapView, etc.) — same isolation principle already used
 // throughout this codebase's other page-level tests.
+// Captures the most recent props MissionWorkspace was rendered with, so tests
+// can invoke callback props (e.g. onNavigateToMissionList) the same way a
+// real MissionWorkspace instance eventually would, once a later task wires
+// them into its own UI.
+let lastMissionWorkspaceProps: {
+  initialResumePhase?: { name: string }
+  onNavigateToMissionList?: () => void
+  onNavigateToNewMission?: () => void
+} = {}
+
 vi.mock('./pages/MissionWorkspace', () => ({
-  MissionWorkspace: ({ initialResumePhase }: { initialResumePhase?: { name: string } }) => (
-    <div data-testid="mission-workspace" data-resume-phase-name={initialResumePhase?.name ?? 'none'} />
-  ),
+  MissionWorkspace: (props: {
+    initialResumePhase?: { name: string }
+    onNavigateToMissionList?: () => void
+    onNavigateToNewMission?: () => void
+  }) => {
+    lastMissionWorkspaceProps = props
+    return (
+      <div data-testid="mission-workspace" data-resume-phase-name={props.initialResumePhase?.name ?? 'none'} />
+    )
+  },
 }))
 
 const existingMission = {
@@ -145,5 +162,23 @@ describe('App', () => {
     render(<App />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('indexeddb unavailable')
+  })
+
+  it('passes onNavigateToMissionList/onNavigateToNewMission to MissionWorkspace, and they update AppPhase', async () => {
+    const exteriorPlan = { id: 'p1', missionId: 'm1', kind: 'exterieur' as const, imageUrl: null, calibration: null }
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(false)
+    vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({ mission: existingMission, exteriorPlan })
+
+    render(<App />)
+
+    await screen.findByTestId('mission-workspace') // resuming phase reached
+    expect(lastMissionWorkspaceProps.onNavigateToMissionList).toEqual(expect.any(Function))
+    expect(lastMissionWorkspaceProps.onNavigateToNewMission).toEqual(expect.any(Function))
+
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    lastMissionWorkspaceProps.onNavigateToMissionList!()
+
+    expect(await screen.findByText(/10 Rue de Rivoli/)).toBeInTheDocument()
+    expect(missionsRepo.listMissions).toHaveBeenCalled()
   })
 })
