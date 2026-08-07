@@ -129,4 +129,17 @@ describe('UndoRedoControls', () => {
       vi.useRealTimers()
     }
   })
+
+  it('calls onBusyChange(true) then onBusyChange(false) around an undo call', async () => {
+    const onBusyChange = vi.fn()
+    vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
+    vi.mocked(actionHistory.undo).mockResolvedValue(undefined)
+    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} onBusyChange={onBusyChange} />)
+    await waitFor(() => expect(screen.getByLabelText('Annuler')).not.toBeDisabled())
+
+    fireEvent.click(screen.getByLabelText('Annuler'))
+
+    expect(onBusyChange).toHaveBeenCalledWith(true)
+    await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(false))
+  })
 })

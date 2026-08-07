@@ -8,6 +8,14 @@ export interface UndoRedoControlsProps {
    * entity lists (SiteMapView.tsx) — actionHistory.ts only touches the
    * IndexedDB/Supabase layer, it has no knowledge of any component's state. */
   onChanged: () => void
+  /** Mirrors this component's internal `busy` state outward — added so a
+   * sibling trigger for the same undo/redo actions (MenuBar's Modifier menu)
+   * can disable itself while THIS component's button is mid-operation,
+   * satisfying actionHistory.ts's "caller must prevent concurrent calls"
+   * precondition across both triggers, not just within this one component.
+   * Optional — omitting it preserves this component's exact pre-existing
+   * standalone behavior. */
+  onBusyChange?: (busy: boolean) => void
 }
 
 // No shared event bus exists between the many mutating handlers scattered
@@ -19,7 +27,7 @@ export interface UndoRedoControlsProps {
 // without that wiring.
 const POLL_INTERVAL_MS = 1500
 
-export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
+export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoControlsProps) {
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +40,11 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
   // and redo both touch the same action_history entries and could race
   // against each other, not just against themselves.
   const [busy, setBusy] = useState(false)
+
+  function updateBusy(value: boolean) {
+    setBusy(value)
+    onBusyChange?.(value)
+  }
 
   async function refresh() {
     setCanUndo(await hasUndoableAction(planId))
@@ -47,7 +60,7 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
   }, [planId])
 
   async function handleUndo() {
-    setBusy(true)
+    updateBusy(true)
     try {
       await undo(planId)
       setError(null)
@@ -55,13 +68,13 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusy(false)
+      updateBusy(false)
     }
     await refresh()
   }
 
   async function handleRedo() {
-    setBusy(true)
+    updateBusy(true)
     try {
       await redo(planId)
       setError(null)
@@ -69,7 +82,7 @@ export function UndoRedoControls({ planId, onChanged }: UndoRedoControlsProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      setBusy(false)
+      updateBusy(false)
     }
     await refresh()
   }
