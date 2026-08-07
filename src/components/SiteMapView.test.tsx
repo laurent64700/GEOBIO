@@ -117,12 +117,6 @@ vi.mock('./GuideLineLayer', () => ({
   GuideLineLayer: ({ anchor, bearingDeg }: { anchor: { x: number; y: number } | null; bearingDeg: number | null }) =>
     anchor !== null && bearingDeg !== null ? <div data-testid="guide-line" /> : null,
 }))
-// UndoRedoControls has its own dedicated test file (UndoRedoControls.test.tsx)
-// — stub it here so this file only exercises SiteMapView's own wiring
-// (planId/onChanged props), not the component's internal polling/behavior.
-vi.mock('./UndoRedoControls', () => ({
-  UndoRedoControls: () => null,
-}))
 vi.mock('./OrthogonalitySuggestion', () => ({
   OrthogonalitySuggestion: () => <div data-testid="orthogonality-preview" />,
 }))
@@ -1102,5 +1096,22 @@ describe('SiteMapView', () => {
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} />)
 
     expect(await screen.findByTestId('compass-indicator')).toBeInTheDocument()
+  })
+
+  it('re-runs loadAll when reloadKey changes, even if planId does not', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+
+    const props = {
+      planId: 'p1',
+      missionId: 'm1',
+      missionOrigin: { lat: 48.8566, lng: 2.3522 },
+      initialBuildingFootprint: null,
+    }
+
+    const { rerender } = render(<SiteMapView {...props} reloadKey={0} />)
+    await waitFor(() => expect(feltPointsRepo.listFeltPointsForPlan).toHaveBeenCalledTimes(1))
+    rerender(<SiteMapView {...props} reloadKey={1} />)
+    await waitFor(() => expect(feltPointsRepo.listFeltPointsForPlan).toHaveBeenCalledTimes(2))
   })
 })

@@ -51,8 +51,27 @@ vi.mock('../components/MapView', () => ({
 }))
 
 vi.mock('../components/SiteMapView', () => ({
-  SiteMapView: ({ planId, fitBounds }: { planId: string; fitBounds?: unknown }) => (
-    <div data-testid="site-map-view" data-plan-id={planId} data-fit-bounds={fitBounds ? JSON.stringify(fitBounds) : undefined} />
+  SiteMapView: ({ planId, fitBounds, reloadKey }: { planId: string; fitBounds?: unknown; reloadKey?: number }) => (
+    <div
+      data-testid="site-map-view"
+      data-plan-id={planId}
+      data-fit-bounds={fitBounds ? JSON.stringify(fitBounds) : undefined}
+      data-reload-key={reloadKey}
+    />
+  ),
+}))
+
+// UndoRedoControls now renders directly in MissionWorkspace's Toolbar (moved
+// out of SiteMapView, which is fully mocked above). It has its own dedicated
+// test file (UndoRedoControls.test.tsx) — stub it here the same way
+// SiteMapView.test.tsx used to, so it doesn't poll actionHistory (IndexedDB/
+// Supabase) unmocked during these tests. The button exposes onChanged so a
+// test can trigger it directly, matching this file's own pattern for other
+// mocked child components (e.g. ParcelSelectionStep's
+// "simulate-parcels-confirmed" button below).
+vi.mock('../components/UndoRedoControls', () => ({
+  UndoRedoControls: ({ onChanged }: { onChanged: () => void }) => (
+    <button onClick={onChanged}>simulate-undo-redo-changed</button>
   ),
 }))
 
@@ -585,5 +604,27 @@ describe('MissionWorkspace', () => {
     // ready-no-interior mounts the Toolbar as the first child of its
     // READY_NO_INTERIOR_STYLE wrapper — confirm it actually renders here.
     expect(screen.getByRole('toolbar')).toBeInTheDocument()
+  })
+
+  it('bumps SiteMapView\'s reloadKey when UndoRedoControls (in the Toolbar) reports a change', async () => {
+    // Closes the gap flagged by code review: UndoRedoControls now lives in
+    // MissionWorkspace's Toolbar (not inside SiteMapView), wired via
+    // onChanged={() => setReloadKey((k) => k + 1)} feeding SiteMapView's own
+    // reloadKey prop. Neither the old UndoRedoControls-as-() => null mock nor
+    // the old SiteMapView mock (which dropped reloadKey entirely) could ever
+    // have caught a typo in that wiring — this test exercises it directly.
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toHaveAttribute('data-reload-key', '0')
+
+    fireEvent.click(screen.getByText('simulate-undo-redo-changed'))
+
+    await waitFor(() => expect(siteMapView).toHaveAttribute('data-reload-key', '1'))
   })
 })

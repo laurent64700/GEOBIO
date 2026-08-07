@@ -24,7 +24,6 @@ import {
 import { GridCreationPanel } from './GridCreationPanel'
 import { OverlayPanel } from './OverlayPanel'
 import { Sidebar } from './Sidebar'
-import { UndoRedoControls } from './UndoRedoControls'
 import { CompassIndicator } from './CompassIndicator'
 import { BuildingFootprintPicker } from './BuildingFootprintPicker'
 import { BaguaLayer } from './BaguaLayer'
@@ -112,6 +111,10 @@ export interface SiteMapViewProps {
   initialBuildingFootprint: Point[] | null
   /** When set, the map fits to these bounds once on mount (e.g. right after parcel selection) instead of just centering on missionOrigin. */
   fitBounds?: LatLngBoundsExpression
+  /** Bumped by MissionWorkspace (as UndoRedoControls's onChanged, since that
+   * component now lives in Toolbar, outside this component) to re-trigger the
+   * mount effect's loadAll() without needing planId itself to change. */
+  reloadKey?: number
 }
 
 // Fixed search radius around the mission origin, mirroring
@@ -148,7 +151,7 @@ const CARD_CHROME_STYLE = {
   borderRadius: 4,
 }
 
-export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint, fitBounds }: SiteMapViewProps) {
+export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint, fitBounds, reloadKey }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
@@ -286,7 +289,11 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadAll closes
     // over missionId too, but only planId is meant to re-trigger this effect
     // (matches the pre-existing behavior of the inline `load()` this replaces).
-  }, [planId])
+    // reloadKey is a deliberate external re-trigger (bumped by
+    // MissionWorkspace after an undo/redo, since UndoRedoControls now lives
+    // in Toolbar, outside this component); missionId is intentionally
+    // excluded, same reasoning as before.
+  }, [planId, reloadKey])
 
   // Depend on missionOrigin.lat/lng (primitives), NOT the missionOrigin object
   // itself. MissionWorkspace.tsx's ready-no-interior case constructs
@@ -658,7 +665,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
       <Sidebar
         pinned={
           <>
-            <UndoRedoControls planId={planId} onChanged={loadAll} />
             <FeltPointPicker
               activeNetworkName={placementMode?.kind === 'felt-point' ? placementMode.networkName : null}
               onSelectNetwork={handleSelectFeltPointNetwork}

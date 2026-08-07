@@ -9,6 +9,7 @@ import { GlobalAssessmentBar } from '../components/GlobalAssessmentBar'
 import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { ParcelSelectionStep } from '../components/ParcelSelectionStep'
 import { Toolbar, TOOLBAR_HEIGHT_PX } from '../components/Toolbar'
+import { UndoRedoControls } from '../components/UndoRedoControls'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, setSelectedParcels, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
@@ -105,6 +106,10 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
   // terrain screen is already up; a failure there shouldn't cost the operator
   // their place.
   const [nonBlockingError, setNonBlockingError] = useState<NonBlockingError | null>(null)
+  // Bumped as UndoRedoControls's onChanged (now that it lives in Toolbar,
+  // outside SiteMapView) so SiteMapView's reloadKey prop can re-trigger its
+  // internal loadAll() after a successful undo/redo.
+  const [reloadKey, setReloadKey] = useState(0)
 
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })
@@ -230,7 +235,9 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       const { originLat, originLng } = phase.mission
       return (
         <div style={READY_NO_INTERIOR_STYLE}>
-          <Toolbar />
+          <Toolbar>
+            <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
+          </Toolbar>
           <NonBlockingErrorBanner error={nonBlockingError} />
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView
@@ -239,6 +246,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
               missionOrigin={{ lat: originLat!, lng: originLng! }}
               initialBuildingFootprint={phase.mission.buildingFootprint}
               fitBounds={phase.fitBounds}
+              reloadKey={reloadKey}
             />
           </div>
           <label>
