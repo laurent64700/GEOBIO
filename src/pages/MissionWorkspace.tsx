@@ -8,6 +8,7 @@ import { GlobalAssessmentForm } from '../components/GlobalAssessmentForm'
 import { GlobalAssessmentBar } from '../components/GlobalAssessmentBar'
 import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { ParcelSelectionStep } from '../components/ParcelSelectionStep'
+import { Toolbar, TOOLBAR_HEIGHT_PX } from '../components/Toolbar'
 import { createPlan } from '../data/plansRepo'
 import { setMissionOrigin, setGlobalAssessment, setSelectedParcels, type GlobalAssessmentInput } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
@@ -38,6 +39,10 @@ const DEFAULT_CENTER: [number, number] = [46.6, 2.5]
 // layout on a short window.
 const MAP_WRAPPER_STYLE = { flex: 1, minHeight: 0 }
 const FLEX_COLUMN_FULL_HEIGHT_STYLE = { display: 'flex', flexDirection: 'column' as const, height: '100%' }
+// Only for the ready-no-interior case, which renders <Toolbar /> — NOT a
+// replacement for FLEX_COLUMN_FULL_HEIGHT_STYLE, which setting-origin still
+// uses unpadded (it has no Toolbar).
+const READY_NO_INTERIOR_STYLE = { ...FLEX_COLUMN_FULL_HEIGHT_STYLE, paddingTop: TOOLBAR_HEIGHT_PX }
 
 type WorkspacePhase =
   | { name: 'creating-mission' }
@@ -224,7 +229,8 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       // passed through here first).
       const { originLat, originLng } = phase.mission
       return (
-        <div style={FLEX_COLUMN_FULL_HEIGHT_STYLE}>
+        <div style={READY_NO_INTERIOR_STYLE}>
+          <Toolbar />
           <NonBlockingErrorBanner error={nonBlockingError} />
           <div style={MAP_WRAPPER_STYLE}>
             <SiteMapView

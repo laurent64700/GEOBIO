@@ -566,6 +566,10 @@ describe('MissionWorkspace', () => {
       />
     )
     expect(await screen.findByText(/cliquez sur la carte/i)).toBeInTheDocument()
+    // setting-origin uses the shared FLEX_COLUMN_FULL_HEIGHT_STYLE unpadded and
+    // renders no Toolbar — it must stay visually unaffected by the new
+    // ready-no-interior-only READY_NO_INTERIOR_STYLE/Toolbar addition.
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument()
   })
 
   it('starts directly at ready-no-interior (SiteMapView visible immediately) when resumed there', async () => {
@@ -578,5 +582,8 @@ describe('MissionWorkspace', () => {
     )
     const siteMapView = await screen.findByTestId('site-map-view')
     expect(siteMapView).toHaveAttribute('data-plan-id', 'p1')
+    // ready-no-interior mounts the Toolbar as the first child of its
+    // READY_NO_INTERIOR_STYLE wrapper — confirm it actually renders here.
+    expect(screen.getByRole('toolbar')).toBeInTheDocument()
   })
 })
