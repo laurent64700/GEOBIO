@@ -24,6 +24,8 @@ const baseProps = {
   planId: 'p1',
   undoRedoBusy: false,
   onUndoRedoBusyChange: vi.fn(),
+  onToggleCalques: vi.fn(),
+  onToggleEditMode: vi.fn(),
 }
 
 describe('MenuBar — Fichier', () => {
@@ -151,5 +153,31 @@ describe('MenuBar — Modifier', () => {
     render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
     openMenu(screen.getByRole('button', { name: /modifier/i }))
     expect(await screen.findByRole('menuitem', { name: /supprimer l'élément/i })).toHaveAttribute('aria-disabled', 'true')
+  })
+})
+
+describe('MenuBar — Affichage', () => {
+  it('calls onToggleCalques when "Basculer Calques" is clicked', async () => {
+    render(<MenuBar {...baseProps} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /basculer calques/i }))
+    expect(baseProps.onToggleCalques).toHaveBeenCalled()
+  })
+
+  it('calls onToggleEditMode when "Mode édition" is clicked', async () => {
+    const onToggleEditMode = vi.fn()
+    render(<MenuBar {...baseProps} onToggleCalques={vi.fn()} onToggleEditMode={onToggleEditMode} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /mode édition/i }))
+    expect(onToggleEditMode).toHaveBeenCalled()
+  })
+
+  it('renders "Zoom +/-", "Recentrer sur les parcelles" and "Fond de carte" disabled', async () => {
+    render(<MenuBar {...baseProps} onToggleCalques={vi.fn()} onToggleEditMode={vi.fn()} />)
+    openMenu(screen.getByRole('button', { name: /affichage/i }))
+    expect(await screen.findByRole('menuitem', { name: /zoom \+/i })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: /zoom −/i })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: /recentrer/i })).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByRole('menuitem', { name: /fond de carte/i })).toHaveAttribute('aria-disabled', 'true')
   })
 })

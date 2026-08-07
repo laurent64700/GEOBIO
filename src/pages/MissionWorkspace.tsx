@@ -136,6 +136,17 @@ export function MissionWorkspace({
   // a real reentrancy gap code review caught. See UndoRedoControls.tsx's
   // `busy` prop doc comment for the full explanation.
   const [undoRedoBusy, setUndoRedoBusy] = useState(false)
+  // Both "is Calques open" and "is Mode édition on" are triggered from
+  // MenuBar's Affichage menu, which is a MissionWorkspace child, not a
+  // SiteMapView child — so both pieces of state live here and get threaded
+  // down to SiteMapView as fully controlled props (unlike Accordion's
+  // controlled/uncontrolled duality, there's exactly one owner of each flag
+  // here, so full lifting is simpler than giving SiteMapView a dual mode).
+  // calquesOpen's initial value matches the Calques section's own
+  // defaultOpen (false) in SiteMapView.tsx; editMode's matches the
+  // useState(false) that used to live inside SiteMapView.
+  const [calquesOpen, setCalquesOpen] = useState(false)
+  const [editMode, setEditMode] = useState(false)
   // Independent instance from the one inside OfflineIndicator.tsx — not
   // currently shared via context/App.tsx. The hook's internal `flushingRef`
   // guard (useOfflineSync.ts) is per-hook-call-instance state, NOT shared
@@ -304,6 +315,8 @@ export function MissionWorkspace({
                 planId={phase.exteriorPlan.id}
                 undoRedoBusy={undoRedoBusy}
                 onUndoRedoBusyChange={setUndoRedoBusy}
+                onToggleCalques={() => setCalquesOpen((v) => !v)}
+                onToggleEditMode={() => setEditMode((v) => !v)}
               />
             }
           >
@@ -324,6 +337,10 @@ export function MissionWorkspace({
               fitBounds={phase.fitBounds}
               reloadKey={reloadKey}
               guideLineSlotEl={guideLineSlotEl}
+              calquesOpen={calquesOpen}
+              onCalquesOpenChange={setCalquesOpen}
+              editMode={editMode}
+              onEditModeChange={setEditMode}
             />
           </div>
           <label>

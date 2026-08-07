@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
-import { SiteMapView } from './SiteMapView'
+import { SiteMapView, type SiteMapViewProps } from './SiteMapView'
 import * as gridInstancesRepo from '../data/gridInstancesRepo'
 import * as gridLinesRepo from '../data/gridLinesRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
@@ -158,6 +159,30 @@ vi.mock('./GridTemplatePicker', () => ({
   ),
 }))
 
+// editMode/calquesOpen are now controlled props (Task 13 lifted them into
+// MissionWorkspace) — most tests below never toggle either one, so a static
+// `false` + no-op callback is fine. But the handful of tests that actually
+// click "Mode édition" (or, in the future, a Calques toggle) need the click
+// to really flip state and re-render, the way MissionWorkspace's real
+// setEditMode/setCalquesOpen would — a no-op callback leaves SiteMapView
+// re-rendered with the SAME false it was given, so nothing gated by edit
+// mode ever appears. This wrapper owns real state for exactly those tests.
+function ControlledSiteMapView(
+  props: Omit<SiteMapViewProps, 'editMode' | 'onEditModeChange' | 'calquesOpen' | 'onCalquesOpenChange'>
+) {
+  const [editMode, setEditMode] = useState(false)
+  const [calquesOpen, setCalquesOpen] = useState(false)
+  return (
+    <SiteMapView
+      {...props}
+      editMode={editMode}
+      onEditModeChange={setEditMode}
+      calquesOpen={calquesOpen}
+      onCalquesOpenChange={setCalquesOpen}
+    />
+  )
+}
+
 const hartmannInstance = {
   id: 'gi1', planId: 'p1',
   templateSnapshot: { id: 't0', name: 'Hartmann', spacingXM: 2, spacingYM: 2.5, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#d32f2f', vibratoryBase: 7 },
@@ -204,7 +229,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     expect(await screen.findByTestId('felt-points')).toBeInTheDocument()
     expect(screen.queryByTestId('lines-Hartmann')).not.toBeInTheDocument()
@@ -217,7 +242,7 @@ describe('SiteMapView', () => {
       { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z' },
     ])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     expect(await screen.findByTestId('felt-segments')).toBeInTheDocument()
   })
@@ -235,7 +260,7 @@ describe('SiteMapView', () => {
       { id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 4, y: 0 }, polarityA: null, polarityB: null, createdAt: '2026-07-20T10:00:00Z' },
     ])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     await screen.findByTestId('felt-segments')
     fireEvent.click(await screen.findByLabelText('Tiges (segments ressentis)'))
@@ -250,7 +275,7 @@ describe('SiteMapView', () => {
       { id: 't-peyre', name: 'Peyré', spacingXM: 6.5, spacingYM: 7.25, angleTrueNorthDeg: 0, originOffsetX: 0, originOffsetY: 0, color: '#8e5fb3', vibratoryBase: 7 },
     ])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     await waitFor(() => expect(gridTemplatesRepo.listGridTemplates).toHaveBeenCalled())
   })
@@ -266,7 +291,7 @@ describe('SiteMapView', () => {
       },
     ])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     const overlay = await screen.findByTestId('calibrated-plan-overlay')
     expect(overlay).toHaveAttribute('data-image-url', 'https://x/plan.jpg')
@@ -279,7 +304,7 @@ describe('SiteMapView', () => {
       { id: 'p-ext', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
     ])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     expect(screen.queryByTestId('calibrated-plan-overlay')).not.toBeInTheDocument()
@@ -290,7 +315,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     await screen.findByTestId('felt-points')
     fireEvent.click(await screen.findByLabelText('Hartmann'))
@@ -303,7 +328,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     await screen.findByTestId('felt-points')
     fireEvent.click(await screen.findByLabelText('Ressenti terrain'))
@@ -318,7 +343,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('network down')
   })
@@ -327,7 +352,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -341,7 +366,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -353,7 +378,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'E/O' }))
@@ -367,7 +392,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: '135°' }))
@@ -381,7 +406,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.change(screen.getByLabelText('Angle personnalisé'), { target: { value: '27' } })
@@ -396,7 +421,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     // input starts empty; Number('') is 0 (not NaN), so the guard must also
@@ -410,7 +435,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: 'N/S' }))
@@ -427,7 +452,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     // "Effacer" is disabled until a guide line has been placed
@@ -458,7 +483,7 @@ describe('SiteMapView', () => {
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(gridLinesRepo.updateAdjustedPoints).mockResolvedValue(hartmannLine)
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<ControlledSiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
     await screen.findByTestId('map-view')
 
     // Enter edit mode and show the Hartmann layer so EditableNetworkLine (mocked
@@ -483,7 +508,7 @@ describe('SiteMapView', () => {
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(gridLinesRepo.updateAdjustedPoints).mockResolvedValue(hartmannLine)
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<ControlledSiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByLabelText(/mode édition/i))
@@ -568,7 +593,7 @@ describe('SiteMapView', () => {
       })
       vi.mocked(gridLinesRepo.updateLinePoints).mockResolvedValue(hartmannLine)
 
-      render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+      render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
       await screen.findByTestId('map-view')
 
       fireEvent.click(screen.getByLabelText('Hartmann')) // make the grid layer visible
@@ -627,7 +652,7 @@ describe('SiteMapView', () => {
       lines: [],
     })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
@@ -654,7 +679,7 @@ describe('SiteMapView', () => {
       lines: [],
     })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
     await screen.findByTestId('map-view')
 
     fireEvent.click(screen.getByRole('button', { name: /ajouter une grille/i }))
@@ -694,7 +719,7 @@ describe('SiteMapView', () => {
     })
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
 
     fireEvent.click(await screen.findByText('simulate-choose-building'))
@@ -708,7 +733,7 @@ describe('SiteMapView', () => {
     vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mockResolvedValue([]) // both calls return empty
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
 
     expect(await screen.findByText(/aucun bâtiment détecté/i)).toBeInTheDocument()
@@ -724,7 +749,7 @@ describe('SiteMapView', () => {
     )
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Impossible de charger les bâtiments : 500')
@@ -751,7 +776,7 @@ describe('SiteMapView', () => {
       ])
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
     await screen.findByRole('alert')
     const callsBeforeRetry = vi.mocked(buildingFootprintService.fetchBuildingsInBounds).mock.calls.length
@@ -779,7 +804,7 @@ describe('SiteMapView', () => {
     )
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
 
     fireEvent.click(await screen.findByText('simulate-choose-building'))
@@ -801,14 +826,14 @@ describe('SiteMapView', () => {
     )
 
     const { rerender } = render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
     await screen.findByTestId('map-view')
 
     // Origin changes while run 1's fetch is still in flight — the effect
     // cleanup must abort run 1, and run 2 fetches for the new origin.
     rerender(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 45.0, lng: 5.0 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 45.0, lng: 5.0 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
 
     // Run 2 (the current one) finds nothing even after widening.
@@ -862,7 +887,7 @@ describe('SiteMapView', () => {
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
     render(
-      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />
+      <SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />
     )
     await screen.findByTestId('map-view')
 
@@ -888,7 +913,7 @@ describe('SiteMapView', () => {
     )
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByLabelText(/croisements pathogènes/i))
 
@@ -903,7 +928,7 @@ describe('SiteMapView', () => {
       id: 'ph1', planId: 'p1', kind: 'spire-vortex', x: 1, y: 1, createdAt: '2026-07-21T10:00:00Z',
     })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /spire de vortex/i }))
     fireEvent.click(await screen.findByText('simulate-map-click'))
@@ -925,7 +950,7 @@ describe('SiteMapView', () => {
       .mockResolvedValueOnce({ id: 'co1', planId: 'p1', kind: 'arbre-chene', x: 1, y: 1, createdAt: '2026-07-27T10:00:00Z' })
       .mockResolvedValueOnce({ id: 'co2', planId: 'p1', kind: 'arbre-chene', x: 2, y: 2, createdAt: '2026-07-27T10:01:00Z' })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /arbre \(chêne\)/i }))
     fireEvent.click(await screen.findByText('simulate-map-click'))
@@ -953,7 +978,7 @@ describe('SiteMapView', () => {
       currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
     })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
     fireEvent.click(await screen.findByText('simulate-freeform-complete'))
@@ -989,7 +1014,7 @@ describe('SiteMapView', () => {
         currentBearingDeg: null, depthM: null, flowRate: null, createdAt: '2026-07-21T10:00:00Z',
       })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: /tracer l'eau/i }))
     fireEvent.click(await screen.findByText('simulate-freeform-complete'))
@@ -1026,7 +1051,7 @@ describe('SiteMapView', () => {
       polarityA: '+', polarityB: '-', createdAt: '2026-07-22T10:00:00Z',
     })
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
     // MapView's test mock (this file's own top-of-file vi.mock('./MapView', ...))
@@ -1064,7 +1089,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Hartmann' }))
 
@@ -1081,7 +1106,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Curry' }))
 
@@ -1096,7 +1121,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     expect(await screen.findByRole('button', { name: 'N/S' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'E/O' })).toBeInTheDocument()
@@ -1108,7 +1133,7 @@ describe('SiteMapView', () => {
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
 
-    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} />)
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
 
     expect(await screen.findByTestId('compass-indicator')).toBeInTheDocument()
   })
@@ -1123,6 +1148,10 @@ describe('SiteMapView', () => {
       missionOrigin: { lat: 48.8566, lng: 2.3522 },
       initialBuildingFootprint: null,
       guideLineSlotEl,
+      editMode: false,
+      onEditModeChange: () => {},
+      calquesOpen: false,
+      onCalquesOpenChange: () => {},
     }
 
     const { rerender } = render(<SiteMapView {...props} reloadKey={0} />)

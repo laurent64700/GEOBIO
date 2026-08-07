@@ -123,6 +123,18 @@ export interface SiteMapViewProps {
    * its JSX is portaled into this node instead of rendering inline in the
    * sidebar. */
   guideLineSlotEl: HTMLDivElement | null
+  /** Single global edit-mode toggle, now owned by MissionWorkspace (MenuBar's
+   * Affichage "Mode édition" item is a 2nd trigger for the same flag the
+   * sidebar checkbox controls, and MenuBar has no local state of its own to
+   * mirror it into) — fully controlled, no internal fallback state. */
+  editMode: boolean
+  onEditModeChange: (v: boolean) => void
+  /** Whether the sidebar's "Calques" Accordion section is open — also owned
+   * by MissionWorkspace (MenuBar's "Basculer Calques" is the 2nd trigger),
+   * passed straight through to Accordion's own controlled-section mode
+   * (open/onToggle) via the "calques" entry in the sections array below. */
+  calquesOpen: boolean
+  onCalquesOpenChange: (v: boolean) => void
 }
 
 // Fixed search radius around the mission origin, mirroring
@@ -159,7 +171,19 @@ const CARD_CHROME_STYLE = {
   borderRadius: 4,
 }
 
-export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint, fitBounds, reloadKey, guideLineSlotEl }: SiteMapViewProps) {
+export function SiteMapView({
+  planId,
+  missionId,
+  missionOrigin,
+  initialBuildingFootprint,
+  fitBounds,
+  reloadKey,
+  guideLineSlotEl,
+  editMode,
+  onEditModeChange,
+  calquesOpen,
+  onCalquesOpenChange,
+}: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
@@ -171,10 +195,9 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
   const [interiorPlan, setInteriorPlan] = useState<Plan | null>(null)
   const [visibility, setVisibility] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
-  // Single global edit-mode toggle (not per-layer) — Laurent works on one
-  // network at a time in the field, so whichever grid layer is currently
-  // visible becomes editable; see the bottom-left OverlayPanel usage below.
-  const [editMode, setEditMode] = useState(false)
+  // editMode is now a controlled prop (see SiteMapViewProps) — MenuBar's
+  // Affichage "Mode édition" item is a 2nd trigger for the same flag the
+  // sidebar checkbox below controls, and both live in MissionWorkspace now.
   // Grid recalibration ("caler sur un croisement de 2 tiges"): armed like
   // editMode (one global toggle, acts on whichever grid layer is currently
   // visible — same "one network at a time in the field" convention).
@@ -794,7 +817,7 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                     per-line button here.) */}
                 <div style={CARD_CHROME_STYLE}>
                   <label>
-                    <input type="checkbox" checked={editMode} onChange={() => setEditMode((v) => !v)} />
+                    <input type="checkbox" checked={editMode} onChange={(e) => onEditModeChange(e.target.checked)} />
                     Mode édition (caler sur le ressenti)
                   </label>
                   {editMode && (
@@ -840,6 +863,8 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
             id: 'calques',
             title: 'Calques',
             defaultOpen: false,
+            open: calquesOpen,
+            onToggle: onCalquesOpenChange,
             content: <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />,
           },
           {

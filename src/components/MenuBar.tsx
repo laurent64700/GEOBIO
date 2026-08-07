@@ -29,6 +29,15 @@ export interface MenuBarProps {
    * disable themselves while Modifier's Annuler/Refaire is running, closing
    * the reverse direction a one-way mirror left open. */
   onUndoRedoBusyChange: (busy: boolean) => void
+  /** Toggles the "Calques" Accordion section in SiteMapView's sidebar — a
+   * pure toggle wrapper around MissionWorkspace's setCalquesOpen, since
+   * MenuBar has no visibility into the Accordion's real DOM state (unlike
+   * MissionWorkspace, which receives Accordion's reported open value
+   * directly via onToggle and can pass the real setter through). */
+  onToggleCalques: () => void
+  /** Toggles SiteMapView's global "Mode édition" checkbox — a 2nd trigger
+   * for the same flag the checkbox in the sidebar already controls. */
+  onToggleEditMode: () => void
 }
 
 // The saveError/missionInfo panels below float via `position: absolute` off
@@ -71,6 +80,8 @@ export function MenuBar({
   planId,
   undoRedoBusy,
   onUndoRedoBusyChange,
+  onToggleCalques,
+  onToggleEditMode,
 }: MenuBarProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [missionInfoOpen, setMissionInfoOpen] = useState(false)
@@ -172,6 +183,29 @@ export function MenuBar({
             <DropdownMenu.Item disabled title="Pas encore disponible — aucune sélection globale n'existe aujourd'hui">
               Supprimer l'élément sélectionné
             </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button>Affichage</button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content>
+            <DropdownMenu.Item disabled title="Utilisez les contrôles +/- sur la carte">
+              Zoom +
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Utilisez les contrôles +/- sur la carte">
+              Zoom −
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Bientôt disponible">
+              Recentrer sur les parcelles
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={onToggleCalques}>Basculer Calques</DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Bientôt disponible">
+              Fond de carte
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={onToggleEditMode}>Mode édition</DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
