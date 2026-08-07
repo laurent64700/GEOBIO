@@ -1,9 +1,40 @@
+import { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { UndoRedoControls } from './UndoRedoControls'
 import * as actionHistory from '../offline/actionHistory'
 
 vi.mock('../offline/actionHistory')
+
+// A minimal controlled parent — mirrors how MissionWorkspace actually lifts
+// `busy` state and wires it to both UndoRedoControls and MenuBar in
+// production. UndoRedoControls no longer tracks busy internally (fully
+// controlled prop, see UndoRedoControlsProps' doc comment), so any test that
+// needs to observe the buttons' disabled state actually reacting to an
+// in-flight call must render through a real stateful parent like this one,
+// rather than a bare mock onBusyChange that never feeds a value back in.
+function ControlledUndoRedoControls({
+  planId,
+  onChanged,
+  onBusyChange,
+}: {
+  planId: string
+  onChanged: () => void
+  onBusyChange?: (busy: boolean) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <UndoRedoControls
+      planId={planId}
+      onChanged={onChanged}
+      busy={busy}
+      onBusyChange={(value) => {
+        setBusy(value)
+        onBusyChange?.(value)
+      }}
+    />
+  )
+}
 
 describe('UndoRedoControls', () => {
   beforeEach(() => {
@@ -13,7 +44,7 @@ describe('UndoRedoControls', () => {
   })
 
   it('renders both buttons disabled when there is nothing to undo/redo', async () => {
-    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} busy={false} onBusyChange={vi.fn()} />)
 
     expect(await screen.findByRole('button', { name: /annuler/i })).toBeDisabled()
     expect(screen.getByRole('button', { name: /refaire/i })).toBeDisabled()
@@ -23,7 +54,7 @@ describe('UndoRedoControls', () => {
     vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
     vi.mocked(actionHistory.hasRedoableAction).mockResolvedValue(true)
 
-    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} busy={false} onBusyChange={vi.fn()} />)
 
     await waitFor(() => expect(screen.getByRole('button', { name: /annuler/i })).toBeEnabled())
     expect(screen.getByRole('button', { name: /refaire/i })).toBeEnabled()
@@ -32,7 +63,7 @@ describe('UndoRedoControls', () => {
   it('clicking Annuler calls undo(planId) and then the onChanged callback', async () => {
     vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
     const onChanged = vi.fn()
-    render(<UndoRedoControls planId="p1" onChanged={onChanged} />)
+    render(<UndoRedoControls planId="p1" onChanged={onChanged} busy={false} onBusyChange={vi.fn()} />)
     const undoButton = await screen.findByRole('button', { name: /annuler/i })
     await waitFor(() => expect(undoButton).toBeEnabled())
 
@@ -45,7 +76,7 @@ describe('UndoRedoControls', () => {
   it('clicking Refaire calls redo(planId) and then the onChanged callback', async () => {
     vi.mocked(actionHistory.hasRedoableAction).mockResolvedValue(true)
     const onChanged = vi.fn()
-    render(<UndoRedoControls planId="p1" onChanged={onChanged} />)
+    render(<UndoRedoControls planId="p1" onChanged={onChanged} busy={false} onBusyChange={vi.fn()} />)
     const redoButton = await screen.findByRole('button', { name: /refaire/i })
     await waitFor(() => expect(redoButton).toBeEnabled())
 
@@ -59,7 +90,7 @@ describe('UndoRedoControls', () => {
     vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
     vi.mocked(actionHistory.undo).mockRejectedValue(new Error('réseau indisponible'))
     const onChanged = vi.fn()
-    render(<UndoRedoControls planId="p1" onChanged={onChanged} />)
+    render(<UndoRedoControls planId="p1" onChanged={onChanged} busy={false} onBusyChange={vi.fn()} />)
     const undoButton = await screen.findByRole('button', { name: /annuler/i })
     await waitFor(() => expect(undoButton).toBeEnabled())
 
@@ -82,7 +113,7 @@ describe('UndoRedoControls', () => {
     })
     vi.mocked(actionHistory.undo).mockReturnValue(pendingUndo)
 
-    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+    render(<ControlledUndoRedoControls planId="p1" onChanged={vi.fn()} />)
     const undoButton = await screen.findByRole('button', { name: /annuler/i })
     const redoButton = screen.getByRole('button', { name: /refaire/i })
     await waitFor(() => expect(undoButton).toBeEnabled())
@@ -109,7 +140,7 @@ describe('UndoRedoControls', () => {
   it('re-checks hasUndoableAction/hasRedoableAction on the poll interval, not just on mount (regression test for the interval actually being wired up)', async () => {
     vi.useFakeTimers()
     try {
-      render(<UndoRedoControls planId="p1" onChanged={vi.fn()} />)
+      render(<UndoRedoControls planId="p1" onChanged={vi.fn()} busy={false} onBusyChange={vi.fn()} />)
       // Mount-time call only.
       expect(vi.mocked(actionHistory.hasUndoableAction)).toHaveBeenCalledTimes(1)
 
@@ -130,16 +161,33 @@ describe('UndoRedoControls', () => {
     }
   })
 
-  it('calls onBusyChange(true) then onBusyChange(false) around an undo call', async () => {
+  it('calls onBusyChange(true) then onBusyChange(false) around an undo call, disabling the buttons via the busy prop in between', async () => {
     const onBusyChange = vi.fn()
     vi.mocked(actionHistory.hasUndoableAction).mockResolvedValue(true)
-    vi.mocked(actionHistory.undo).mockResolvedValue(undefined)
-    render(<UndoRedoControls planId="p1" onChanged={vi.fn()} onBusyChange={onBusyChange} />)
+    let resolveUndo: () => void
+    const pendingUndo = new Promise<void>((resolve) => {
+      resolveUndo = resolve
+    })
+    vi.mocked(actionHistory.undo).mockReturnValue(pendingUndo)
+    render(<ControlledUndoRedoControls planId="p1" onChanged={vi.fn()} onBusyChange={onBusyChange} />)
     await waitFor(() => expect(screen.getByLabelText('Annuler')).not.toBeDisabled())
 
     fireEvent.click(screen.getByLabelText('Annuler'))
 
     expect(onBusyChange).toHaveBeenCalledWith(true)
+    // UndoRedoControls is now a fully controlled component — it no longer
+    // flips its own disabled state internally. This only goes true because
+    // ControlledUndoRedoControls (standing in for the real parent,
+    // MissionWorkspace) received onBusyChange(true) and re-rendered with
+    // busy={true}. That round-trip through a real parent is exactly what a
+    // one-way mirror (the bug code review caught) would have failed to do.
+    await waitFor(() => expect(screen.getByLabelText('Annuler')).toBeDisabled())
+
+    await act(async () => {
+      resolveUndo!()
+      await pendingUndo
+    })
+
     await waitFor(() => expect(onBusyChange).toHaveBeenLastCalledWith(false))
   })
 })

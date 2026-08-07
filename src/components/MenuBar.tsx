@@ -16,12 +16,19 @@ export interface MenuBarProps {
   /** Plan whose action_history Modifier's Annuler/Refaire operate on — the
    * same plan Toolbar's own UndoRedoControls instance targets. */
   planId: string
-  /** Mirrors Toolbar's UndoRedoControls' own busy state (via its
-   * onBusyChange prop) — disables Modifier's Annuler/Refaire while THAT
-   * component's button is mid-operation, satisfying actionHistory.ts's
-   * "caller must prevent concurrent calls" precondition across both
-   * triggers of the same undo/redo actions. */
+  /** Single shared busy flag, owned by the parent (MissionWorkspace) and
+   * also written to by Toolbar's UndoRedoControls instance — disables
+   * Modifier's Annuler/Refaire while EITHER trigger's undo/redo call is
+   * mid-operation, satisfying actionHistory.ts's "caller must prevent
+   * concurrent calls" precondition across both triggers of the same
+   * undo/redo actions, in both directions. */
   undoRedoBusy: boolean
+  /** Reports Modifier's own in-flight undo/redo calls back to the parent,
+   * which folds them into the same shared value passed back down as
+   * undoRedoBusy — this is what lets Toolbar's own UndoRedoControls buttons
+   * disable themselves while Modifier's Annuler/Refaire is running, closing
+   * the reverse direction a one-way mirror left open. */
+  onUndoRedoBusyChange: (busy: boolean) => void
 }
 
 // The saveError/missionInfo panels below float via `position: absolute` off
@@ -63,13 +70,10 @@ export function MenuBar({
   onQuitMission,
   planId,
   undoRedoBusy,
+  onUndoRedoBusyChange,
 }: MenuBarProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [missionInfoOpen, setMissionInfoOpen] = useState(false)
-  // This menu's own self-reentrancy guard — independent of undoRedoBusy — so
-  // a rapid double-click on the SAME "Annuler"/"Refaire" menu item can't
-  // race against itself, mirroring UndoRedoControls's exact busy pattern.
-  const [modifierBusy, setModifierBusy] = useState(false)
 
   async function handleSaveNow() {
     setSaveError(null)
@@ -96,7 +100,7 @@ export function MenuBar({
   }
 
   async function handleUndo() {
-    setModifierBusy(true)
+    onUndoRedoBusyChange(true)
     try {
       await undo(planId)
     } catch (err) {
@@ -104,18 +108,18 @@ export function MenuBar({
       // no separate error UI of its own.
       setSaveError(err instanceof Error ? err.message : String(err))
     } finally {
-      setModifierBusy(false)
+      onUndoRedoBusyChange(false)
     }
   }
 
   async function handleRedo() {
-    setModifierBusy(true)
+    onUndoRedoBusyChange(true)
     try {
       await redo(planId)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err))
     } finally {
-      setModifierBusy(false)
+      onUndoRedoBusyChange(false)
     }
   }
 
@@ -159,10 +163,10 @@ export function MenuBar({
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content>
-            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleUndo}>
+            <DropdownMenu.Item disabled={undoRedoBusy} onSelect={handleUndo}>
               Annuler
             </DropdownMenu.Item>
-            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleRedo}>
+            <DropdownMenu.Item disabled={undoRedoBusy} onSelect={handleRedo}>
               Refaire
             </DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Pas encore disponible — aucune sélection globale n'existe aujourd'hui">

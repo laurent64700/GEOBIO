@@ -1,6 +1,6 @@
 // src/components/MenuBar.test.tsx
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MenuBar } from './MenuBar'
 import * as actionHistory from '../offline/actionHistory'
 
@@ -23,6 +23,7 @@ const baseProps = {
   onQuitMission: vi.fn(),
   planId: 'p1',
   undoRedoBusy: false,
+  onUndoRedoBusyChange: vi.fn(),
 }
 
 describe('MenuBar — Fichier', () => {
@@ -84,6 +85,14 @@ describe('MenuBar — Fichier', () => {
 })
 
 describe('MenuBar — Modifier', () => {
+  beforeEach(() => {
+    // MenuBar's undo/redo mocks carry mockReturnValue overrides (pending
+    // promises) between tests otherwise — reset call history AND
+    // implementations so each test starts from the auto-mocked default.
+    vi.mocked(actionHistory.undo).mockReset()
+    vi.mocked(actionHistory.redo).mockReset()
+  })
+
   it('calls undo(planId) when "Annuler" is clicked', async () => {
     render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
     openMenu(screen.getByRole('button', { name: /modifier/i }))
@@ -98,17 +107,44 @@ describe('MenuBar — Modifier', () => {
     expect(screen.getByRole('menuitem', { name: /^refaire$/i })).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('disables Annuler/Refaire for the duration of its own in-flight call (self-reentrancy guard)', async () => {
+  it('disables Annuler/Refaire for the duration of its own in-flight call, once the parent reflects busy back down via undoRedoBusy', async () => {
+    // MenuBar no longer tracks its own local busy state (that was the
+    // one-way-mirror design code review flagged) — it only reports outward
+    // via onUndoRedoBusyChange. This test plays the parent's role by hand:
+    // observe the call, then re-render with undoRedoBusy={true}, exactly as
+    // MissionWorkspace's real setUndoRedoBusy state update would cause.
     let resolveUndo: () => void
     vi.mocked(actionHistory.undo).mockReturnValue(new Promise((resolve) => { resolveUndo = () => resolve(undefined) }))
-    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} />)
+    const onUndoRedoBusyChange = vi.fn()
+    const { rerender } = render(
+      <MenuBar {...baseProps} planId="p1" undoRedoBusy={false} onUndoRedoBusyChange={onUndoRedoBusyChange} />
+    )
     openMenu(screen.getByRole('button', { name: /modifier/i }))
     fireEvent.click(await screen.findByRole('menuitem', { name: /^annuler$/i }))
+
+    expect(onUndoRedoBusyChange).toHaveBeenCalledWith(true)
+    rerender(<MenuBar {...baseProps} planId="p1" undoRedoBusy={true} onUndoRedoBusyChange={onUndoRedoBusyChange} />)
 
     openMenu(screen.getByRole('button', { name: /modifier/i }))
     expect(await screen.findByRole('menuitem', { name: /^annuler$/i })).toHaveAttribute('aria-disabled', 'true')
 
     resolveUndo!()
+  })
+
+  it('reports its own in-flight undo as busy via onUndoRedoBusyChange(true), so a real parent could disable Toolbar\'s UndoRedoControls in turn', async () => {
+    // Proves the reverse direction the one-way-mirror bug left unguarded:
+    // Modifier's own action must report busy outward, not just receive it.
+    let resolveUndo: () => void
+    vi.mocked(actionHistory.undo).mockReturnValue(new Promise((resolve) => { resolveUndo = () => resolve(undefined) }))
+    const onUndoRedoBusyChange = vi.fn()
+    render(<MenuBar {...baseProps} planId="p1" undoRedoBusy={false} onUndoRedoBusyChange={onUndoRedoBusyChange} />)
+    openMenu(screen.getByRole('button', { name: /modifier/i }))
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^annuler$/i }))
+
+    expect(onUndoRedoBusyChange).toHaveBeenCalledWith(true)
+    resolveUndo!()
+    await waitFor(() => expect(onUndoRedoBusyChange).toHaveBeenLastCalledWith(false))
   })
 
   it('renders "Supprimer l\'élément sélectionné" disabled', async () => {

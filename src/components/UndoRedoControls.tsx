@@ -8,14 +8,15 @@ export interface UndoRedoControlsProps {
    * entity lists (SiteMapView.tsx) — actionHistory.ts only touches the
    * IndexedDB/Supabase layer, it has no knowledge of any component's state. */
   onChanged: () => void
-  /** Mirrors this component's internal `busy` state outward — added so a
-   * sibling trigger for the same undo/redo actions (MenuBar's Modifier menu)
-   * can disable itself while THIS component's button is mid-operation,
-   * satisfying actionHistory.ts's "caller must prevent concurrent calls"
-   * precondition across both triggers, not just within this one component.
-   * Optional — omitting it preserves this component's exact pre-existing
-   * standalone behavior. */
-  onBusyChange?: (busy: boolean) => void
+  /** Shared busy flag, owned by the parent (MissionWorkspace) and also
+   * written to by MenuBar's Modifier menu — this component no longer
+   * tracks its own local busy state, since a purely one-way mirror
+   * (this component -> parent) left the reverse direction (Modifier's
+   * own in-flight call disabling THIS component's buttons) unguarded,
+   * a real reentrancy gap found in code review. Both triggers for the
+   * same undo/redo actions now read and write ONE shared value. */
+  busy: boolean
+  onBusyChange: (busy: boolean) => void
 }
 
 // No shared event bus exists between the many mutating handlers scattered
@@ -27,7 +28,7 @@ export interface UndoRedoControlsProps {
 // without that wiring.
 const POLL_INTERVAL_MS = 1500
 
-export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoControlsProps) {
+export function UndoRedoControls({ planId, onChanged, busy, onBusyChange }: UndoRedoControlsProps) {
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,13 +39,9 @@ export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoCo
   // to prevent a double-click or an undo-then-immediately-redo race. `busy`
   // disables BOTH buttons for the duration of any in-flight call, since undo
   // and redo both touch the same action_history entries and could race
-  // against each other, not just against themselves.
-  const [busy, setBusy] = useState(false)
-
-  function updateBusy(value: boolean) {
-    setBusy(value)
-    onBusyChange?.(value)
-  }
+  // against each other, not just against themselves. It's now a controlled
+  // prop, shared with MenuBar's Modifier menu via the parent, rather than
+  // local state — see the prop doc comment above for why.
 
   async function refresh() {
     setCanUndo(await hasUndoableAction(planId))
@@ -60,7 +57,7 @@ export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoCo
   }, [planId])
 
   async function handleUndo() {
-    updateBusy(true)
+    onBusyChange(true)
     try {
       await undo(planId)
       setError(null)
@@ -68,13 +65,13 @@ export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoCo
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      updateBusy(false)
+      onBusyChange(false)
     }
     await refresh()
   }
 
   async function handleRedo() {
-    updateBusy(true)
+    onBusyChange(true)
     try {
       await redo(planId)
       setError(null)
@@ -82,7 +79,7 @@ export function UndoRedoControls({ planId, onChanged, onBusyChange }: UndoRedoCo
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
-      updateBusy(false)
+      onBusyChange(false)
     }
     await refresh()
   }

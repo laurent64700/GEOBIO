@@ -125,10 +125,16 @@ export function MissionWorkspace({
   // its guide-line control panel into it (the panel's state/handlers stay
   // local to SiteMapView; only WHERE the JSX renders moves).
   const [guideLineSlotEl, setGuideLineSlotEl] = useState<HTMLDivElement | null>(null)
-  // Shared between Toolbar's UndoRedoControls instance (via its onBusyChange
-  // prop) and MenuBar's Modifier menu, so Modifier's Annuler/Refaire disable
-  // themselves while Toolbar's own Undo/Redo buttons are mid-operation —
-  // see UndoRedoControls.tsx's onBusyChange doc comment for why this exists.
+  // Single source of truth for the reentrancy guard actionHistory.ts's
+  // undo()/redo() require ("the caller must prevent concurrent calls").
+  // BOTH triggers for the same undo/redo actions — Toolbar's UndoRedoControls
+  // and MenuBar's Modifier menu — read it (as their busy/undoRedoBusy prop)
+  // AND write it (via onBusyChange/onUndoRedoBusyChange) as a controlled
+  // pair, so either one's in-flight call disables the other's buttons too.
+  // A first version mirrored this one-way (UndoRedoControls -> here only),
+  // which left Modifier's own in-flight call free to race Toolbar's button —
+  // a real reentrancy gap code review caught. See UndoRedoControls.tsx's
+  // `busy` prop doc comment for the full explanation.
   const [undoRedoBusy, setUndoRedoBusy] = useState(false)
   // Independent instance from the one inside OfflineIndicator.tsx — not
   // currently shared via context/App.tsx. The hook's internal `flushingRef`
@@ -297,12 +303,14 @@ export function MissionWorkspace({
                 onQuitMission={onNavigateToMissionList}
                 planId={phase.exteriorPlan.id}
                 undoRedoBusy={undoRedoBusy}
+                onUndoRedoBusyChange={setUndoRedoBusy}
               />
             }
           >
             <UndoRedoControls
               planId={phase.exteriorPlan.id}
               onChanged={() => setReloadKey((k) => k + 1)}
+              busy={undoRedoBusy}
               onBusyChange={setUndoRedoBusy}
             />
           </Toolbar>
