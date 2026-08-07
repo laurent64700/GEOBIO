@@ -110,6 +110,12 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
   // outside SiteMapView) so SiteMapView's reloadKey prop can re-trigger its
   // internal loadAll() after a successful undo/redo.
   const [reloadKey, setReloadKey] = useState(0)
+  // The DOM node Toolbar's "Ligne guide" toggle button exposes via its
+  // onGuideLineSlotReady callback ref — null while the panel is closed (or
+  // before Toolbar has mounted). Threaded down to SiteMapView, which portals
+  // its guide-line control panel into it (the panel's state/handlers stay
+  // local to SiteMapView; only WHERE the JSX renders moves).
+  const [guideLineSlotEl, setGuideLineSlotEl] = useState<HTMLDivElement | null>(null)
 
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })
@@ -235,7 +241,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       const { originLat, originLng } = phase.mission
       return (
         <div style={READY_NO_INTERIOR_STYLE}>
-          <Toolbar>
+          <Toolbar onGuideLineSlotReady={setGuideLineSlotEl}>
             <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
           </Toolbar>
           <NonBlockingErrorBanner error={nonBlockingError} />
@@ -247,6 +253,7 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
               initialBuildingFootprint={phase.mission.buildingFootprint}
               fitBounds={phase.fitBounds}
               reloadKey={reloadKey}
+              guideLineSlotEl={guideLineSlotEl}
             />
           </div>
           <label>

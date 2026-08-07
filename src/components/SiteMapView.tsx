@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { LatLngBoundsExpression } from 'leaflet'
 import { MapView } from './MapView'
 import { NetworkLinesLayer } from './NetworkLinesLayer'
@@ -115,6 +116,13 @@ export interface SiteMapViewProps {
    * component now lives in Toolbar, outside this component) to re-trigger the
    * mount effect's loadAll() without needing planId itself to change. */
   reloadKey?: number
+  /** The DOM node Toolbar's "Ligne guide" toggle button exposes (via its
+   * onGuideLineSlotReady callback ref), threaded down through
+   * MissionWorkspace — null while that panel is closed. The guide-line
+   * control panel's own state/handlers stay local to this component; only
+   * its JSX is portaled into this node instead of rendering inline in the
+   * sidebar. */
+  guideLineSlotEl: HTMLDivElement | null
 }
 
 // Fixed search radius around the mission origin, mirroring
@@ -151,7 +159,7 @@ const CARD_CHROME_STYLE = {
   borderRadius: 4,
 }
 
-export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint, fitBounds, reloadKey }: SiteMapViewProps) {
+export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingFootprint, fitBounds, reloadKey, guideLineSlotEl }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
@@ -656,6 +664,76 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
           visible={visibility[FREEFORM_NETWORK_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(FREEFORM_NETWORK_LAYER_ID)}
         />
       </MapView>
+      {/* "Ligne guide" controls (N/S, E/O, 45°, 135°, custom-angle input,
+          Valider/Placer ici/Effacer) — formerly the sidebar's own
+          'ligne-guide' accordion section, now portaled into the DOM node
+          Toolbar's "Ligne guide" toggle button exposes (see Toolbar.tsx's
+          onGuideLineSlotReady / MissionWorkspace's guideLineSlotEl). All
+          state/handlers below are unchanged, moved verbatim — only WHERE
+          this JSX renders changed. guideLineSlotEl is null while that panel
+          is closed (or before Toolbar mounts), so nothing renders then. */}
+      {guideLineSlotEl && createPortal(
+        <div style={CARD_CHROME_STYLE}>
+          {(allowedBearings === null || allowedBearings.includes(0)) && (
+            <button
+              onClick={() => {
+                setGuideLineBearing(0)
+                setCustomBearingInput('')
+              }}
+            >
+              N/S
+            </button>
+          )}
+          {(allowedBearings === null || allowedBearings.includes(90)) && (
+            <button
+              onClick={() => {
+                setGuideLineBearing(90)
+                setCustomBearingInput('')
+              }}
+            >
+              E/O
+            </button>
+          )}
+          {(allowedBearings === null || allowedBearings.includes(45)) && (
+            <button
+              onClick={() => {
+                setGuideLineBearing(45)
+                setCustomBearingInput('')
+              }}
+            >
+              45°
+            </button>
+          )}
+          {(allowedBearings === null || allowedBearings.includes(135)) && (
+            <button
+              onClick={() => {
+                setGuideLineBearing(135)
+                setCustomBearingInput('')
+              }}
+            >
+              135°
+            </button>
+          )}
+          <input
+            type="number"
+            step="1"
+            aria-label="Angle personnalisé"
+            value={customBearingInput}
+            onChange={(e) => setCustomBearingInput(e.target.value)}
+          />
+          <button onClick={handleValidateCustomBearing}>Valider</button>
+          <button
+            onClick={() => startPlacementMode({ kind: 'guide-line' })}
+            disabled={guideLineBearing === null}
+          >
+            Placer ici
+          </button>
+          <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
+            Effacer
+          </button>
+        </div>,
+        guideLineSlotEl
+      )}
       {/* Full-height left sidebar (spec §3) — replaces the former 4 floating
           OverlayPanel corners (top-right, top-left, bottom-left) with one
           pinned band + collapsible accordion. Pure relocation: every section
@@ -843,72 +921,6 @@ export function SiteMapView({ planId, missionId, missionOrigin, initialBuildingF
                   </div>
                 )}
               </>
-            ),
-          },
-          {
-            id: 'ligne-guide',
-            title: 'Ligne guide',
-            defaultOpen: false,
-            content: (
-              <div style={CARD_CHROME_STYLE}>
-                {(allowedBearings === null || allowedBearings.includes(0)) && (
-                  <button
-                    onClick={() => {
-                      setGuideLineBearing(0)
-                      setCustomBearingInput('')
-                    }}
-                  >
-                    N/S
-                  </button>
-                )}
-                {(allowedBearings === null || allowedBearings.includes(90)) && (
-                  <button
-                    onClick={() => {
-                      setGuideLineBearing(90)
-                      setCustomBearingInput('')
-                    }}
-                  >
-                    E/O
-                  </button>
-                )}
-                {(allowedBearings === null || allowedBearings.includes(45)) && (
-                  <button
-                    onClick={() => {
-                      setGuideLineBearing(45)
-                      setCustomBearingInput('')
-                    }}
-                  >
-                    45°
-                  </button>
-                )}
-                {(allowedBearings === null || allowedBearings.includes(135)) && (
-                  <button
-                    onClick={() => {
-                      setGuideLineBearing(135)
-                      setCustomBearingInput('')
-                    }}
-                  >
-                    135°
-                  </button>
-                )}
-                <input
-                  type="number"
-                  step="1"
-                  aria-label="Angle personnalisé"
-                  value={customBearingInput}
-                  onChange={(e) => setCustomBearingInput(e.target.value)}
-                />
-                <button onClick={handleValidateCustomBearing}>Valider</button>
-                <button
-                  onClick={() => startPlacementMode({ kind: 'guide-line' })}
-                  disabled={guideLineBearing === null}
-                >
-                  Placer ici
-                </button>
-                <button onClick={handleClearGuideLine} disabled={guideLineAnchor === null}>
-                  Effacer
-                </button>
-              </div>
             ),
           },
           ...(buildingFootprint !== null || buildingSearchExhausted || buildingError !== null
