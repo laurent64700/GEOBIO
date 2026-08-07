@@ -44,6 +44,8 @@ export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
         Ligne guide
       </button>
       {guideLinePanelOpen && <div ref={onGuideLineSlotReady} />}
+      <button disabled title="Bientôt disponible (Phase 2)">Placer</button>
+      <button disabled title="Bientôt disponible (Phase 2)">Tracer</button>
     </div>
   )
 }

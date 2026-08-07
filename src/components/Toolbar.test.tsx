@@ -32,4 +32,13 @@ describe('Toolbar', () => {
     // instead of the full argument list.
     expect(onGuideLineSlotReady.mock.calls.at(-1)?.[0]).toBeNull()
   })
+
+  it('renders disabled Placer and Tracer placeholders with a tooltip', () => {
+    render(<Toolbar />)
+    const placer = screen.getByRole('button', { name: /placer/i })
+    const tracer = screen.getByRole('button', { name: /tracer/i })
+    expect(placer).toBeDisabled()
+    expect(tracer).toBeDisabled()
+    expect(placer).toHaveAttribute('title', expect.stringMatching(/bientôt disponible/i))
+  })
 })
