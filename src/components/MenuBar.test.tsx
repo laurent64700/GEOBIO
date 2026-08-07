@@ -58,6 +58,33 @@ describe('MenuBar — Fichier', () => {
     expect(baseProps.onDuplicateMission).toHaveBeenCalled()
   })
 
+  it('disables "Enregistrer sous" for the duration of its own in-flight call (reentrancy guard)', async () => {
+    let resolveDuplicate: () => void
+    const onDuplicateMission = vi.fn(
+      () => new Promise<void>((resolve) => { resolveDuplicate = () => resolve() })
+    )
+    render(<MenuBar {...baseProps} onDuplicateMission={onDuplicateMission} />)
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /enregistrer sous/i }))
+
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    const stillPendingItem = await screen.findByRole('menuitem', { name: /enregistrer sous/i })
+    expect(stillPendingItem).toHaveAttribute('aria-disabled', 'true')
+
+    // Actually attempt the reentrant click (not just check the attribute) —
+    // Radix's own DropdownMenu.Item checks `disabled` internally before
+    // dispatching onSelect, so this proves the second click is genuinely
+    // swallowed, not just that the item looks disabled.
+    fireEvent.click(stillPendingItem)
+    expect(onDuplicateMission).toHaveBeenCalledTimes(1)
+
+    resolveDuplicate!()
+    await waitFor(() =>
+      expect(screen.getByRole('menuitem', { name: /enregistrer sous/i })).not.toHaveAttribute('aria-disabled', 'true')
+    )
+    expect(onDuplicateMission).toHaveBeenCalledTimes(1)
+  })
+
   it('renders "Imprimer" disabled with a tooltip', async () => {
     render(<MenuBar {...baseProps} />)
     openMenu(screen.getByRole('button', { name: /fichier/i }))

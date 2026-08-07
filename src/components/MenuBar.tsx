@@ -85,6 +85,16 @@ export function MenuBar({
 }: MenuBarProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [missionInfoOpen, setMissionInfoOpen] = useState(false)
+  // Unlike Annuler/Refaire, nothing else in the app can trigger
+  // duplicateMission concurrently, so a local flag (not a lifted/shared one
+  // like undoRedoBusy) is enough here. Still needed, though: duplicateMission
+  // makes 2-4 sequential Supabase calls with no idempotency check, and
+  // deleteMission doesn't exist anywhere in this codebase, so an accidental
+  // double-trigger (re-opening this menu and clicking again before the first
+  // call resolves — plausible on a slow field connection) creates a
+  // permanent duplicate mission with no way to clean it up from the app.
+  // Found in the toolbar-ribbon branch's final review.
+  const [duplicating, setDuplicating] = useState(false)
 
   async function handleSaveNow() {
     setSaveError(null)
@@ -103,10 +113,13 @@ export function MenuBar({
     // failed "Enregistrer" could leave an error on screen that then reads as
     // if it belongs to this "Enregistrer sous" action instead.
     setSaveError(null)
+    setDuplicating(true)
     try {
       await onDuplicateMission()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDuplicating(false)
     }
   }
 
@@ -160,7 +173,7 @@ export function MenuBar({
             <DropdownMenu.Item onSelect={onNavigateToMissionList}>Mes missions</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setMissionInfoOpen(true)}>Infos de la mission</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={handleSaveNow}>Enregistrer</DropdownMenu.Item>
-            <DropdownMenu.Item onSelect={handleDuplicate}>Enregistrer sous</DropdownMenu.Item>
+            <DropdownMenu.Item disabled={duplicating} onSelect={handleDuplicate}>Enregistrer sous</DropdownMenu.Item>
             <DropdownMenu.Item disabled title="Génération de rapport pas encore disponible">
               Imprimer
             </DropdownMenu.Item>

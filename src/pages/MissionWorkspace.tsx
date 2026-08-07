@@ -50,8 +50,21 @@ const MAP_WRAPPER_STYLE = { flex: 1, minHeight: 0 }
 const FLEX_COLUMN_FULL_HEIGHT_STYLE = { display: 'flex', flexDirection: 'column' as const, height: '100%' }
 // Only for the ready-no-interior case, which renders <Toolbar /> — NOT a
 // replacement for FLEX_COLUMN_FULL_HEIGHT_STYLE, which setting-origin still
-// uses unpadded (it has no Toolbar).
-const READY_NO_INTERIOR_STYLE = { ...FLEX_COLUMN_FULL_HEIGHT_STYLE, paddingTop: TOOLBAR_HEIGHT_PX }
+// uses unpadded (it has no Toolbar). boxSizing: 'border-box' is required,
+// not decorative: this codebase has no global box-sizing reset (only #root
+// itself, in index.css, is border-box), so under the browser default
+// content-box, height:'100%' + paddingTop would make this element's actual
+// rendered height 100% of its parent PLUS TOOLBAR_HEIGHT_PX — overflowing
+// its own container by exactly the toolbar's height and pushing the bottom
+// of the ready-no-interior screen (file inputs, MissionPhotosGallery,
+// GlobalAssessmentBar) below the fold. Found in the toolbar-ribbon branch's
+// final review — jsdom doesn't implement CSS layout, so no automated test
+// could see this.
+const READY_NO_INTERIOR_STYLE = {
+  ...FLEX_COLUMN_FULL_HEIGHT_STYLE,
+  paddingTop: TOOLBAR_HEIGHT_PX,
+  boxSizing: 'border-box' as const,
+}
 
 type WorkspacePhase =
   | { name: 'creating-mission' }
