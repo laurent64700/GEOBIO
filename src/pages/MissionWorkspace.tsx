@@ -10,11 +10,19 @@ import { MissionPhotosGallery } from '../components/MissionPhotosGallery'
 import { ParcelSelectionStep } from '../components/ParcelSelectionStep'
 import { Toolbar, TOOLBAR_HEIGHT_PX } from '../components/Toolbar'
 import { UndoRedoControls } from '../components/UndoRedoControls'
+import { MenuBar } from '../components/MenuBar'
 import { createPlan } from '../data/plansRepo'
-import { setMissionOrigin, setGlobalAssessment, setSelectedParcels, type GlobalAssessmentInput } from '../data/missionsRepo'
+import {
+  setMissionOrigin,
+  setGlobalAssessment,
+  setSelectedParcels,
+  duplicateMission,
+  type GlobalAssessmentInput,
+} from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
 import { geocodeAddress } from '../data/geocodingService'
 import { preloadPlanForOffline } from '../offline/preload'
+import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { CadastralParcel } from '../data/cadastreService'
 import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
 import type { AffineTransform, Mission, Plan } from '../domain/types'
@@ -84,14 +92,15 @@ function NonBlockingErrorBanner({ error }: { error: NonBlockingError | null }) {
 
 export interface MissionWorkspaceProps {
   initialResumePhase?: ResumePhase
-  // Accepted here for plumbing purposes only — not yet wired into the render
-  // tree (no button/menu calls these). A later task in the toolbar/menu plan
-  // wires them into a Fichier menu ("Mes missions" / "Nouvelle mission").
   onNavigateToMissionList: () => void
   onNavigateToNewMission: () => void
 }
 
-export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) {
+export function MissionWorkspace({
+  initialResumePhase,
+  onNavigateToMissionList,
+  onNavigateToNewMission,
+}: MissionWorkspaceProps) {
   const [phase, setPhase] = useState<WorkspacePhase>(
     initialResumePhase
       ? (initialResumePhase.name === 'setting-origin'
@@ -116,6 +125,26 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
   // its guide-line control panel into it (the panel's state/handlers stay
   // local to SiteMapView; only WHERE the JSX renders moves).
   const [guideLineSlotEl, setGuideLineSlotEl] = useState<HTMLDivElement | null>(null)
+  // Independent instance from the one inside OfflineIndicator.tsx — not
+  // currently shared via context/App.tsx. The hook's internal `flushingRef`
+  // guard (useOfflineSync.ts) is per-hook-call-instance state, NOT shared
+  // across the 2 independent useOfflineSync() call sites, so it does NOT
+  // prevent this instance and OfflineIndicator's from both calling
+  // flushPendingMutations() concurrently (e.g. both mounted and both firing
+  // on the same 'online' event). flushPendingMutations() itself has no
+  // concurrency guard either — this is the exact race useOfflineSync.ts's
+  // own docstring already warns about (a losing concurrent flush can hit a
+  // duplicate-key error from Supabase on a mutation the other already
+  // replayed, leaving a phantom entry that fails forever on retry).
+  // Accepted as a low-probability risk rather than solved here: it requires
+  // near-simultaneous 'online' events or mount timing across both
+  // components, and wiring a single shared instance through Context is
+  // disproportionate scope for this task — consistent with how this
+  // codebase already documents similar accepted concurrency risks elsewhere
+  // (see actionHistory.ts's "Known limitation (accepted risk, not fixed)"
+  // comment on undo/redo racing ordinary mutations). Only flushNow (for the
+  // Fichier menu's "Enregistrer") is needed here.
+  const { flushNow } = useOfflineSync()
 
   async function handleMissionCreated(mission: Mission) {
     setPhase({ name: 'creating-exterior-plan', mission })
@@ -241,7 +270,29 @@ export function MissionWorkspace({ initialResumePhase }: MissionWorkspaceProps) 
       const { originLat, originLng } = phase.mission
       return (
         <div style={READY_NO_INTERIOR_STYLE}>
-          <Toolbar onGuideLineSlotReady={setGuideLineSlotEl}>
+          <Toolbar
+            onGuideLineSlotReady={setGuideLineSlotEl}
+            menuBar={
+              <MenuBar
+                onNavigateToMissionList={onNavigateToMissionList}
+                onNavigateToNewMission={onNavigateToNewMission}
+                missionInfo={{
+                  address: phase.mission.address,
+                  missionDate: phase.mission.missionDate,
+                  parcelRefs: phase.mission.parcelRefs,
+                }}
+                onSaveNow={flushNow}
+                onDuplicateMission={async () => {
+                  await duplicateMission(phase.mission)
+                  // Simplest correct behavior: land back on the list, showing
+                  // the new duplicate — no separate "jump straight into the
+                  // new mission" requirement was specified.
+                  onNavigateToMissionList()
+                }}
+                onQuitMission={onNavigateToMissionList}
+              />
+            }
+          >
             <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
           </Toolbar>
           <NonBlockingErrorBanner error={nonBlockingError} />

@@ -7,6 +7,7 @@ import * as missionsRepo from '../data/missionsRepo'
 import * as planImageStorage from '../data/planImageStorage'
 import * as geocodingService from '../data/geocodingService'
 import * as preloadModule from '../offline/preload'
+import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { Mission } from '../domain/types'
 
 vi.mock('../data/plansRepo')
@@ -14,6 +15,12 @@ vi.mock('../data/missionsRepo')
 vi.mock('../data/planImageStorage')
 vi.mock('../data/geocodingService')
 vi.mock('../offline/preload')
+// MissionWorkspace now calls useOfflineSync() directly (Task 11, for the
+// Fichier menu's "Enregistrer"). Its real implementation hits IndexedDB on
+// mount, which jsdom doesn't provide — mock it the same way
+// OfflineIndicator.test.tsx does, so every ready-no-interior render here
+// doesn't trigger an unhandled "indexedDB is not defined" rejection.
+vi.mock('../hooks/useOfflineSync')
 
 vi.mock('../components/MissionForm', async () => {
   const { useEffect } = await import('react')
@@ -183,6 +190,17 @@ async function advanceToReadyNoInterior(resolvedMission: Mission = missionWithOr
   await waitFor(() => expect(missionsRepo.setSelectedParcels).toHaveBeenCalled())
 }
 
+// MenuBar (unmocked here, unlike UndoRedoControls above) renders a real
+// Radix DropdownMenu.Trigger, which opens on pointerdown, not a synthetic
+// click — jsdom's fireEvent.click doesn't synthesize the pointer-event
+// sequence a real click produces. Same helper as MenuBar.test.tsx's
+// `openMenu`; duplicated locally rather than imported since MenuBar.test.tsx
+// doesn't export it.
+function openMenu(trigger: HTMLElement) {
+  fireEvent.pointerDown(trigger)
+  fireEvent.pointerUp(trigger)
+}
+
 describe('MissionWorkspace', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -191,6 +209,10 @@ describe('MissionWorkspace', () => {
     // have to care about offline preloading. Tests that specifically exercise
     // the preload call/failure path override this.
     vi.mocked(preloadModule.preloadPlanForOffline).mockResolvedValue(undefined)
+    // Default useOfflineSync stub — no test in this file exercises the
+    // Fichier menu's "Enregistrer" flow (that's MenuBar.test.tsx's job); this
+    // just needs to exist so mounting Toolbar's <MenuBar> doesn't crash.
+    vi.mocked(useOfflineSync).mockReturnValue({ pendingCount: 0, flushNow: vi.fn().mockResolvedValue(undefined) })
   })
 
   it('creates an exterior plan once a mission is created, then shows the global assessment form', async () => {
@@ -626,5 +648,28 @@ describe('MissionWorkspace', () => {
     fireEvent.click(screen.getByText('simulate-undo-redo-changed'))
 
     await waitFor(() => expect(siteMapView).toHaveAttribute('data-reload-key', '1'))
+  })
+
+  it('wires the real MenuBar into Toolbar: "Quitter la mission" calls onNavigateToMissionList (not onNavigateToNewMission)', async () => {
+    // Unlike MenuBar.test.tsx (which exercises MenuBar in isolation with mock
+    // props), this proves MissionWorkspace's own prop wiring is correct —
+    // MenuBar is NOT mocked in this file, so this renders the real
+    // <MenuBar> Toolbar mounts in the ready-no-interior case.
+    const onNavigateToMissionList = vi.fn()
+    const onNavigateToNewMission = vi.fn()
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={onNavigateToMissionList}
+        onNavigateToNewMission={onNavigateToNewMission}
+      />
+    )
+    await screen.findByTestId('site-map-view')
+
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /quitter la mission/i }))
+
+    expect(onNavigateToMissionList).toHaveBeenCalled()
+    expect(onNavigateToNewMission).not.toHaveBeenCalled()
   })
 })

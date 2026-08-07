@@ -9,6 +9,11 @@ export interface ToolbarProps {
    * "Ligne guide" button is open, or `null` when it's closed. A callback ref,
    * not a RefObject — a plain useRef would read null on first render. */
   onGuideLineSlotReady?: (node: HTMLDivElement | null) => void
+  /** The File/Edit/View menu bar element (Task 11's <MenuBar>), rendered
+   * FIRST, before `children`. Toolbar stays menu-agnostic — it just reserves
+   * the leading slot; MissionWorkspace supplies the actual <MenuBar> element
+   * with its real handlers wired in. */
+  menuBar?: ReactNode
 }
 
 // Fixed-height, full-width, top-of-screen bar — spec §3 ("ruban Paint"). Height
@@ -77,10 +82,11 @@ const GUIDE_LINE_SLOT_STYLE = {
   zIndex: 1200, // above the toolbar row itself
 }
 
-export function Toolbar({ children, onGuideLineSlotReady }: ToolbarProps) {
+export function Toolbar({ children, onGuideLineSlotReady, menuBar }: ToolbarProps) {
   const [guideLinePanelOpen, setGuideLinePanelOpen] = useState(false)
   return (
     <div role="toolbar" style={TOOLBAR_STYLE}>
+      {menuBar}
       {children}
       <div style={GUIDE_LINE_WRAPPER_STYLE}>
         <button aria-pressed={guideLinePanelOpen} onClick={() => setGuideLinePanelOpen((v) => !v)}>
