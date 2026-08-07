@@ -125,6 +125,11 @@ export function MissionWorkspace({
   // its guide-line control panel into it (the panel's state/handlers stay
   // local to SiteMapView; only WHERE the JSX renders moves).
   const [guideLineSlotEl, setGuideLineSlotEl] = useState<HTMLDivElement | null>(null)
+  // Shared between Toolbar's UndoRedoControls instance (via its onBusyChange
+  // prop) and MenuBar's Modifier menu, so Modifier's Annuler/Refaire disable
+  // themselves while Toolbar's own Undo/Redo buttons are mid-operation —
+  // see UndoRedoControls.tsx's onBusyChange doc comment for why this exists.
+  const [undoRedoBusy, setUndoRedoBusy] = useState(false)
   // Independent instance from the one inside OfflineIndicator.tsx — not
   // currently shared via context/App.tsx. The hook's internal `flushingRef`
   // guard (useOfflineSync.ts) is per-hook-call-instance state, NOT shared
@@ -290,10 +295,16 @@ export function MissionWorkspace({
                   onNavigateToMissionList()
                 }}
                 onQuitMission={onNavigateToMissionList}
+                planId={phase.exteriorPlan.id}
+                undoRedoBusy={undoRedoBusy}
               />
             }
           >
-            <UndoRedoControls planId={phase.exteriorPlan.id} onChanged={() => setReloadKey((k) => k + 1)} />
+            <UndoRedoControls
+              planId={phase.exteriorPlan.id}
+              onChanged={() => setReloadKey((k) => k + 1)}
+              onBusyChange={setUndoRedoBusy}
+            />
           </Toolbar>
           <NonBlockingErrorBanner error={nonBlockingError} />
           <div style={MAP_WRAPPER_STYLE}>

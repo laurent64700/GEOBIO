@@ -1,6 +1,7 @@
 // src/components/MenuBar.tsx
 import { useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { undo, redo } from '../offline/actionHistory'
 
 export interface MenuBarProps {
   onNavigateToMissionList: () => void
@@ -12,6 +13,15 @@ export interface MenuBarProps {
   onSaveNow: () => Promise<void>
   onDuplicateMission: () => Promise<void>
   onQuitMission: () => void
+  /** Plan whose action_history Modifier's Annuler/Refaire operate on — the
+   * same plan Toolbar's own UndoRedoControls instance targets. */
+  planId: string
+  /** Mirrors Toolbar's UndoRedoControls' own busy state (via its
+   * onBusyChange prop) — disables Modifier's Annuler/Refaire while THAT
+   * component's button is mid-operation, satisfying actionHistory.ts's
+   * "caller must prevent concurrent calls" precondition across both
+   * triggers of the same undo/redo actions. */
+  undoRedoBusy: boolean
 }
 
 // The saveError/missionInfo panels below float via `position: absolute` off
@@ -51,9 +61,15 @@ export function MenuBar({
   onSaveNow,
   onDuplicateMission,
   onQuitMission,
+  planId,
+  undoRedoBusy,
 }: MenuBarProps) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [missionInfoOpen, setMissionInfoOpen] = useState(false)
+  // This menu's own self-reentrancy guard — independent of undoRedoBusy — so
+  // a rapid double-click on the SAME "Annuler"/"Refaire" menu item can't
+  // race against itself, mirroring UndoRedoControls's exact busy pattern.
+  const [modifierBusy, setModifierBusy] = useState(false)
 
   async function handleSaveNow() {
     setSaveError(null)
@@ -76,6 +92,30 @@ export function MenuBar({
       await onDuplicateMission()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleUndo() {
+    setModifierBusy(true)
+    try {
+      await undo(planId)
+    } catch (err) {
+      // Reuse the same dismissible error slot as Enregistrer — Modifier has
+      // no separate error UI of its own.
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setModifierBusy(false)
+    }
+  }
+
+  async function handleRedo() {
+    setModifierBusy(true)
+    try {
+      await redo(planId)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setModifierBusy(false)
     }
   }
 
@@ -110,6 +150,24 @@ export function MenuBar({
               Imprimer
             </DropdownMenu.Item>
             <DropdownMenu.Item onSelect={onQuitMission}>Quitter la mission</DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button>Modifier</button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content>
+            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleUndo}>
+              Annuler
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={undoRedoBusy || modifierBusy} onSelect={handleRedo}>
+              Refaire
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled title="Pas encore disponible — aucune sélection globale n'existe aujourd'hui">
+              Supprimer l'élément sélectionné
+            </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
       </DropdownMenu.Root>
