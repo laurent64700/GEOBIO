@@ -324,7 +324,12 @@ describe('ConfirmDialog', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Supprimer' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/connexion/i)
+    // "hors-ligne", not "connexion" — matches the actual implementation
+    // string in Step 3 below ("...indisponible hors-ligne — réessayez une
+    // fois connecté."), which contains "connecté" (past participle) but
+    // never the substring "connexion" (the noun) — a regex on the wrong one
+    // of the two would fail against the real component.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/hors-ligne/i)
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
