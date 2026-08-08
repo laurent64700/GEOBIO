@@ -7,6 +7,8 @@ import * as missionsRepo from '../data/missionsRepo'
 import * as planImageStorage from '../data/planImageStorage'
 import * as geocodingService from '../data/geocodingService'
 import * as preloadModule from '../offline/preload'
+import * as currentSessionModule from '../offline/currentSession'
+import * as connectivity from '../offline/connectivity'
 import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { Mission } from '../domain/types'
 
@@ -15,6 +17,8 @@ vi.mock('../data/missionsRepo')
 vi.mock('../data/planImageStorage')
 vi.mock('../data/geocodingService')
 vi.mock('../offline/preload')
+vi.mock('../offline/currentSession')
+vi.mock('../offline/connectivity')
 // MissionWorkspace now calls useOfflineSync() directly (Task 11, for the
 // Fichier menu's "Enregistrer"). Its real implementation hits IndexedDB on
 // mount, which jsdom doesn't provide — mock it the same way
@@ -671,5 +675,63 @@ describe('MissionWorkspace', () => {
 
     expect(onNavigateToMissionList).toHaveBeenCalled()
     expect(onNavigateToNewMission).not.toHaveBeenCalled()
+  })
+
+  it('onDeleteMission calls deleteMission, clears current_session when it matches the deleted mission, and navigates to the mission list', async () => {
+    vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({
+      mission: missionWithOrigin,
+      exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
+    })
+    const onNavigateToMissionList = vi.fn()
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={onNavigateToMissionList}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    await screen.findByTestId('site-map-view')
+
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+
+    // onDeleteMission's chain is deleteMission → getCurrentSession →
+    // (conditionally) clearCurrentSession → onNavigateToMissionList — all pure
+    // microtask chaining, no real timers. Waiting for the LAST effect in the
+    // chain via waitFor, then asserting the earlier ones synchronously right
+    // after, is safe (everything before it has necessarily already resolved)
+    // and avoids 3 separate waitFor calls for one linear chain.
+    await waitFor(() => expect(onNavigateToMissionList).toHaveBeenCalled())
+    expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
+    expect(currentSessionModule.clearCurrentSession).toHaveBeenCalled()
+  })
+
+  it('does not clear current_session when it references a different mission', async () => {
+    vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({
+      mission: { ...missionWithOrigin, id: 'some-other-mission' },
+      exteriorPlan: { id: 'p2', missionId: 'some-other-mission', kind: 'exterieur', imageUrl: null, calibration: null },
+    })
+    const onNavigateToMissionList = vi.fn()
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={onNavigateToMissionList}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    await screen.findByTestId('site-map-view')
+
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+
+    await waitFor(() => expect(onNavigateToMissionList).toHaveBeenCalled())
+    expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
+    expect(currentSessionModule.clearCurrentSession).not.toHaveBeenCalled()
   })
 })

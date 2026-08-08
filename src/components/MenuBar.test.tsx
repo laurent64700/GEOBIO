@@ -3,8 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MenuBar } from './MenuBar'
 import * as actionHistory from '../offline/actionHistory'
+import * as connectivity from '../offline/connectivity'
 
 vi.mock('../offline/actionHistory')
+vi.mock('../offline/connectivity')
 
 // Radix opens DropdownMenu.Trigger on pointerdown, not a synthetic click —
 // see this task's note above. Reused by every menu test in this file
@@ -20,6 +22,7 @@ const baseProps = {
   missionInfo: { address: '12 rue des Lilas', missionDate: '2026-08-06', parcelRefs: ['ABC-123'] },
   onSaveNow: vi.fn().mockResolvedValue(undefined),
   onDuplicateMission: vi.fn().mockResolvedValue(undefined),
+  onDeleteMission: vi.fn().mockResolvedValue(undefined),
   onQuitMission: vi.fn(),
   planId: 'p1',
   undoRedoBusy: false,
@@ -110,6 +113,26 @@ describe('MenuBar — Fichier', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /fermer/i }))
     expect(screen.queryByText('12 rue des Lilas')).not.toBeInTheDocument()
+  })
+
+  it('renders "Supprimer la mission" in Fichier, separated from "Quitter la mission" by separators', async () => {
+    render(<MenuBar {...baseProps} />)
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    expect(await screen.findByRole('menuitem', { name: /supprimer la mission/i })).toBeInTheDocument()
+    // Radix's DropdownMenu.Separator renders with role="separator" — asserts
+    // the visual-isolation intent (spec §4.2), not just the item's existence.
+    expect(screen.getAllByRole('separator').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('clicking "Supprimer la mission" opens a confirmation; confirming it calls onDeleteMission', async () => {
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    const onDeleteMission = vi.fn().mockResolvedValue(undefined)
+    render(<MenuBar {...baseProps} onDeleteMission={onDeleteMission} />)
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+    await waitFor(() => expect(onDeleteMission).toHaveBeenCalled())
   })
 })
 

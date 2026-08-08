@@ -17,11 +17,13 @@ import {
   setGlobalAssessment,
   setSelectedParcels,
   duplicateMission,
+  deleteMission,
   type GlobalAssessmentInput,
 } from '../data/missionsRepo'
 import { uploadPlanImage } from '../data/planImageStorage'
 import { geocodeAddress } from '../data/geocodingService'
 import { preloadPlanForOffline } from '../offline/preload'
+import { getCurrentSession, clearCurrentSession } from '../offline/currentSession'
 import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { CadastralParcel } from '../data/cadastreService'
 import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
@@ -322,6 +324,14 @@ export function MissionWorkspace({
                   // Simplest correct behavior: land back on the list, showing
                   // the new duplicate — no separate "jump straight into the
                   // new mission" requirement was specified.
+                  onNavigateToMissionList()
+                }}
+                onDeleteMission={async () => {
+                  await deleteMission(phase.mission.id)
+                  const cached = await getCurrentSession()
+                  if (cached?.mission.id === phase.mission.id) {
+                    await clearCurrentSession()
+                  }
                   onNavigateToMissionList()
                 }}
                 onQuitMission={onNavigateToMissionList}

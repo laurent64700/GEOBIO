@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { undo, redo } from '../offline/actionHistory'
+import { ConfirmDialog } from './ConfirmDialog'
 
 export interface MenuBarProps {
   onNavigateToMissionList: () => void
@@ -12,6 +13,7 @@ export interface MenuBarProps {
   missionInfo: { address: string; missionDate: string; parcelRefs: string[] }
   onSaveNow: () => Promise<void>
   onDuplicateMission: () => Promise<void>
+  onDeleteMission: () => Promise<void>
   onQuitMission: () => void
   /** Plan whose action_history Modifier's Annuler/Refaire operate on — the
    * same plan Toolbar's own UndoRedoControls instance targets. */
@@ -76,6 +78,7 @@ export function MenuBar({
   missionInfo,
   onSaveNow,
   onDuplicateMission,
+  onDeleteMission,
   onQuitMission,
   planId,
   undoRedoBusy,
@@ -88,13 +91,20 @@ export function MenuBar({
   // Unlike Annuler/Refaire, nothing else in the app can trigger
   // duplicateMission concurrently, so a local flag (not a lifted/shared one
   // like undoRedoBusy) is enough here. Still needed, though: duplicateMission
-  // makes 2-4 sequential Supabase calls with no idempotency check, and
-  // deleteMission doesn't exist anywhere in this codebase, so an accidental
-  // double-trigger (re-opening this menu and clicking again before the first
-  // call resolves — plausible on a slow field connection) creates a
-  // permanent duplicate mission with no way to clean it up from the app.
-  // Found in the toolbar-ribbon branch's final review.
+  // makes 2-4 sequential Supabase calls with no idempotency check, so an
+  // accidental double-trigger (re-opening this menu and clicking again
+  // before the first call resolves — plausible on a slow field connection)
+  // creates a permanent duplicate mission with no way to clean it up from
+  // the app. Found in the toolbar-ribbon branch's final review.
   const [duplicating, setDuplicating] = useState(false)
+  // Own show/hide state for the delete confirmation, same convention as
+  // missionInfoOpen above — ConfirmDialog itself owns the busy/error/
+  // reentrancy/offline-check logic for the delete action; MenuBar only
+  // decides whether the dialog is mounted. Unlike missionInfoOpen, there's
+  // no explicit "close" path back to false on success — not an oversight:
+  // a successful delete calls onNavigateToMissionList (see MissionWorkspace.tsx),
+  // which unmounts this whole component, so the reset is implicit via unmount.
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   async function handleSaveNow() {
     setSaveError(null)
@@ -163,6 +173,15 @@ export function MenuBar({
           <button onClick={() => setMissionInfoOpen(false)}>Fermer</button>
         </div>
       )}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title="Supprimer la mission ?"
+          message={`«${missionInfo.address} — ${missionInfo.missionDate}» — Cette action est irréversible.`}
+          confirmLabel="Supprimer"
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={onDeleteMission}
+        />
+      )}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger asChild>
           <button>Fichier</button>
@@ -177,6 +196,11 @@ export function MenuBar({
             <DropdownMenu.Item disabled title="Génération de rapport pas encore disponible">
               Imprimer
             </DropdownMenu.Item>
+            <DropdownMenu.Separator />
+            <DropdownMenu.Item onSelect={() => setConfirmingDelete(true)}>
+              Supprimer la mission
+            </DropdownMenu.Item>
+            <DropdownMenu.Separator />
             <DropdownMenu.Item onSelect={onQuitMission}>Quitter la mission</DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
