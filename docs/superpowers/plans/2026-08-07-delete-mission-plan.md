@@ -50,7 +50,7 @@ Puis ajouter à la fin du fichier :
 describe('deleteMission', () => {
   it('deletes the mission row, then best-effort cleans up both Storage buckets', async () => {
     const { from, chain } = createSupabaseChainMock({ data: null, error: null })
-    vi.mocked(supabase.from).mockImplementation(from)
+    vi.mocked(supabase).from = from
 
     const listPhotos = vi.fn().mockResolvedValue({
       data: [{ name: 'abc-123.jpg' }, { name: 'def-456.jpg' }],
@@ -77,7 +77,7 @@ describe('deleteMission', () => {
 
   it('propagates an error from the DB delete itself, without attempting Storage cleanup', async () => {
     const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
-    vi.mocked(supabase.from).mockImplementation(from)
+    vi.mocked(supabase).from = from
     const listPhotos = vi.fn()
     vi.mocked(supabase.storage.from).mockReturnValue({ list: listPhotos, remove: vi.fn() } as any)
 
@@ -87,7 +87,7 @@ describe('deleteMission', () => {
 
   it('does not throw when Storage cleanup itself fails (best-effort, mission is already deleted)', async () => {
     const { from } = createSupabaseChainMock({ data: null, error: null })
-    vi.mocked(supabase.from).mockImplementation(from)
+    vi.mocked(supabase).from = from
     vi.mocked(supabase.storage.from).mockReturnValue({
       list: vi.fn().mockResolvedValue({ data: null, error: { message: 'storage down' } }),
       remove: vi.fn(),
@@ -98,7 +98,7 @@ describe('deleteMission', () => {
 
   it('skips remove() entirely when a bucket has no files for this mission', async () => {
     const { from } = createSupabaseChainMock({ data: null, error: null })
-    vi.mocked(supabase.from).mockImplementation(from)
+    vi.mocked(supabase).from = from
     const remove = vi.fn()
     vi.mocked(supabase.storage.from).mockReturnValue({
       list: vi.fn().mockResolvedValue({ data: [], error: null }),
@@ -331,17 +331,13 @@ describe('ConfirmDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Supprimer' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('boom')
-    expect(screen.getByText('Supprimer la mission ?', { exact: false })).toBeInTheDocument
+    expect(screen.getByText('t')).toBeInTheDocument() // the dialog itself (title prop) is still rendered — not closed by an error
     fireEvent.click(screen.getByRole('button', { name: 'Fermer' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })
 ```
 
-(La dernière assertion de l'avant-dernier test — `getByText('Supprimer la
-mission ?'...)` — est un exemple, adapter au `title` réellement passé dans ce
-test si besoin ; l'intention est juste "le dialogue est toujours affiché après
-une erreur", pas fermé.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -458,7 +454,20 @@ se fait dans `App.tsx` (qui possède l'état `missions`), pas dans
 - [ ] **Step 1: Écrire les tests qui échouent**
 
 ```tsx
-// appended to src/components/MissionList.test.tsx
+// appended to src/components/MissionList.test.tsx — add near the top of the
+// file, alongside the existing imports:
+// import { isOnlineNow } from '../offline/connectivity'
+// vi.mock('../offline/connectivity')
+//
+// ConfirmDialog (Task 3) calls the real isOnlineNow() before invoking
+// onConfirm — every existing test in this codebase that exercises that path
+// mocks it first (see App.test.tsx, ConfirmDialog.test.tsx itself). Without
+// this mock, the 3rd test below hits a real network probe in jsdom and
+// either times out or is network-flaky.
+beforeEach(() => {
+  vi.mocked(isOnlineNow).mockResolvedValue(true)
+})
+
 it('renders a delete button per mission', () => {
   render(<MissionList missions={[makeMission()]} onSelectMission={vi.fn()} onCreateNew={vi.fn()} onDeleteMission={vi.fn()} />)
   expect(screen.getByRole('button', { name: /supprimer/i })).toBeInTheDocument()
@@ -483,7 +492,9 @@ it('confirming calls onDeleteMission with the mission', async () => {
 })
 ```
 
-(`waitFor` needs adding to this file's `@testing-library/react` import.)
+(`waitFor` needs adding to this file's `@testing-library/react` import. If this
+file already has its own `beforeEach`, merge the `isOnlineNow` stub into it
+rather than adding a second `beforeEach` block.)
 
 Note the two "Supprimer" buttons in the 3rd test (the row's own delete
 trigger, and the confirmation dialog's confirm button) — `{ name: /supprimer/i
@@ -579,19 +590,47 @@ import { deleteMission, listMissions } from './data/missionsRepo'
           />
 ```
 
-- [ ] **Step 5: Run tests, fix any stranded `<MissionList` call sites**
+- [ ] **Step 5: Write an `App.tsx`-level integration test**
+
+`App.test.tsx` already mocks `./data/missionsRepo`, `./offline/currentSession`,
+and `./offline/connectivity` (`vi.mock` calls near the top of the file) and
+does NOT mock `MissionList` — this proves the real wiring end-to-end, not just
+`MissionList.tsx`'s own props in isolation:
+
+```tsx
+// appended to src/App.test.tsx
+it('deleting a mission from the list calls deleteMission and removes it from the rendered list', async () => {
+  vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+  vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+  vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+  render(<App />)
+  await screen.findByText(new RegExp(existingMission.address))
+
+  fireEvent.click(screen.getByRole('button', { name: /supprimer/i }))
+  fireEvent.click(screen.getByRole('button', { name: 'Supprimer', exact: true }))
+
+  await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith(existingMission.id))
+  await waitFor(() => expect(screen.queryByText(new RegExp(existingMission.address))).not.toBeInTheDocument())
+})
+```
+
+(`existingMission` and the `missionsRepo`/`connectivity` namespace imports
+already exist in this file per its current pre-existing tests — reuse them,
+don't redeclare.)
+
+- [ ] **Step 6: Run tests, fix any stranded `<MissionList` call sites**
 
 Run: `npm test -- --run src/components/MissionList.test.tsx src/App.test.tsx`
 Expected: PASS. `onDeleteMission` is now a required prop — TypeScript will
 point at any other `<MissionList .../>` render call site missing it (check
 `src/App.test.tsx` in particular before assuming there are none).
 
-- [ ] **Step 6: Run the full suite**
+- [ ] **Step 7: Run the full suite**
 
 Run: `npm test -- --run`
 Expected: PASS
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/components/MissionList.tsx src/components/MissionList.test.tsx src/App.tsx src/App.test.tsx
@@ -621,10 +660,22 @@ dans `ConfirmDialog` (Task 3) et dans le prop `onDeleteMission` fourni par
 
 ```tsx
 // appended to src/components/MenuBar.test.tsx, inside describe('MenuBar — Fichier')
-it('renders "Supprimer la mission" in Fichier, separated from "Quitter la mission"', async () => {
+//
+// ConfirmDialog (Task 3) calls the real isOnlineNow() before invoking
+// onConfirm. Add near the top of the file, alongside the existing
+// `import * as actionHistory` / `vi.mock('../offline/actionHistory')` pair:
+//   import * as connectivity from '../offline/connectivity'
+//   vi.mock('../offline/connectivity')
+// and merge into this file's EXISTING beforeEach (line ~117, which already
+// resets the actionHistory mocks) rather than adding a second beforeEach:
+//   vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+it('renders "Supprimer la mission" in Fichier, separated from "Quitter la mission" by separators', async () => {
   render(<MenuBar {...baseProps} />)
   openMenu(screen.getByRole('button', { name: /fichier/i }))
   expect(await screen.findByRole('menuitem', { name: /supprimer la mission/i })).toBeInTheDocument()
+  // Radix's DropdownMenu.Separator renders with role="separator" — asserts
+  // the visual-isolation intent (spec §4.2), not just the item's existence.
+  expect(screen.getAllByRole('separator').length).toBeGreaterThanOrEqual(2)
 })
 
 it('clicking "Supprimer la mission" opens a confirmation; confirming it calls onDeleteMission', async () => {
@@ -641,9 +692,6 @@ it('clicking "Supprimer la mission" opens a confirmation; confirming it calls on
 Update this file's `baseProps` to add `onDeleteMission: vi.fn().mockResolvedValue(undefined)`
 — a new non-optional `MenuBarProps` field, needed because every test in this
 file spreads `{...baseProps}`.
-
-(`waitFor` may need adding to this file's `@testing-library/react` import if
-not already present — check first.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -700,6 +748,12 @@ busy/error state and calls `onConfirm` directly; `MenuBar` doesn't need a 2nd
 layer of error handling for this one action, since success also means this
 dialog + the whole `MenuBar` unmount imminently via navigation, see Task 6.)
 
+While in this file: the existing `duplicating` state's doc comment says
+"`deleteMission` doesn't exist anywhere in this codebase" — no longer true
+once Task 1 lands. Update that comment to drop the now-stale claim (the rest
+of its reasoning about `duplicateMission`'s own lack of an idempotency check
+still holds and should stay).
+
 Add the import at the top of the file:
 
 ```tsx
@@ -746,26 +800,94 @@ Après suppression réussie de la mission actuellement ouverte : vider
 `current_session` si elle référence cette mission (spec §5), puis naviguer
 vers la liste des missions.
 
-- [ ] **Step 1: Écrire le test qui échoue**
+- [ ] **Step 1: Écrire les tests qui échouent**
 
-Lire `src/pages/MissionWorkspace.test.tsx` en entier d'abord — ce fichier mocke
-déjà `MenuBar` (`vi.mock('../components/MenuBar', ...)`) pour capturer les
-props qu'il reçoit, exactement le pattern à réutiliser ici (voir comment le
-fichier teste déjà `onDuplicateMission`/`onQuitMission` pour un exemple direct
-à copier) :
+**Important, vérifié en lisant le fichier en entier avant d'écrire ce plan** :
+`MenuBar` n'est PAS mocké dans `MissionWorkspace.test.tsx` — le seul test
+Fichier existant ("Quitter la mission", ligne ~653) rend le VRAI `<MenuBar>`
+monté par `Toolbar` dans la phase `ready-no-interior`, l'ouvre via le helper
+`openMenu` déjà défini dans ce fichier (ligne ~199), et clique dedans comme un
+vrai utilisateur — c'est CE pattern à reproduire ici, pas un mock de props.
+Ce fichier ne mocke aujourd'hui ni `../offline/connectivity` ni `../offline/
+currentSession` — les deux sont nécessaires : `ConfirmDialog` (Task 3) appelle
+`isOnlineNow()` réellement sinon, et `getCurrentSession`/`clearCurrentSession`
+(Task 2) toucheraient une vraie IndexedDB sans polyfill dans ce fichier
+(`fake-indexeddb/auto` n'y est pas importé) et planteraient le test.
+
+Ajouter en haut du fichier, aux côtés des imports namespace existants
+(`import * as plansRepo from '../data/plansRepo'` etc.) :
 
 ```tsx
-// appended to src/pages/MissionWorkspace.test.tsx — adapter au pattern exact
-// de mock déjà utilisé dans ce fichier pour onDuplicateMission (probablement
-// capturer les props passées au mock de MenuBar, puis appeler onDeleteMission
-// directement et vérifier les effets : deleteMission appelé, clearCurrentSession
-// appelé SEULEMENT si current_session référençait cette mission, puis
-// onNavigateToMissionList appelé).
-it('onDeleteMission calls deleteMission, clears current_session if it matches, and navigates to the mission list', async () => {
-  // ... voir les tests existants pour onDuplicateMission dans ce fichier pour
-  // le setup exact (mocks de missionsRepo, de currentSession, rendu de
-  // MissionWorkspace en phase ready-no-interior, récupération des props
-  // passées au mock de MenuBar).
+import * as currentSessionModule from '../offline/currentSession'
+import * as connectivity from '../offline/connectivity'
+```
+
+Et aux côtés des `vi.mock(...)` existants en haut du fichier :
+
+```tsx
+vi.mock('../offline/currentSession')
+vi.mock('../offline/connectivity')
+```
+
+(`../data/missionsRepo` est déjà mocké dans ce fichier — `deleteMission` sera
+donc automatiquement un `vi.fn()`, pas besoin d'un `vi.mock` supplémentaire
+pour lui, seulement de définir sa valeur résolue par test comme les autres
+fonctions de ce module le sont déjà.)
+
+```tsx
+// appended to src/pages/MissionWorkspace.test.tsx, dans le describe/bloc où
+// vit déjà le test "Quitter la mission" (même pattern : vrai MenuBar, vrai
+// openMenu, vrais clics)
+it('onDeleteMission calls deleteMission, clears current_session when it matches the deleted mission, and navigates to the mission list', async () => {
+  vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+  vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+  vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({
+    mission: missionWithOrigin,
+    exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null },
+  })
+  const onNavigateToMissionList = vi.fn()
+  render(
+    <MissionWorkspace
+      initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+      onNavigateToMissionList={onNavigateToMissionList}
+      onNavigateToNewMission={vi.fn()}
+    />
+  )
+  await screen.findByTestId('site-map-view')
+
+  openMenu(screen.getByRole('button', { name: /fichier/i }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Supprimer', exact: true }))
+
+  await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1'))
+  expect(currentSessionModule.clearCurrentSession).toHaveBeenCalled()
+  expect(onNavigateToMissionList).toHaveBeenCalled()
+})
+
+it('does not clear current_session when it references a different mission', async () => {
+  vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+  vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+  vi.mocked(currentSessionModule.getCurrentSession).mockResolvedValue({
+    mission: { ...missionWithOrigin, id: 'some-other-mission' },
+    exteriorPlan: { id: 'p2', missionId: 'some-other-mission', kind: 'exterieur', imageUrl: null, calibration: null },
+  })
+  const onNavigateToMissionList = vi.fn()
+  render(
+    <MissionWorkspace
+      initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+      onNavigateToMissionList={onNavigateToMissionList}
+      onNavigateToNewMission={vi.fn()}
+    />
+  )
+  await screen.findByTestId('site-map-view')
+
+  openMenu(screen.getByRole('button', { name: /fichier/i }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Supprimer', exact: true }))
+
+  await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1'))
+  expect(currentSessionModule.clearCurrentSession).not.toHaveBeenCalled()
+  expect(onNavigateToMissionList).toHaveBeenCalled()
 })
 ```
 
