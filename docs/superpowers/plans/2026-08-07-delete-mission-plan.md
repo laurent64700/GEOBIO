@@ -43,10 +43,21 @@ pour ce test, ne casse aucun test existant puisqu'ils n'utilisent jamais `storag
 vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn(), storage: { from: vi.fn() } } }))
 ```
 
-Puis ajouter à la fin du fichier :
+**Ajouter aussi `deleteMission` à l'import existant en haut du fichier** (ligne
+3 : `import { createMission, listMissions, setMissionOrigin,
+setGlobalAssessment, setSelectedParcels, setBuildingFootprint,
+duplicateMission } from './missionsRepo'`) — sans ça, les nouveaux tests
+ci-dessous ne résolvent pas l'identifiant.
+
+Puis ajouter le bloc suivant À L'INTÉRIEUR du `describe('missionsRepo', ...)`
+existant (comme un `describe` imbriqué, juste avant sa fermeture), pas comme
+un nouveau bloc `describe` séparé au niveau racine du fichier — cohérent avec
+le reste du fichier, même si techniquement inoffensif dans les deux cas (les
+nouveaux tests ci-dessous ré-établissent chacun leurs propres mocks au complet,
+sans dépendre du `beforeEach` du describe parent) :
 
 ```ts
-// appended to src/data/missionsRepo.test.ts
+// nested inside the existing describe('missionsRepo', ...) block
 describe('deleteMission', () => {
   it('deletes the mission row, then best-effort cleans up both Storage buckets', async () => {
     const { from, chain } = createSupabaseChainMock({ data: null, error: null })
@@ -884,9 +895,15 @@ it('onDeleteMission calls deleteMission, clears current_session when it matches 
   fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
   fireEvent.click(await screen.findByRole('button', { name: 'Supprimer', exact: true }))
 
-  await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1'))
+  // onDeleteMission's chain is deleteMission → getCurrentSession →
+  // (conditionally) clearCurrentSession → onNavigateToMissionList — all pure
+  // microtask chaining, no real timers. Waiting for the LAST effect in the
+  // chain via waitFor, then asserting the earlier ones synchronously right
+  // after, is safe (everything before it has necessarily already resolved)
+  // and avoids 3 separate waitFor calls for one linear chain.
+  await waitFor(() => expect(onNavigateToMissionList).toHaveBeenCalled())
+  expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
   expect(currentSessionModule.clearCurrentSession).toHaveBeenCalled()
-  expect(onNavigateToMissionList).toHaveBeenCalled()
 })
 
 it('does not clear current_session when it references a different mission', async () => {
@@ -910,9 +927,9 @@ it('does not clear current_session when it references a different mission', asyn
   fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
   fireEvent.click(await screen.findByRole('button', { name: 'Supprimer', exact: true }))
 
-  await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1'))
+  await waitFor(() => expect(onNavigateToMissionList).toHaveBeenCalled())
+  expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
   expect(currentSessionModule.clearCurrentSession).not.toHaveBeenCalled()
-  expect(onNavigateToMissionList).toHaveBeenCalled()
 })
 ```
 
@@ -923,14 +940,31 @@ Expected: FAIL — `onDeleteMission` n'est pas encore passé à `MenuBar`.
 
 - [ ] **Step 3: Implement**
 
+The real current import block (`MissionWorkspace.tsx:15-21`) is multi-line and
+carries several other names already — add `deleteMission` into THAT existing
+block, don't write a new separate import line for it (a fresh 2-name import
+like `import { deleteMission, duplicateMission } from '../data/missionsRepo'`
+would collide with the existing one and drop `setMissionOrigin`/
+`setGlobalAssessment`/`setSelectedParcels`/`GlobalAssessmentInput`, breaking
+`tsc -b`):
+
 ```tsx
-import { deleteMission, duplicateMission } from '../data/missionsRepo'
-import { getCurrentSession, clearCurrentSession } from '../offline/currentSession'
+import {
+  setMissionOrigin,
+  setGlobalAssessment,
+  setSelectedParcels,
+  duplicateMission,
+  deleteMission,
+  type GlobalAssessmentInput,
+} from '../data/missionsRepo'
 ```
 
-(`duplicateMission` est déjà importé aujourd'hui — ajouter `deleteMission` à
-la même ligne d'import plutôt que dupliquer l'import. `getCurrentSession`/
-`clearCurrentSession` sont de nouveaux imports.)
+`getCurrentSession`/`clearCurrentSession` are new imports, not yet present
+anywhere in this file:
+
+```tsx
+import { getCurrentSession, clearCurrentSession } from '../offline/currentSession'
+```
 
 ```tsx
                 onDeleteMission={async () => {
