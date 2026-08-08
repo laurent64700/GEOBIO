@@ -54,8 +54,10 @@ Nouveau composant partagé `src/components/ConfirmDialog.tsx` (utilisé depuis
 `MissionList.tsx` et `MenuBar.tsx`/`MissionWorkspace.tsx` — ni l'un ni l'autre
 n'est un emplacement naturel pour "posséder" ce composant, d'où un fichier
 dédié plutôt qu'un import croisé). Reprend le même style de panneau flottant
-que `FLOATING_PANEL_STYLE` dans `MenuBar.tsx` (overlay, bordure, ombre légère)
-mais défini localement dans `ConfirmDialog.tsx` — cette constante est privée au
+que `FLOATING_PANEL_STYLE` dans `MenuBar.tsx` (overlay, bordure, `position:
+absolute` ancré à un parent `position: relative` — pas d'ombre : la vraie
+constante `MenuBar.tsx:57-67` n'a pas de `boxShadow`, à ne pas inventer) mais
+défini localement dans `ConfirmDialog.tsx` — cette constante est privée au
 module `MenuBar.tsx` (non exportée), et créer une dépendance d'export depuis un
 fichier spécifique à une fonctionnalité vers un composant générique serait un
 mauvais sens de couplage :
@@ -69,6 +71,15 @@ Cette action est irréversible.
 
 [Annuler]              [Supprimer]
 ```
+
+**Positionnement dans `MissionList.tsx`** : `FLOATING_PANEL_STYLE` (le modèle
+repris ci-dessus) suppose un parent `position: relative` immédiat, comme
+`MENU_TRIGGER_WRAPPER_STYLE` dans `MenuBar.tsx` — `MissionList.tsx` n'a
+aujourd'hui aucun wrapper de ce type autour de ses boutons de ligne (`<li>
+<button>` simple). Un wrapper `position: relative` équivalent doit être ajouté
+autour de la ligne concernée pour ancrer le dialogue à côté du bouton
+supprimer cliqué (pas de nouvelle convention visuelle à inventer, juste
+reproduire le même wrapper que `MenuBar.tsx` utilise déjà).
 
 - "Annuler" ferme le dialogue sans effet.
 - "Supprimer" appelle `deleteMission(id)`, désactive les deux boutons pendant
@@ -149,7 +160,11 @@ resteraient orphelins indéfiniment à chaque suppression de mission.
 **Ordre d'exécution dans `deleteMission`** : la suppression en base (`DELETE
 FROM mission`) est l'étape critique et atomique — elle doit passer en premier.
 Le nettoyage Storage se fait **après**, en best-effort : `storage.from(bucket)
-.list(missionId)` puis `.remove(paths)` pour les 2 buckets. Si le nettoyage
+.list(missionId)` puis `.remove(paths)` pour les 2 buckets. Point d'attention
+pour le plan : `.list(prefix)` retourne des noms d'objets RELATIFS au préfixe
+(`entry.name`), pas des chemins complets — `.remove()` a besoin du chemin
+complet reconstruit (`` `${missionId}/${entry.name}` ``), pas des noms bruts
+retournés par `.list()`. Si le nettoyage
 Storage échoue (réseau, permissions...), **la suppression de la mission n'est
 pas annulée ni signalée en échec** — la mission a déjà été effectivement
 supprimée (le but demandé par Laurent), et un échec de nettoyage Storage ne
