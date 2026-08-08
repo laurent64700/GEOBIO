@@ -170,3 +170,42 @@ export async function duplicateMission(source: Mission): Promise<{ mission: Miss
   const exteriorPlan = await createPlan({ missionId: final.id, kind: 'exterieur' })
   return { mission: final, exteriorPlan }
 }
+
+// Both buckets key their files under `${missionId}/...` (see
+// missionPhotosRepo.ts's missionPhotoPath / planImageStorage.ts's
+// planImagePath) — bucket names are duplicated here as literals rather than
+// importing BUCKET from those 2 files, since neither exports it and this is
+// the only place outside them that needs the name.
+async function cleanUpMissionStorage(missionId: string): Promise<void> {
+  for (const bucket of ['mission-photos', 'plans']) {
+    const { data: entries } = await supabase.storage.from(bucket).list(missionId)
+    if (!entries || entries.length === 0) continue
+    const paths = entries.map((entry) => `${missionId}/${entry.name}`)
+    await supabase.storage.from(bucket).remove(paths)
+  }
+}
+
+// Deletes the mission row — its `on delete cascade` FKs remove everything
+// that references mission_id/plan_id in the database (plans, felt points,
+// segments, grids, phenomena, context objects, photo rows...). Storage
+// files (actual photo/plan-image binaries, not DB rows) are NOT covered by
+// that cascade — cleaned up here separately, best-effort, AFTER the DB
+// delete succeeds. The DB delete is the critical, atomic step (the mission
+// is genuinely gone once it resolves); a Storage cleanup failure afterward
+// is deliberately swallowed, not surfaced as an error — the action the user
+// asked for (delete the mission) already succeeded. See design spec §5bis
+// for the full reasoning, including why this order (DB-then-Storage) and
+// not the reverse.
+export async function deleteMission(id: string): Promise<void> {
+  const { error } = await supabase.from('mission').delete().eq('id', id)
+  if (error) throw new Error(`Impossible de supprimer la mission : ${error.message}`)
+
+  try {
+    await cleanUpMissionStorage(id)
+  } catch {
+    // Best-effort — see doc comment above. Deliberately no rethrow, no log:
+    // this project has no logging infrastructure beyond the browser console,
+    // and a console.error here would be indistinguishable from a real bug to
+    // Laurent glancing at devtools during unrelated debugging.
+  }
+}

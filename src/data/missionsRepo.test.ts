@@ -1,11 +1,11 @@
 // src/data/missionsRepo.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels, setBuildingFootprint, duplicateMission } from './missionsRepo'
+import { createMission, listMissions, setMissionOrigin, setGlobalAssessment, setSelectedParcels, setBuildingFootprint, duplicateMission, deleteMission } from './missionsRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import type { Mission } from '../domain/types'
 
-vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn() } }))
+vi.mock('../lib/supabaseClient', () => ({ supabase: { from: vi.fn(), storage: { from: vi.fn() } } }))
 
 describe('missionsRepo', () => {
   beforeEach(() => {
@@ -306,6 +306,77 @@ describe('missionsRepo', () => {
       await duplicateMission(source)
 
       expect(fromMock).toHaveBeenCalledTimes(2) // mission insert + plan insert only — no update calls
+    })
+  })
+
+  describe('deleteMission', () => {
+    it('deletes the mission row, then best-effort cleans up both Storage buckets', async () => {
+      const { from, chain } = createSupabaseChainMock({ data: null, error: null })
+      vi.mocked(supabase).from = from
+
+      const listPhotos = vi.fn().mockResolvedValue({
+        data: [{ name: 'abc-123.jpg' }, { name: 'def-456.jpg' }],
+        error: null,
+      })
+      const removePhotos = vi.fn().mockResolvedValue({ data: null, error: null })
+      const listPlans = vi.fn().mockResolvedValue({ data: [{ name: 'interior-plan.jpg' }], error: null })
+      const removePlans = vi.fn().mockResolvedValue({ data: null, error: null })
+      vi.mocked(supabase.storage.from).mockImplementation((bucket: string) => {
+        if (bucket === 'mission-photos') return { list: listPhotos, remove: removePhotos } as any
+        if (bucket === 'plans') return { list: listPlans, remove: removePlans } as any
+        throw new Error(`unexpected bucket ${bucket}`)
+      })
+
+      await deleteMission('m1')
+
+      expect(chain.delete).toHaveBeenCalled()
+      expect(chain.eq).toHaveBeenCalledWith('id', 'm1')
+      expect(listPhotos).toHaveBeenCalledWith('m1')
+      expect(removePhotos).toHaveBeenCalledWith(['m1/abc-123.jpg', 'm1/def-456.jpg'])
+      expect(listPlans).toHaveBeenCalledWith('m1')
+      expect(removePlans).toHaveBeenCalledWith(['m1/interior-plan.jpg'])
+    })
+
+    it('propagates an error from the DB delete itself, without attempting Storage cleanup', async () => {
+      const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+      vi.mocked(supabase).from = from
+      const listPhotos = vi.fn()
+      vi.mocked(supabase.storage.from).mockReturnValue({ list: listPhotos, remove: vi.fn() } as any)
+
+      await expect(deleteMission('m1')).rejects.toThrow('network down')
+      expect(listPhotos).not.toHaveBeenCalled()
+    })
+
+    it('does not throw when Storage cleanup itself fails (best-effort, mission is already deleted)', async () => {
+      const { from } = createSupabaseChainMock({ data: null, error: null })
+      vi.mocked(supabase).from = from
+      // Must actually REJECT, not just resolve with an error-shaped payload —
+      // cleanUpMissionStorage only destructures `data` from list()'s result
+      // and never reads `error`, so a resolved `{ data: null, error: {...} }`
+      // silently takes the ordinary "no files" `continue` path and never
+      // reaches the try/catch this test claims to cover. A genuine rejection
+      // is the only way to prove the catch in deleteMission actually swallows
+      // a real Storage failure, per design spec §5bis/§6.
+      vi.mocked(supabase.storage.from).mockReturnValue({
+        list: vi.fn().mockRejectedValue(new Error('storage down')),
+        remove: vi.fn(),
+      } as any)
+
+      await expect(deleteMission('m1')).resolves.toBeUndefined()
+    })
+
+    it('skips remove() entirely when a bucket has no files for this mission', async () => {
+      const { from } = createSupabaseChainMock({ data: null, error: null })
+      vi.mocked(supabase).from = from
+      const remove = vi.fn()
+      vi.mocked(supabase.storage.from).mockReturnValue({
+        list: vi.fn().mockResolvedValue({ data: [], error: null }),
+        remove,
+      } as any)
+
+      await deleteMission('m1')
+
+      expect(remove).not.toHaveBeenCalled()
     })
   })
 })
