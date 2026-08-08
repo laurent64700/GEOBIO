@@ -468,15 +468,23 @@ beforeEach(() => {
   vi.mocked(isOnlineNow).mockResolvedValue(true)
 })
 
+// The row's own delete trigger and ConfirmDialog's confirm button would
+// otherwise BOTH have the accessible name "Supprimer" once the dialog is
+// open (the trigger stays mounted, not hidden, while the dialog renders
+// alongside it) — ambiguous for `getByRole`. Step 3's implementation gives
+// the trigger a distinct aria-label ("Supprimer la mission {address}", also
+// disambiguating between rows once a list has more than one mission) so
+// `{ name: 'Supprimer', exact: true }` unambiguously matches only the
+// dialog's own button (plain text content, no aria-label needed there).
 it('renders a delete button per mission', () => {
   render(<MissionList missions={[makeMission()]} onSelectMission={vi.fn()} onCreateNew={vi.fn()} onDeleteMission={vi.fn()} />)
-  expect(screen.getByRole('button', { name: /supprimer/i })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /supprimer la mission/i })).toBeInTheDocument()
 })
 
 it('clicking delete opens a confirmation, cancelling it does not call onDeleteMission', () => {
   const onDeleteMission = vi.fn()
   render(<MissionList missions={[makeMission()]} onSelectMission={vi.fn()} onCreateNew={vi.fn()} onDeleteMission={onDeleteMission} />)
-  fireEvent.click(screen.getByRole('button', { name: /supprimer/i }))
+  fireEvent.click(screen.getByRole('button', { name: /supprimer la mission/i }))
   fireEvent.click(screen.getByRole('button', { name: 'Annuler' }))
   expect(onDeleteMission).not.toHaveBeenCalled()
   expect(screen.queryByText(/irréversible/i)).not.toBeInTheDocument()
@@ -486,23 +494,15 @@ it('confirming calls onDeleteMission with the mission', async () => {
   const onDeleteMission = vi.fn().mockResolvedValue(undefined)
   const mission = makeMission()
   render(<MissionList missions={[mission]} onSelectMission={vi.fn()} onCreateNew={vi.fn()} onDeleteMission={onDeleteMission} />)
-  fireEvent.click(screen.getByRole('button', { name: /supprimer/i }))
+  fireEvent.click(screen.getByRole('button', { name: /supprimer la mission/i }))
   fireEvent.click(screen.getByRole('button', { name: 'Supprimer', exact: true }))
   await waitFor(() => expect(onDeleteMission).toHaveBeenCalledWith(mission))
 })
 ```
 
-(`waitFor` needs adding to this file's `@testing-library/react` import. If this
-file already has its own `beforeEach`, merge the `isOnlineNow` stub into it
-rather than adding a second `beforeEach` block.)
-
-Note the two "Supprimer" buttons in the 3rd test (the row's own delete
-trigger, and the confirmation dialog's confirm button) — `{ name: /supprimer/i
-}` for the first click matches the row trigger (assume it's labelled just
-"Supprimer" or similar; if you give it a more specific accessible name in Step
-3 below, e.g. via `aria-label`, adjust this query to match), and `{ name:
-'Supprimer', exact: true }` for the second matches `ConfirmDialog`'s own
-`confirmLabel` button.
+(`waitFor` needs adding to this file's `@testing-library/react` import. This
+file has no existing `beforeEach` today — confirmed by reading it — so the new
+one above is the first in the file, not a merge into anything pre-existing.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -543,7 +543,16 @@ export function MissionList({ missions, onSelectMission, onCreateNew, onDeleteMi
             <button onClick={() => onSelectMission(mission)}>
               {mission.address} — {mission.missionDate}
             </button>
-            <button onClick={() => setConfirmingMission(mission)}>Supprimer</button>
+            {/* aria-label, not just visible "Supprimer" text: without it,
+                this trigger and ConfirmDialog's own confirm button below
+                would share the exact same accessible name once the dialog
+                is open (this button stays mounted, not hidden), making them
+                ambiguous to screen readers and to `getByRole` queries alike.
+                Also disambiguates between rows once the list has more than
+                one mission. */}
+            <button aria-label={`Supprimer la mission ${mission.address}`} onClick={() => setConfirmingMission(mission)}>
+              Supprimer
+            </button>
             {confirmingMission?.id === mission.id && (
               <ConfirmDialog
                 title="Supprimer la mission ?"
@@ -606,7 +615,7 @@ it('deleting a mission from the list calls deleteMission and removes it from the
   render(<App />)
   await screen.findByText(new RegExp(existingMission.address))
 
-  fireEvent.click(screen.getByRole('button', { name: /supprimer/i }))
+  fireEvent.click(screen.getByRole('button', { name: /supprimer la mission/i }))
   fireEvent.click(screen.getByRole('button', { name: 'Supprimer', exact: true }))
 
   await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith(existingMission.id))
@@ -618,19 +627,30 @@ it('deleting a mission from the list calls deleteMission and removes it from the
 already exist in this file per its current pre-existing tests — reuse them,
 don't redeclare.)
 
-- [ ] **Step 6: Run tests, fix any stranded `<MissionList` call sites**
+- [ ] **Step 6: Fix the 3 pre-existing `<MissionList .../>` render calls in `MissionList.test.tsx`**
+
+`onDeleteMission` is now a required prop. `MissionList.test.tsx` had 3 tests
+BEFORE this task ("renders each mission...", "clicking a mission calls
+onSelectMission...", "clicking 'Nouvelle mission' calls onCreateNew") — each
+constructs `<MissionList missions={...} onSelectMission={...}
+onCreateNew={...} />` directly, with no `onDeleteMission`. Add `onDeleteMission={vi.fn()}`
+to each of those 3 pre-existing calls (not the 3 new ones from Step 1, which
+already have it). `App.tsx` itself is the only OTHER place `<MissionList
+.../>` is constructed in production code, already fixed in Step 4 above —
+`App.test.tsx` never constructs `<MissionList>` directly (it renders `<App
+/>`, which does), so there's nothing to fix there.
+
+- [ ] **Step 7: Run tests to verify they pass**
 
 Run: `npm test -- --run src/components/MissionList.test.tsx src/App.test.tsx`
-Expected: PASS. `onDeleteMission` is now a required prop — TypeScript will
-point at any other `<MissionList .../>` render call site missing it (check
-`src/App.test.tsx` in particular before assuming there are none).
+Expected: PASS.
 
-- [ ] **Step 7: Run the full suite**
+- [ ] **Step 8: Run the full suite**
 
 Run: `npm test -- --run`
 Expected: PASS
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/components/MissionList.tsx src/components/MissionList.test.tsx src/App.tsx src/App.test.tsx
@@ -666,9 +686,13 @@ dans `ConfirmDialog` (Task 3) et dans le prop `onDeleteMission` fourni par
 // `import * as actionHistory` / `vi.mock('../offline/actionHistory')` pair:
 //   import * as connectivity from '../offline/connectivity'
 //   vi.mock('../offline/connectivity')
-// and merge into this file's EXISTING beforeEach (line ~117, which already
-// resets the actionHistory mocks) rather than adding a second beforeEach:
-//   vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+//
+// Do NOT merge the isOnlineNow stub into this file's existing beforeEach
+// (line ~117) — that one is scoped INSIDE describe('MenuBar — Modifier', ...),
+// a sibling block, and never runs for tests in describe('MenuBar — Fichier',
+// ...) where these new tests live. Stub it inline, directly in the one test
+// below that actually exercises the confirm path, instead of adding a new
+// describe-scoped beforeEach for a single call.
 it('renders "Supprimer la mission" in Fichier, separated from "Quitter la mission" by separators', async () => {
   render(<MenuBar {...baseProps} />)
   openMenu(screen.getByRole('button', { name: /fichier/i }))
@@ -679,6 +703,7 @@ it('renders "Supprimer la mission" in Fichier, separated from "Quitter la missio
 })
 
 it('clicking "Supprimer la mission" opens a confirmation; confirming it calls onDeleteMission', async () => {
+  vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
   const onDeleteMission = vi.fn().mockResolvedValue(undefined)
   render(<MenuBar {...baseProps} onDeleteMission={onDeleteMission} />)
   openMenu(screen.getByRole('button', { name: /fichier/i }))
