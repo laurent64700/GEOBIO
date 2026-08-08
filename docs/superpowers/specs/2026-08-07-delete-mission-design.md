@@ -9,9 +9,13 @@ script Node ponctuel le 31/07/2026, en attendant cette fonctionnalité.
 Point technique déjà vérifié avant cette spec : toutes les clés étrangères issues
 de `mission` sont `on delete cascade` (confirmé dans les migrations Supabase) — un
 simple `DELETE FROM mission WHERE id = ...` suffit côté données pour supprimer
-proprement la mission et tout ce qui en dépend (plans, points ressentis, segments,
-grilles, phénomènes, objets de contexte, photos, historique d'annulation). Le
-travail de cette spec est uniquement côté UI.
+proprement la mission et tout ce qui en dépend en base (plans et tout ce qui
+référence `mission_id`/`plan_id` en cascade — pas d'énumération exhaustive ici,
+volontairement, pour ne pas devoir maintenir cette liste à chaque nouvelle table ;
+voir les migrations pour le détail exact). **Ne couvre pas tout, cependant** —
+voir §5bis (Storage) et §7 (cache IndexedDB local) pour les deux exceptions
+identifiées. Le travail de cette spec est le câblage UI, `deleteMission` lui-même,
+et ces deux nettoyages complémentaires.
 
 ## 2. Périmètre
 
@@ -28,6 +32,10 @@ travail de cette spec est uniquement côté UI.
   `saveError`/`missionInfoOpen`).
 - Nettoyage de `current_session` (cache IndexedDB de reprise hors-ligne, voir §5)
   si elle référence la mission supprimée.
+- Nettoyage des fichiers Supabase Storage (photos terrain + image de plan
+  intérieur calibrée) associés à la mission — voir §5bis. Décision explicite de
+  Laurent (07/08/2026) après que la revue du spec ait signalé que la cascade en
+  base ne couvre pas le Storage.
 
 **Explicitement non inclus (confirmé avec Laurent)** :
 - **Suppression multiple** (cases à cocher + suppression en masse) — décision
@@ -42,9 +50,15 @@ travail de cette spec est uniquement côté UI.
 
 ## 3. Le dialogue de confirmation
 
-Composant partagé (2 points d'appel), affiché en overlay/panneau flottant,
-cohérent visuellement avec les panneaux déjà utilisés dans `MenuBar.tsx`
-(`FLOATING_PANEL_STYLE`) plutôt qu'une nouvelle convention visuelle :
+Nouveau composant partagé `src/components/ConfirmDialog.tsx` (utilisé depuis
+`MissionList.tsx` et `MenuBar.tsx`/`MissionWorkspace.tsx` — ni l'un ni l'autre
+n'est un emplacement naturel pour "posséder" ce composant, d'où un fichier
+dédié plutôt qu'un import croisé). Reprend le même style de panneau flottant
+que `FLOATING_PANEL_STYLE` dans `MenuBar.tsx` (overlay, bordure, ombre légère)
+mais défini localement dans `ConfirmDialog.tsx` — cette constante est privée au
+module `MenuBar.tsx` (non exportée), et créer une dépendance d'export depuis un
+fichier spécifique à une fonctionnalité vers un composant générique serait un
+mauvais sens de couplage :
 
 ```
 Supprimer la mission ?
@@ -102,7 +116,8 @@ même détection de connectivité que le reste de l'app
 extérieur), lu **uniquement** au démarrage de l'app si hors-ligne
 (`App.tsx:22-37`), pour permettre de reprendre la dernière mission travaillée
 sans connexion. Il n'est aujourd'hui jamais vidé (seulement écrasé à la création/
-reprise d'une mission).
+reprise d'une mission) — `currentSession.ts` n'exporte que `getCurrentSession`/
+`setCurrentSession`, aucune fonction de suppression n'existe encore.
 
 Comme la suppression est désormais possible, un cas de correction devient
 nécessaire : si la mission supprimée est celle actuellement en cache dans
@@ -110,20 +125,58 @@ nécessaire : si la mission supprimée est celle actuellement en cache dans
 pourrait tenter de "reprendre" une mission qui n'existe plus côté serveur,
 un état incohérent (les données resteraient visibles localement — le cache
 IndexedDB des entités elles-mêmes n'est pas purgé, voir §7 — mais plus jamais
-synchronisables).
+synchronisables). **Ajout nécessaire** : une nouvelle fonction
+`clearCurrentSession(): Promise<void>` dans `currentSession.ts` (`db.delete
+('current_session', SESSION_KEY)`, même wrapper `idb` que les 2 fonctions
+existantes du fichier).
 
 Ce cas ne peut se produire que via la suppression **depuis le menu Fichier**
 (§4.2) — supprimer une mission depuis la liste (§4.1) ne concerne jamais la
 mission actuellement en cache, puisque `MissionList` n'est affichée que quand
 aucune mission n'est ouverte.
 
+## 5bis. Nettoyage Supabase Storage
+
+Deux buckets stockent des fichiers binaires indépendamment des lignes
+Postgres, avec un chemin préfixé par `missionId` dans les deux cas :
+- `mission-photos` (`src/data/missionPhotosRepo.ts`) : `${missionId}/<uuid>.<ext>`
+- `plans` (`src/data/planImageStorage.ts`) : `${missionId}/interior-plan.<ext>`
+
+Le cascade en base supprime les LIGNES (`mission_photo`, `plan.image_url`) mais
+jamais les fichiers eux-mêmes dans Storage — sans nettoyage explicite, ils
+resteraient orphelins indéfiniment à chaque suppression de mission.
+
+**Ordre d'exécution dans `deleteMission`** : la suppression en base (`DELETE
+FROM mission`) est l'étape critique et atomique — elle doit passer en premier.
+Le nettoyage Storage se fait **après**, en best-effort : `storage.from(bucket)
+.list(missionId)` puis `.remove(paths)` pour les 2 buckets. Si le nettoyage
+Storage échoue (réseau, permissions...), **la suppression de la mission n'est
+pas annulée ni signalée en échec** — la mission a déjà été effectivement
+supprimée (le but demandé par Laurent), et un échec de nettoyage Storage ne
+fait que réintroduire le même orphelinage que §7 décrit déjà pour le cache
+local, pas une régression fonctionnelle pour l'utilisateur. Erreur silencieuse
+acceptée (pas de blocage, pas de message affiché) — nettoyer proactivement
+dans le cas courant, sans faire de la robustesse Storage un nouveau point de
+blocage pour l'action réellement demandée.
+
+*(Raison de l'ordre DB-puis-Storage plutôt que l'inverse : si le nettoyage
+Storage passait en premier et que la suppression en base échouait ensuite —
+ex. coupure réseau entre les deux appels — la mission resterait affichée dans
+l'app avec des photos/plan cassés, un état visiblement dégradé pire que de
+simples fichiers orphelins invisibles côté utilisateur.)*
+
 ## 6. Gestion d'erreur
 
 Suit le pattern déjà établi dans `MenuBar.tsx` pour "Enregistrer"/"Enregistrer
 sous" : erreur best-effort affichée en ligne, dismissible, jamais de page
-bloquante (`phase: 'error'`). Un échec de suppression n'a pas d'effet
-destructif partiel possible (une seule requête DELETE, atomique côté Supabase)
-— pas de risque d'état à moitié supprimé.
+bloquante (`phase: 'error'`). Un échec de la requête `DELETE FROM mission`
+elle-même (l'étape critique et atomique, avant tout nettoyage Storage — voir
+§5bis) n'a pas d'effet destructif partiel possible : soit la mission est
+supprimée et son cascade complet avec elle, soit rien n'a changé. Le seul état
+"partiel" possible est celui volontairement accepté en §5bis (mission
+supprimée mais nettoyage Storage best-effort en échec) — jamais signalé comme
+une erreur à l'utilisateur, puisque l'action demandée (supprimer la mission) a
+bien réussi.
 
 ## 7. Hors périmètre technique (décision assumée, pas un oubli)
 
@@ -137,13 +190,31 @@ l'UI, ne causent aucun bug fonctionnel. Une purge active serait un travail
 supplémentaire disproportionné par rapport au problème réel (quelques Ko par
 mission supprimée, pas un volume préoccupant pour un usage solo).
 
+**Risque accepté, non traité** (même famille que la limite déjà documentée
+dans `useOfflineSync.ts`) : si des mutations hors-ligne en attente
+(`pending_mutations`) existent pour des entités de la mission au moment où
+elle est supprimée (cas rare, puisque la suppression exige d'être en ligne —
+§4.3 — mais des mutations mises en file *avant* le retour en ligne pourraient
+ne pas avoir fini de se synchroniser au moment précis du clic sur Supprimer),
+ces mutations en attente tenteraient de se rejouer contre des lignes qui
+n'existent plus, et échoueraient de façon permanente. Impact borné : ces
+mutations resteraient en échec silencieux dans la file, sans corrompre autre
+chose ni bloquer le reste de la synchronisation — cohérent avec le niveau de
+risque déjà accepté ailleurs dans le système hors-ligne existant.
+
 ## 8. Tests
 
 - `deleteMission` (`missionsRepo.test.ts`) : appelle bien `supabase.from('mission')
-  .delete().eq('id', ...)`, propage une erreur réseau.
-- Composant de confirmation : "Annuler" ne supprime pas, "Supprimer" appelle la
-  fonction fournie, désactivation pendant l'appel en cours (garde-fou
-  anti-double-clic), affichage d'erreur en cas d'échec.
+  .delete().eq('id', ...)`, propage une erreur réseau de la requête DB ; appelle
+  le nettoyage Storage des 2 buckets (§5bis) après le succès du DELETE, et une
+  erreur de nettoyage Storage n'empêche pas `deleteMission` de résoudre avec
+  succès (best-effort, voir §5bis/§6).
+- `clearCurrentSession` (`currentSession.test.ts`) : vide bien l'entrée
+  `current_session`, `getCurrentSession` retourne `null` ensuite.
+- `ConfirmDialog.tsx` (nouveau fichier de test) : "Annuler" ne déclenche pas
+  l'action fournie, "Supprimer" l'appelle, désactivation des 2 boutons pendant
+  l'appel en cours (garde-fou anti-double-clic), affichage d'erreur dismissible
+  en cas d'échec, le dialogue reste ouvert après une erreur.
 - `MissionList.tsx` : bouton supprimer visible par mission, ouvre la
   confirmation, retire la mission de la liste affichée après succès, désactivé
   hors-ligne.
