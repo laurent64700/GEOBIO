@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
-import { getCurrentSession, setCurrentSession } from './currentSession'
+import { getCurrentSession, setCurrentSession, clearCurrentSession } from './currentSession'
 import { getDB } from './db'
 import type { Mission, Plan } from '../domain/types'
 
@@ -36,5 +36,18 @@ describe('currentSession', () => {
 
     const session = await getCurrentSession()
     expect(session?.mission.id).toBe('m2')
+  })
+
+  it('clears the stored session, so getCurrentSession returns null afterward', async () => {
+    await setCurrentSession(mission, exteriorPlan)
+    expect(await getCurrentSession()).not.toBeNull()
+
+    await clearCurrentSession()
+
+    expect(await getCurrentSession()).toBeNull()
+  })
+
+  it('is a no-op (does not throw) when nothing was stored yet', async () => {
+    await expect(clearCurrentSession()).resolves.toBeUndefined()
   })
 })

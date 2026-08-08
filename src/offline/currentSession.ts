@@ -18,3 +18,8 @@ export async function setCurrentSession(mission: Mission, exteriorPlan: Plan): P
   const db = await getDB()
   await db.put('current_session', { mission, exteriorPlan }, SESSION_KEY)
 }
+
+export async function clearCurrentSession(): Promise<void> {
+  const db = await getDB()
+  await db.delete('current_session', SESSION_KEY)
+}
