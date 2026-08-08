@@ -3,7 +3,7 @@ import { MissionList } from './components/MissionList'
 import { OfflineIndicator } from './components/OfflineIndicator'
 import { MissionWorkspace } from './pages/MissionWorkspace'
 import { deriveResumePhase, type ResumePhase } from './pages/deriveResumePhase'
-import { listMissions } from './data/missionsRepo'
+import { deleteMission, listMissions } from './data/missionsRepo'
 import { isOnlineNow } from './offline/connectivity'
 import { getCurrentSession, setCurrentSession } from './offline/currentSession'
 import type { Mission } from './domain/types'
@@ -69,6 +69,21 @@ function App() {
     setPhase({ name: 'creating' })
   }
 
+  // Deliberately no try/catch here, unlike handleSelectMission/
+  // handleNavigateToMissionList above — ConfirmDialog (rendered by
+  // MissionList) already owns busy/error state around its onConfirm call,
+  // and only clears its own local "which row is confirming" state AFTER
+  // this resolves. Wrapping this in a 2nd try/catch would double up on
+  // error handling ConfirmDialog already provides.
+  async function handleDeleteMission(mission: Mission) {
+    await deleteMission(mission.id)
+    setPhase((current) =>
+      current.name === 'mission-list'
+        ? { name: 'mission-list', missions: current.missions.filter((m) => m.id !== mission.id) }
+        : current
+    )
+  }
+
   return (
     <>
       <div style={{ height: '100vh', width: '100%' }}>
@@ -78,6 +93,7 @@ function App() {
             missions={phase.missions}
             onSelectMission={handleSelectMission}
             onCreateNew={() => setPhase({ name: 'creating' })}
+            onDeleteMission={handleDeleteMission}
           />
         )}
         {phase.name === 'creating' && (

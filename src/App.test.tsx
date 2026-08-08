@@ -181,4 +181,18 @@ describe('App', () => {
     expect(await screen.findByText(/10 Rue de Rivoli/)).toBeInTheDocument()
     expect(missionsRepo.listMissions).toHaveBeenCalled()
   })
+
+  it('deleting a mission from the list calls deleteMission and removes it from the rendered list', async () => {
+    vi.mocked(missionsRepo.listMissions).mockResolvedValue([existingMission])
+    vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    render(<App />)
+    await screen.findByText(new RegExp(existingMission.address))
+
+    fireEvent.click(screen.getByRole('button', { name: /supprimer la mission/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Supprimer' }))
+
+    await waitFor(() => expect(missionsRepo.deleteMission).toHaveBeenCalledWith(existingMission.id))
+    await waitFor(() => expect(screen.queryByText(new RegExp(existingMission.address))).not.toBeInTheDocument())
+  })
 })
