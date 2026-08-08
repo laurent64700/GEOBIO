@@ -99,8 +99,15 @@ describe('deleteMission', () => {
   it('does not throw when Storage cleanup itself fails (best-effort, mission is already deleted)', async () => {
     const { from } = createSupabaseChainMock({ data: null, error: null })
     vi.mocked(supabase).from = from
+    // Must actually REJECT, not just resolve with an error-shaped payload —
+    // cleanUpMissionStorage only destructures `data` from list()'s result
+    // and never reads `error`, so a resolved `{ data: null, error: {...} }`
+    // silently takes the ordinary "no files" `continue` path and never
+    // reaches the try/catch this test claims to cover. A genuine rejection
+    // is the only way to prove the catch in deleteMission actually swallows
+    // a real Storage failure, per design spec §5bis/§6.
     vi.mocked(supabase.storage.from).mockReturnValue({
-      list: vi.fn().mockResolvedValue({ data: null, error: { message: 'storage down' } }),
+      list: vi.fn().mockRejectedValue(new Error('storage down')),
       remove: vi.fn(),
     } as any)
 
@@ -125,6 +132,14 @@ describe('deleteMission', () => {
 
 (`createSupabaseChainMock`/`supabase` imports already exist at the top of this
 file from the earlier tasks — no new imports needed for those two.)
+
+(Style note: `supabase.from` is reassigned directly per-test above
+(`vi.mocked(supabase).from = from`, matching this file's existing convention),
+while `supabase.storage.from` is stubbed via `.mockReturnValue()`/
+`.mockImplementation()` instead — both work correctly with the file's
+existing `beforeEach(() => vi.clearAllMocks())`. This is an intentional
+difference in mocking style between two different mocked surfaces, not an
+inconsistency to "clean up" — leave both as shown.)
 
 - [ ] **Step 3: Run test to verify it fails**
 
