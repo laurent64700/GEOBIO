@@ -907,6 +907,18 @@ export function SiteMapView({
                       pendingFreeformTrace !== null ||
                       (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau'))
                     }
+                    // A disabled button with no explanation reads as broken —
+                    // Laurent reported "tracé eau ne fonctionne pas" from
+                    // live testing (08/2026); root cause was this button
+                    // being silently disabled whenever another placement
+                    // mode (e.g. a felt-point network) was still armed.
+                    title={
+                      pendingFreeformTrace !== null
+                        ? 'Validez ou annulez le tracé en cours (ci-dessous) avant d’en démarrer un autre.'
+                        : placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'eau')
+                          ? 'Désactivez d’abord l’outil actif (réseau, phénomène...) avant de tracer l’eau.'
+                          : undefined
+                    }
                   >
                     Tracer l'eau
                   </button>
@@ -916,6 +928,13 @@ export function SiteMapView({
                     disabled={
                       pendingFreeformTrace !== null ||
                       (placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille'))
+                    }
+                    title={
+                      pendingFreeformTrace !== null
+                        ? 'Validez ou annulez le tracé en cours (ci-dessous) avant d’en démarrer un autre.'
+                        : placementMode !== null && !(placementMode.kind === 'freeform' && placementMode.freeformKind === 'faille')
+                          ? 'Désactivez d’abord l’outil actif (réseau, phénomène...) avant de tracer une faille.'
+                          : undefined
                     }
                   >
                     Tracer une faille
