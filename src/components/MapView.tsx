@@ -1,7 +1,9 @@
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
+import { useMapZoom } from '../hooks/useMapZoom'
 import 'leaflet/dist/leaflet.css'
 
 // IGN Géoplateforme WMTS endpoint (data.geopf.fr) — free, keyless access to
@@ -26,14 +28,55 @@ function ClickHandler({ onMapClick }: { onMapClick: (latlng: { lat: number; lng:
 // Fits the view to `bounds` exactly once, on mount — e.g. after a parcel
 // selection is confirmed, so the map recenters/zooms to that selection
 // without fighting the `center`/`zoom` props that every other caller relies
-// on for their initial view.
+// on for their initial view. Also sets that same bounds' own zoom level as
+// the map's minZoom floor: without it, nothing stops zooming out to see all
+// of France, which is never useful once a specific site's parcels are known
+// (Laurent, field testing 08/2026). getBoundsZoom computes the zoom level
+// fitBounds itself would use at the CURRENT container size — reusing it
+// keeps "as far out as the initial fit" and "as far out as you can manually
+// scroll" the exact same value, not two independently-tuned constants.
+// Only missions that went through a fresh parcel confirmation THIS session
+// carry `fitBounds` (see MissionWorkspace.tsx) — a resumed mission has none
+// tracked, and keeps the default unbounded range; not fixed here, a known,
+// narrower gap than the unconstrained-everywhere behavior before this.
 function FitBoundsOnce({ bounds }: { bounds: LatLngBoundsExpression }) {
   const map = useMap()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     map.fitBounds(bounds)
+    map.setMinZoom(map.getBoundsZoom(bounds))
   }, [])
   return null
+}
+
+// Past the real orthophoto imagery's native resolution (MAX_NATIVE_TILE_ZOOM),
+// Leaflet just upscales the last real tile — a blurry, uninformative image
+// that's actively distracting once placing points at cm-level precision
+// (Laurent, field testing 08/2026: "zoom max au cm en passant de l'image IGN
+// à un aplat sans image"). This backdrop replaces it with a plain pale-green
+// + light grid surface once zoomed past that point, so there's a clean,
+// neutral canvas to draw on rather than a smeared photo. Portaled directly
+// into the map's own container (not a Leaflet Pane) at a z-index between
+// Leaflet's tilePane (200) and overlayPane (400) — covers the (still-loaded,
+// just visually hidden-behind-this) tile imagery without covering anything
+// drawn on top of it (network grid lines, felt points/segments, markers...).
+const HIGH_ZOOM_BACKDROP_STYLE: CSSProperties = {
+  position: 'absolute',
+  inset: 0,
+  zIndex: 350,
+  background:
+    'linear-gradient(#c8e6c9 1px, transparent 1px), ' +
+    'linear-gradient(90deg, #c8e6c9 1px, transparent 1px), ' +
+    '#e8f5e9',
+  backgroundSize: '20px 20px, 20px 20px, 100% 100%',
+  pointerEvents: 'none',
+}
+
+function HighZoomBackdrop() {
+  const map = useMap()
+  const zoom = useMapZoom()
+  if (zoom <= MAX_NATIVE_TILE_ZOOM) return null
+  return createPortal(<div data-testid="high-zoom-backdrop" style={HIGH_ZOOM_BACKDROP_STYLE} />, map.getContainer())
 }
 
 export interface MapViewProps {
@@ -66,6 +109,11 @@ export function MapView({ center, zoom = 18, onMapClick, fitBounds, children }: 
       center={center}
       zoom={zoom}
       maxZoom={MAX_UI_ZOOM}
+      // Leaflet's own default zoom +/- buttons are large and, per Laurent's
+      // field-testing feedback (08/2026), unnecessary — scroll/pinch/keyboard
+      // zoom already work without them, and the guide-line/network buttons
+      // are the actual primary controls on this screen.
+      zoomControl={false}
       // Leaflet's animated zoom (the default) hands control of finishing the
       // zoom to a requestAnimationFrame callback plus a CSS transitionend
       // listener, with only a 250ms setTimeout as a last-resort fallback
@@ -89,6 +137,7 @@ export function MapView({ center, zoom = 18, onMapClick, fitBounds, children }: 
         maxZoom={MAX_UI_ZOOM}
         maxNativeZoom={MAX_NATIVE_TILE_ZOOM}
       />
+      <HighZoomBackdrop />
       {onMapClick && <ClickHandler onMapClick={onMapClick} />}
       {fitBounds && <FitBoundsOnce bounds={fitBounds} />}
       {children}
