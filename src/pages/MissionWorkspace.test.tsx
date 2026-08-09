@@ -734,4 +734,29 @@ describe('MissionWorkspace', () => {
     expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
     expect(currentSessionModule.clearCurrentSession).not.toHaveBeenCalled()
   })
+
+  it('still navigates to the mission list even if the post-delete current_session check fails — the mission is already deleted, a session-cache hiccup must not be reported as a failed deletion', async () => {
+    vi.mocked(missionsRepo.deleteMission).mockResolvedValue(undefined)
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
+    vi.mocked(currentSessionModule.getCurrentSession).mockRejectedValue(new Error('indexeddb unavailable'))
+    const onNavigateToMissionList = vi.fn()
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={onNavigateToMissionList}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    await screen.findByTestId('site-map-view')
+
+    openMenu(screen.getByRole('button', { name: /fichier/i }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /supprimer la mission/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+
+    await waitFor(() => expect(onNavigateToMissionList).toHaveBeenCalled())
+    expect(missionsRepo.deleteMission).toHaveBeenCalledWith('m1')
+    // No ConfirmDialog error alert — the deletion itself succeeded, so its
+    // catch-all must never see this rejection.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

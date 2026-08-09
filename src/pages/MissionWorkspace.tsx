@@ -327,10 +327,27 @@ export function MissionWorkspace({
                   onNavigateToMissionList()
                 }}
                 onDeleteMission={async () => {
+                  // deleteMission is the one step that must actually succeed
+                  // or fail for real — ConfirmDialog's error UI should only
+                  // ever reflect ITS outcome. The current_session check/clear
+                  // below is best-effort cleanup, same philosophy as
+                  // missionsRepo.ts's own Storage cleanup after deleteMission's
+                  // DB delete: swallow a failure here rather than let it
+                  // surface through ConfirmDialog as a false "suppression
+                  // failed" for a mission that is, in fact, already gone.
                   await deleteMission(phase.mission.id)
-                  const cached = await getCurrentSession()
-                  if (cached?.mission.id === phase.mission.id) {
-                    await clearCurrentSession()
+                  try {
+                    const cached = await getCurrentSession()
+                    if (cached?.mission.id === phase.mission.id) {
+                      await clearCurrentSession()
+                    }
+                  } catch {
+                    // Best-effort — see comment above. A stale current_session
+                    // entry left behind here is the same low-severity, bounded
+                    // risk already accepted for a related trigger in
+                    // docs/superpowers/specs/2026-08-07-delete-mission-design.md
+                    // §7 (pending offline mutations against an already-deleted
+                    // mission) — not a new failure mode this fix introduces.
                   }
                   onNavigateToMissionList()
                 }}
