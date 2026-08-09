@@ -8,7 +8,7 @@ import { computeGuideLineEndpoints } from '../geometry/guideLine'
 import type { FreeformMetadata } from '../components/FreeformMetadataForm'
 import type {
   Point, PhenomenonKind, Phenomenon, ContextObjectKind, ContextObject,
-  FreeformNetworkKind, FreeformNetwork, FeltSegment, GridLinePolarity,
+  FreeformNetworkKind, FreeformNetwork, FeltSegment,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 
@@ -43,10 +43,9 @@ export interface UsePlacementModeArgs {
   onFeltSegmentCreated: (feltSegment: FeltSegment) => void
   // Only for handlePlacePhenomenon's failure path (a real load/action failure
   // with no better place to go) — NOT for handleSubmitFreeformMetadata's or
-  // handleSubmitFeltSegmentPolarity's failure paths, which use their own
-  // internal dismissible error state instead (freeformSaveError /
-  // feltSegmentSaveError) so a failed optional/retryable save never blanks
-  // the whole map.
+  // handlePlaceFeltSegment's failure paths, which use their own internal
+  // dismissible error state instead (freeformSaveError / feltSegmentSaveError)
+  // so a failed optional/retryable save never blanks the whole map.
   onError: (message: string) => void
 }
 
@@ -82,13 +81,18 @@ export function usePlacementMode({
   // a successful save or on cancelling the metadata form, so a later new
   // trace doesn't start with a stale error message showing.
   const [freeformSaveError, setFreeformSaveError] = useState<string | null>(null)
-  // Holds the computed (not-yet-saved) 1m segment between a felt-point map
-  // click and the polarity form being submitted/cancelled — mirrors
-  // pendingFreeformTrace's role for the freeform flow exactly.
-  const [pendingFeltSegment, setPendingFeltSegment] = useState<{ networkName: string; pointA: Point; pointB: Point } | null>(null)
-  // Mirrors freeformSaveError: a failed segment save is optional/retryable
-  // (the trace is already computed, only the persistence step failed), so it
-  // must never blank the whole map via the page-blocking onError path.
+  // Mirrors freeformSaveError: a failed segment save is optional/retryable,
+  // so it must never blank the whole map via the page-blocking onError path.
+  // Segments save immediately on click (see handleMapClick's 'felt-point'
+  // branch) — no pending/polarity-form gate, so this is the only felt-segment
+  // state left: color + orientation is what matters (Laurent, field testing
+  // 08/2026: "c'est les segments de couleurs et leur orientation qui
+  // importe, les polarités sont secondaires"), and requiring a polarity form
+  // before every single segment existed made manually-placed segments look
+  // different on the map than ArUco rod-detected ones (RodDetectionPanel),
+  // which never carry a polarity. Both now save with polarityA/polarityB
+  // null and render identically; polarity can still be set later by editing
+  // the stored FeltSegment directly if ever needed (see feltSegmentsRepo).
   const [feltSegmentSaveError, setFeltSegmentSaveError] = useState<string | null>(null)
 
   // Setting placementMode to a new value structurally replaces whatever mode
@@ -228,36 +232,18 @@ export function usePlacementMode({
     setPlacementMode({ ...placementMode, bearingDeg })
   }
 
-  async function handleSubmitFeltSegmentPolarity(polarityA: GridLinePolarity, polarityB: GridLinePolarity) {
-    if (!pendingFeltSegment) return
+  // Mirrors handlePlacePhenomenon/handlePlaceContextObject: saves
+  // immediately on click, no intermediate form. polarityA/polarityB are
+  // deliberately omitted (stored null) — see feltSegmentSaveError's doc
+  // comment above for why.
+  async function handlePlaceFeltSegment(networkName: string, pointA: Point, pointB: Point) {
     try {
-      const created = await createFeltSegment({
-        planId,
-        networkName: pendingFeltSegment.networkName,
-        pointA: pendingFeltSegment.pointA,
-        pointB: pendingFeltSegment.pointB,
-        polarityA,
-        polarityB,
-      })
+      const created = await createFeltSegment({ planId, networkName, pointA, pointB })
       onFeltSegmentCreated(created)
-      // Only clear on SUCCESS — a failed save must leave the pending segment
-      // and the polarity form alone so the user can retry without re-clicking
-      // the map (same reasoning as handleSubmitFreeformMetadata).
-      setPendingFeltSegment(null)
-      setPlacementMode(null)
       setFeltSegmentSaveError(null)
     } catch (err) {
       setFeltSegmentSaveError(err instanceof Error ? err.message : String(err))
     }
-  }
-
-  function handleCancelFeltSegment() {
-    // Nothing was persisted yet at this point (creation only happens on
-    // submit), so discarding the pending state is enough — no delete call
-    // needed, same as handleCancelFreeformMetadata.
-    setPendingFeltSegment(null)
-    setPlacementMode(null)
-    setFeltSegmentSaveError(null)
   }
 
   // A toggle, mirroring PhenomenonPicker's own "click the active kind again
@@ -385,14 +371,12 @@ export function usePlacementMode({
       // posts in a row along a boundary shouldn't require re-selecting.
     }
     if (placementMode?.kind === 'felt-point') {
-      // Hand off to the polarity form rather than saving immediately —
-      // mirrors handleFreeformTraceComplete. placementMode deliberately
-      // stays 'felt-point' so FeltPointPicker keeps showing the armed
-      // network/bearing while the form is open, until it's
-      // submitted/cancelled.
+      // Saves immediately, same as phenomenon/context-object above —
+      // placementMode deliberately stays 'felt-point' so several segments of
+      // the same network can be placed in a row without re-selecting.
       const local = latLngToLocal(latlng, missionOrigin)
       const [pointA, pointB] = computeGuideLineEndpoints(local, placementMode.bearingDeg, FELT_SEGMENT_HALF_LENGTH_M)
-      setPendingFeltSegment({ networkName: placementMode.networkName, pointA, pointB })
+      handlePlaceFeltSegment(placementMode.networkName, pointA, pointB)
     }
   }
 
@@ -443,7 +427,6 @@ export function usePlacementMode({
     gridCreationKey,
     pendingFreeformTrace,
     freeformSaveError,
-    pendingFeltSegment,
     feltSegmentSaveError,
     setFreeformSaveError,
     setFeltSegmentSaveError,
@@ -458,8 +441,6 @@ export function usePlacementMode({
     handleSelectContextObjectKind,
     handleSelectFeltPointNetwork,
     handleSelectFeltPointBearing,
-    handleSubmitFeltSegmentPolarity,
-    handleCancelFeltSegment,
     handleStartFreeformTrace,
     handleFreeformTraceComplete,
     handleSubmitFreeformMetadata,

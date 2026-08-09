@@ -8,14 +8,6 @@ export interface FeltPointPickerProps {
    * while a network is armed. */
   selectedBearing: number | null
   onSelectBearing: (bearingDeg: number) => void
-  /**
-   * True once a map click has already staged a pendingFeltSegment: the
-   * orientation was baked into that segment's geometry at click time, so an
-   * orientation button pressed now would silently do nothing (it only ever
-   * affects the NEXT click). Hiding the buttons here avoids that trap —
-   * found live 2026-07-23 while testing grid recalibration.
-   */
-  bearingLocked?: boolean
 }
 
 // Same labels as the guide-line preset buttons (Chunk 3) — 0°/90° for the
@@ -49,7 +41,6 @@ export function FeltPointPicker({
   onSelectNetwork,
   selectedBearing,
   onSelectBearing,
-  bearingLocked = false,
 }: FeltPointPickerProps) {
   const [showCustomInput, setShowCustomInput] = useState(false)
   const [customName, setCustomName] = useState('')
@@ -98,7 +89,7 @@ export function FeltPointPicker({
           <button onClick={handleSubmitCustom}>Valider</button>
         </>
       )}
-      {activeNetworkName !== null && !bearingLocked && (
+      {activeNetworkName !== null && (
         <>
           {bearingFamily.map((deg) => (
             <button key={deg} aria-pressed={selectedBearing === deg} onClick={() => onSelectBearing(deg)}>

@@ -1039,16 +1039,18 @@ describe('SiteMapView', () => {
     expect(screen.queryByText('network down')).not.toBeInTheDocument()
   })
 
-  it('places a felt point via FeltPointPicker: select a network, click the map, confirm polarity, segment is created', async () => {
+  it('places a felt point via FeltPointPicker: select a network, click the map, segment is created immediately with no polarity', async () => {
     // Superseded by the felt-segment/polarity protocol correction (spec:
-    // network felt points are a manually-oriented 1m segment with a polarity
-    // chosen at each end, not a single point) — createFeltPoint is no longer
-    // called from this flow at all; createFeltSegment is.
+    // network felt points are a manually-oriented 1m segment) — createFeltPoint
+    // is not called from this flow at all; createFeltSegment is. Saves
+    // immediately on click, no polarity form gate (field-testing feedback,
+    // 08/2026: manual and ArUco rod-detected segments must render identically
+    // — see usePlacementMode.ts's feltSegmentSaveError doc comment).
     vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([])
     vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
       id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 1, y: 0 },
-      polarityA: '+', polarityB: '-', createdAt: '2026-07-22T10:00:00Z',
+      polarityA: null, polarityB: null, createdAt: '2026-07-22T10:00:00Z',
     })
 
     render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
@@ -1062,13 +1064,12 @@ describe('SiteMapView', () => {
     // placement test) clicks that button, not the outer div — do the same here.
     fireEvent.click(screen.getByText('simulate-map-click'))
 
-    // The click only stages a pendingFeltSegment — FeltSegmentPolarityForm
-    // must be confirmed before anything is persisted.
-    fireEvent.click(await screen.findByRole('button', { name: 'Valider le segment' }))
-
     await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledWith(
-      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann', polarityA: '+', polarityB: '-' })
+      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann' })
     ))
+    const call = vi.mocked(feltSegmentsRepo.createFeltSegment).mock.calls[0][0]
+    expect(call.polarityA).toBeUndefined()
+    expect(call.polarityB).toBeUndefined()
   })
 
   // Scoped to the guide-line control panel specifically: once a network is

@@ -33,7 +33,6 @@ import { PhenomenonPicker } from './PhenomenonPicker'
 import { ContextObjectPicker } from './ContextObjectPicker'
 import { ContextObjectsLayer } from './ContextObjectsLayer'
 import { FeltPointPicker } from './FeltPointPicker'
-import { FeltSegmentPolarityForm } from './FeltSegmentPolarityForm'
 import { PhenomenaLayer } from './PhenomenaLayer'
 import { FreeformDrawTool } from './FreeformDrawTool'
 import { FreeformNetworkLayer } from './FreeformNetworkLayer'
@@ -244,7 +243,6 @@ export function SiteMapView({
     gridCreationKey,
     pendingFreeformTrace,
     freeformSaveError,
-    pendingFeltSegment,
     feltSegmentSaveError,
     setFreeformSaveError,
     setFeltSegmentSaveError,
@@ -264,8 +262,6 @@ export function SiteMapView({
     clearGridOriginPlacement,
     handleSelectFeltPointNetwork,
     handleSelectFeltPointBearing,
-    handleSubmitFeltSegmentPolarity,
-    handleCancelFeltSegment,
   } = usePlacementMode({
     planId,
     missionOrigin,
@@ -771,20 +767,11 @@ export function SiteMapView({
               onSelectNetwork={handleSelectFeltPointNetwork}
               selectedBearing={placementMode?.kind === 'felt-point' ? placementMode.bearingDeg : null}
               onSelectBearing={handleSelectFeltPointBearing}
-              bearingLocked={pendingFeltSegment !== null}
             />
-            {pendingFeltSegment && (
+            {feltSegmentSaveError !== null && (
               <div style={CARD_CHROME_STYLE}>
-                {feltSegmentSaveError !== null && (
-                  <>
-                    <p role="alert">{feltSegmentSaveError}</p>
-                    <button onClick={() => setFeltSegmentSaveError(null)}>Fermer</button>
-                  </>
-                )}
-                <FeltSegmentPolarityForm
-                  onSubmit={({ polarityA, polarityB }) => handleSubmitFeltSegmentPolarity(polarityA, polarityB)}
-                  onCancel={handleCancelFeltSegment}
-                />
+                <p role="alert">{feltSegmentSaveError}</p>
+                <button onClick={() => setFeltSegmentSaveError(null)}>Fermer</button>
               </div>
             )}
           </>

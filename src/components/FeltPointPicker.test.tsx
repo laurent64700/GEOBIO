@@ -93,20 +93,4 @@ describe('FeltPointPicker', () => {
 
     expect(onSelectBearing).toHaveBeenCalledWith(90)
   })
-
-  it('hides the orientation buttons once a segment is pending (bearingLocked): clicking them after the map click had no effect, so they must not appear as if it still would', () => {
-    render(
-      <FeltPointPicker
-        activeNetworkName="Hartmann"
-        onSelectNetwork={vi.fn()}
-        selectedBearing={0}
-        onSelectBearing={vi.fn()}
-        bearingLocked
-      />
-    )
-    expect(screen.queryByRole('button', { name: 'N/S' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'E/O' })).not.toBeInTheDocument()
-    // The network buttons themselves are unaffected — only orientation is locked.
-    expect(screen.getByRole('button', { name: 'Hartmann' })).toBeInTheDocument()
-  })
 })

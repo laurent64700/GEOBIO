@@ -450,68 +450,41 @@ describe('usePlacementMode', () => {
     expect(result.current.placementMode).toBeNull()
   })
 
-  it('a map click while felt-point mode is armed computes a 1m segment (centered on the click, along the armed bearing) and holds it pending — does not save yet', () => {
-    const { result } = setup()
-    act(() => result.current.handleSelectFeltPointNetwork('Hartmann')) // bearingDeg 0 (N/S)
-
-    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
-
-    expect(feltSegmentsRepo.createFeltSegment).not.toHaveBeenCalled()
-    expect(result.current.pendingFeltSegment).not.toBeNull()
-    expect(result.current.pendingFeltSegment!.networkName).toBe('Hartmann')
-    // Bearing 0 (N/S) — the segment runs along y, centered on the clicked
-    // point, 1m total length (0.5m each side); x is unchanged.
-    const { pointA, pointB } = result.current.pendingFeltSegment!
-    expect(pointA.x).toBeCloseTo(pointB.x, 6)
-    expect(Math.abs(pointA.y - pointB.y)).toBeCloseTo(1, 6)
-    // Placement mode stays armed (mirrors freeform's pendingFreeformTrace
-    // pattern) so the picker keeps showing the network as active while the
-    // polarity form is open.
-    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann', bearingDeg: 0 })
-  })
-
-  it('submitting the polarity form saves the pending segment and clears pending/placement state on success', async () => {
+  it('a map click while felt-point mode is armed saves a 1m segment immediately (centered on the click, along the armed bearing), with no polarity — mirrors auto-detected segments so both render identically', async () => {
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
       id: 'fs1', planId: 'p1', networkName: 'Hartmann',
       pointA: { x: 0, y: -0.5 }, pointB: { x: 0, y: 0.5 },
-      polarityA: '+', polarityB: '-', createdAt: '2026-07-22T10:00:00Z',
+      polarityA: null, polarityB: null, createdAt: '2026-07-22T10:00:00Z',
     })
     const { result, onFeltSegmentCreated } = setup()
-    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
+    act(() => result.current.handleSelectFeltPointNetwork('Hartmann')) // bearingDeg 0 (N/S)
+
     act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
-
-    await act(async () => result.current.handleSubmitFeltSegmentPolarity('+', '-'))
-
-    expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledWith(
-      expect.objectContaining({ planId: 'p1', networkName: 'Hartmann', polarityA: '+', polarityB: '-' })
-    )
+    await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledTimes(1))
+    const call = vi.mocked(feltSegmentsRepo.createFeltSegment).mock.calls[0][0]
+    expect(call.planId).toBe('p1')
+    expect(call.networkName).toBe('Hartmann')
+    expect(call.polarityA).toBeUndefined()
+    expect(call.polarityB).toBeUndefined()
+    // Bearing 0 (N/S) — the segment runs along y, centered on the clicked
+    // point, 1m total length (0.5m each side); x is unchanged.
+    expect(call.pointA.x).toBeCloseTo(call.pointB.x, 6)
+    expect(Math.abs(call.pointA.y - call.pointB.y)).toBeCloseTo(1, 6)
     expect(onFeltSegmentCreated).toHaveBeenCalledWith(expect.objectContaining({ networkName: 'Hartmann' }))
-    expect(result.current.pendingFeltSegment).toBeNull()
-    expect(result.current.placementMode).toBeNull()
+    // Placement mode stays armed — mirrors handlePlacePhenomenon/
+    // handlePlaceContextObject, so several segments of the same network can
+    // be placed in a row without re-selecting.
+    expect(result.current.placementMode).toEqual({ kind: 'felt-point', networkName: 'Hartmann', bearingDeg: 0 })
   })
 
-  it('cancelling the polarity form discards the pending segment without saving', () => {
-    const { result } = setup()
-    act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
-    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
-
-    act(() => result.current.handleCancelFeltSegment())
-
-    expect(feltSegmentsRepo.createFeltSegment).not.toHaveBeenCalled()
-    expect(result.current.pendingFeltSegment).toBeNull()
-    expect(result.current.placementMode).toBeNull()
-  })
-
-  it('routes a failed segment save through its own dismissible feltSegmentSaveError, not the global onError — leaves the pending segment intact so the user can retry', async () => {
+  it('routes a failed segment save through its own dismissible feltSegmentSaveError, not the global onError', async () => {
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockRejectedValue(new Error('network down'))
     const { result, onError } = setup()
     act(() => result.current.handleSelectFeltPointNetwork('Hartmann'))
-    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
 
-    await act(async () => result.current.handleSubmitFeltSegmentPolarity('+', '-'))
+    act(() => result.current.handleMapClick(MAP_CLICK_LATLNG))
+    await waitFor(() => expect(result.current.feltSegmentSaveError).toBe('network down'))
 
     expect(onError).not.toHaveBeenCalled()
-    expect(result.current.feltSegmentSaveError).toBe('network down')
-    expect(result.current.pendingFeltSegment).not.toBeNull()
   })
 })
