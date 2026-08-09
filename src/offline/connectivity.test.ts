@@ -31,6 +31,26 @@ describe('isOnlineNow', () => {
     expect(await isOnlineNow()).toBe(false)
   })
 
+  it('probes the REST API path with the anon apikey header, not the bare project root domain', async () => {
+    // The bare project root (e.g. https://xxx.supabase.co/, no path, no
+    // apikey header) isn't the API surface the rest of the app actually
+    // talks to (supabaseClient.ts always calls /rest/v1/... with apikey) —
+    // and it doesn't send the same CORS headers as that real API surface.
+    // Probing the root produced a false "offline" for Laurent on his own
+    // real, connected device (field testing 08/2026: "indique hors ligne
+    // alors que connecté"), blocking mission deletion with "Suppression
+    // indisponible hors-ligne" even though every other network call in the
+    // app worked fine at the same moment.
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as Response)
+
+    await isOnlineNow()
+
+    const [calledUrl, calledOptions] = vi.mocked(fetch).mock.calls[0]
+    expect(String(calledUrl)).toMatch(/\/rest\/v1\/?$/)
+    expect((calledOptions as RequestInit).headers).toMatchObject({ apikey: expect.any(String) })
+  })
+
   it('returns false when the network probe times out', async () => {
     vi.useFakeTimers()
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
