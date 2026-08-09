@@ -68,6 +68,26 @@ const FLOATING_PANEL_STYLE = {
   zIndex: 1200, // matches GUIDE_LINE_SLOT_STYLE — above the toolbar row itself
 }
 
+// Radix's DropdownMenu is headless — it renders NO background/border/z-index
+// of its own on <DropdownMenu.Content>, unlike every other floating panel in
+// this app (FLOATING_PANEL_STYLE above, Toolbar.tsx's GUIDE_LINE_SLOT_STYLE).
+// Left unstyled, the menu's text has a transparent background and no
+// guaranteed stacking order — on a narrow viewport, Radix's own collision
+// avoidance can reposition a menu (Affichage in particular, being the
+// rightmost trigger) further left than its trigger, landing it visually
+// behind/blended into Sidebar.tsx's opaque white column (zIndex: 1000) —
+// reported by Laurent as menu text "telescoping" into the sidebar. Matches
+// FLOATING_PANEL_STYLE's background/border/zIndex so every menu is always
+// a solid, unambiguously-topmost surface regardless of viewport width.
+const DROPDOWN_CONTENT_STYLE = {
+  background: 'white',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+  zIndex: 1200,
+  minWidth: 180,
+}
+
 // Radix's DropdownMenu is headless (no visual styling of its own). Fichier's
 // content/behavior is per spec §4. Modifier/Affichage are added in later
 // tasks as siblings of this same top-level <DropdownMenu.Root> pattern —
@@ -187,7 +207,7 @@ export function MenuBar({
           <button>Fichier</button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content>
+          <DropdownMenu.Content style={DROPDOWN_CONTENT_STYLE}>
             <DropdownMenu.Item onSelect={onNavigateToNewMission}>Nouvelle mission</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={onNavigateToMissionList}>Mes missions</DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => setMissionInfoOpen(true)}>Infos de la mission</DropdownMenu.Item>
@@ -210,7 +230,7 @@ export function MenuBar({
           <button>Modifier</button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content>
+          <DropdownMenu.Content style={DROPDOWN_CONTENT_STYLE}>
             <DropdownMenu.Item disabled={undoRedoBusy} onSelect={handleUndo}>
               Annuler
             </DropdownMenu.Item>
@@ -228,7 +248,7 @@ export function MenuBar({
           <button>Affichage</button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
-          <DropdownMenu.Content>
+          <DropdownMenu.Content style={DROPDOWN_CONTENT_STYLE}>
             <DropdownMenu.Item disabled title="Utilisez les contrôles +/- sur la carte">
               Zoom +
             </DropdownMenu.Item>

@@ -74,16 +74,25 @@ export function MissionPhotosGallery({ missionId, planId, missionOrigin }: Missi
           }}
         />
       </label>
-      <div>
+      {/* Small clickable thumbnails, not full-size previews — these photos
+          are only an input to "Détecter les tiges" (their rod detections get
+          reported onto the plan as FeltPoints/FeltSegments); there's no need
+          to inspect them at size once uploaded. Previously maxWidth: 200
+          with no height cap, unconstrained and inline — 2+ photos routinely
+          pushed the map (which needs most of the screen) into a sliver at
+          the top. Reported by Laurent from live field testing. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {photos.map((photo) => (
-          <figure key={photo.id} style={{ display: 'inline-block', margin: 8 }}>
-            <img
-              src={photo.imageUrl}
-              alt="Photo aérienne de la mission"
-              loading="lazy"
-              style={{ maxWidth: 200 }}
-            />
-            <figcaption>
+          <figure key={photo.id} style={{ margin: 0, textAlign: 'center' as const }}>
+            <button onClick={() => setSelectedPhotoId(photo.id)} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
+              <img
+                src={photo.imageUrl}
+                alt="Photo aérienne de la mission"
+                loading="lazy"
+                style={{ width: 80, height: 80, objectFit: 'cover' as const, display: 'block', border: '1px solid #ccc', borderRadius: 4 }}
+              />
+            </button>
+            <figcaption style={{ fontSize: 11 }}>
               <button onClick={() => setSelectedPhotoId(photo.id)}>Détecter les tiges</button>
             </figcaption>
           </figure>
