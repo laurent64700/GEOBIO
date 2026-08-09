@@ -50,12 +50,16 @@
   }
 }
 
+/* Leftover from the Vite starter template: a fixed 1126px width, centered via
+   margin:0 auto, meant for a narrow marketing-page layout. GEOBIO is a
+   full-screen mapping tool, not that page — on any window wider than 1126px
+   this left the map/sidebar cropped into a strip with the (black) <body>
+   background showing on both sides and under every stacked row below the
+   map, since every child's height:'100%'/width:'100%' resolves against this
+   box, not the real viewport. Reported by Laurent from live field testing
+   ("1 tiers de l'écran qui ne sert à rien... la carte plein pot"). */
 #root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  width: 100%;
   min-height: 100svh;
   display: flex;
   flex-direction: column;

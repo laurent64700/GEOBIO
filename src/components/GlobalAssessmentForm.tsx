@@ -48,11 +48,13 @@ export function GlobalAssessmentForm({ onSaved }: GlobalAssessmentFormProps) {
       <CauseSlider label="Autres" value={causeAutres} onChange={setCauseAutres} />
       <label>
         Taux vibratoire (Bovis)
+        {/* A plain number field, not a slider — Laurent reads this directly
+            off a dowsing chart and types the exact figure; a 0-180000 range
+            slider couldn't land on a precise value (field testing 08/2026). */}
         <input
-          type="range" min={0} max={180000} step={500} value={bovisRate}
+          type="number" min={0} value={bovisRate}
           onChange={(e) => setBovisRate(Number(e.target.value))}
         />
-        <span>{bovisRate}</span>
       </label>
       <button
         onClick={() =>

@@ -4,18 +4,25 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { GlobalAssessmentForm } from './GlobalAssessmentForm'
 
 describe('GlobalAssessmentForm', () => {
-  it('renders a 0-10 slider for each of the 5 causes and a 0-180000 slider for Bovis', () => {
+  it('renders a 0-10 slider for each of the 5 causes and a plain number field for Bovis', () => {
+    // Bovis used to be a 0-180000 range slider — with that span on a
+    // physical slider track, each pixel represented well over 1000 units,
+    // making it impossible to land on the exact figure a dowsing chart gives
+    // (Laurent, field testing 08/2026: "ça ne se cale pas bien, on peut
+    // avoir juste une case à remplir avec un chiffre que je donne"). A plain
+    // number field lets him type the exact reading directly.
     render(<GlobalAssessmentForm onSaved={vi.fn()} />)
     ;[
       'Architectural', 'Électromagnétique', 'Géobiologique', 'Paranormal', 'Autres',
     ].forEach((label) => {
       const input = screen.getByLabelText(label) as HTMLInputElement
+      expect(input.type).toBe('range')
       expect(input.min).toBe('0')
       expect(input.max).toBe('10')
     })
     const bovis = screen.getByLabelText(/taux vibratoire/i) as HTMLInputElement
+    expect(bovis.type).toBe('number')
     expect(bovis.min).toBe('0')
-    expect(bovis.max).toBe('180000')
   })
 
   it('calls onSaved with the slider values when submitted', () => {

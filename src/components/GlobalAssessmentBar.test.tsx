@@ -29,4 +29,17 @@ describe('GlobalAssessmentBar', () => {
     expect(screen.queryByRole('button', { name: /enregistrer/i })).not.toBeInTheDocument()
     vi.useRealTimers()
   })
+
+  it('is collapsed by default — only needed at the start/end of a survey, not permanently on screen', () => {
+    render(<GlobalAssessmentBar values={baseValues} onChange={vi.fn()} />)
+    const details = screen.getByText('Bilan global').closest('details') as HTMLDetailsElement
+    expect(details.open).toBe(false)
+  })
+
+  it('expands to show the sliders when "Bilan global" is clicked', () => {
+    render(<GlobalAssessmentBar values={baseValues} onChange={vi.fn()} />)
+    fireEvent.click(screen.getByText('Bilan global'))
+    const details = screen.getByText('Bilan global').closest('details') as HTMLDetailsElement
+    expect(details.open).toBe(true)
+  })
 })
