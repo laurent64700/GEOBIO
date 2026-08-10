@@ -39,12 +39,14 @@ plan, se trouve le centre de la photo (= où Laurent se tenait).
 - Dériver l'échelle depuis la distance mesurée (en pixels) entre les 2
   marqueurs de chaque tige complète détectée, comparée à la distance réelle
   connue de 1m.
-- Dériver la rotation globale de la photo en exploitant conjointement
-  toutes les tiges détectées et leurs familles d'angles connues
-  (`networkBearings.ts`) — une tige individuellement ambiguë (équidistante
-  de 2 membres de sa famille) est départagée par cohérence avec les autres
-  tiges/réseaux visibles, garantis présents par la pratique de Laurent (au
-  moins 2 réseaux différents par photo).
+- Dériver la rotation globale de la photo depuis les familles d'angles
+  connues des tiges détectées (`networkBearings.ts`), **avec une
+  ambiguïté résiduelle à 90° acceptée** (voir "Limite connue, acceptée"
+  ci-dessous) — pas une désambiguïsation complète : les 5 réseaux connus
+  n'ont que 2 familles (Hartmann/Palm/Peyré = 0°/90°, Curry/Wissmann =
+  45°/135°), toutes deux invariantes sous une rotation de 90°, donc aucune
+  combinaison de tiges/réseaux ne peut lever ce doute à 90° près par le
+  seul calcul.
 - Afficher en dur dans l'interface l'hypothèse de prise de vue (trépied +
   bras 3m + télécommande = vertical, centré) — non configurable.
 
@@ -80,8 +82,19 @@ plan, se trouve le centre de la photo (= où Laurent se tenait).
    `undoableWrite` (vérifié dans `feltPointsRepo.ts`/`feltSegmentsRepo.ts`)
    — un clic mal placé reste rattrapable via le "Annuler" global déjà
    existant, sans qu'une UI de confirmation dédiée soit nécessaire pour ce
-   chantier.
-5. Si aucune tige complète n'est détectée : message d'erreur clair
+   chantier. **Note** : une photo crée typiquement plusieurs entités (une
+   par tige complète + une par marqueur isolé) — chacune est sa propre
+   entrée d'historique indépendante (`undoableWrite` n'accepte pas de
+   `batchId` sur un `insert`, vérifié dans `actionHistory.ts`), donc
+   défaire tout le lot d'une photo demande plusieurs clics Annuler
+   successifs, pas un seul. Accepté tel quel pour ce chantier — pas
+   d'extension du système d'historique pour permettre un `batchId` sur les
+   insertions.
+5. Un bouton "Inverser l'orientation (90°)" reste disponible juste après
+   cette création, pour corriger l'ambiguïté de rotation résiduelle si le
+   résultat ne correspond pas au terrain (voir "Correction manuelle" plus
+   bas).
+6. Si aucune tige complète n'est détectée : message d'erreur clair
    ("Aucune tige complète détectée — impossible de calculer l'échelle."),
    aucun calcul, aucun repli vers le calage manuel. Laurent peut réessayer
    avec une autre photo ou annuler.
@@ -141,35 +154,21 @@ de ces estimations sur toutes les tiges complètes détectées dans la photo
 (plus robuste au bruit de détection qu'une seule tige — confirmé avec
 Laurent).
 
-**Rotation `θ`** — une SEULE valeur de `θ` pour toute la photo, déterminée
-conjointement à partir de toutes les tiges de réseau à famille d'angles
-connue (pas une moyenne de rotations calculées indépendamment tige par
-tige — voir ci-dessous pourquoi). Seules les tiges dont
-`allowedBearingsForNetwork(networkName)` renvoie une famille non-nulle
-participent ; les autres (réseau personnalisé/"Autre", famille inconnue)
-sont ignorées pour la rotation, mais comptent toujours pour l'échelle.
+**Rotation `θ`** — une SEULE valeur de `θ` pour toute la photo. Seules les
+tiges dont `allowedBearingsForNetwork(networkName)` renvoie une famille
+non-nulle participent ; les autres (réseau personnalisé/"Autre", famille
+inconnue) sont ignorées pour la rotation, mais comptent toujours pour
+l'échelle.
 
-Algorithme :
-1. Prendre la première tige à famille connue. Ses 2 marqueurs donnent un
-   angle mesuré en pixels. Chaque membre de sa famille (ex. 0° et 90° pour
-   Hartmann) donne une rotation CANDIDATE `θ_candidate` = (membre de
-   famille) − (angle mesuré) — 2 candidats pour une famille à 2 membres.
-2. Pour chaque candidat, calculer l'erreur angulaire totale sur TOUTES les
-   tiges à famille connue : angle mesuré de la tige + candidat, comparé au
-   membre le plus proche de LA FAMILLE DE CETTE TIGE (qui peut être une
-   famille différente de la tige de référence — ex. Curry 45°/135° pour
-   une tige, Hartmann 0°/90° pour une autre).
-3. Retenir le candidat à erreur totale minimale comme `θ` final.
-
-C'est cette étape 2, comparant CHAQUE tige (toutes familles confondues) au
-MÊME candidat de rotation globale, qui exploite réellement la présence de
-plusieurs réseaux pour désambiguïser une tige individuellement ambiguë
-(équidistante des 2 membres de sa propre famille) — contrairement à un
-alignement indépendant tige par tige (qui ne peut pas s'appuyer sur les
-autres tiges) suivi d'une moyenne (par ailleurs mathématiquement fausse
-pour des angles au passage de la frontière 0°/360°, sans normalisation
-circulaire — écueil évité ici puisqu'il n'y a plus de moyenne d'angles du
-tout, une seule valeur de `θ` étant retenue).
+Algorithme (délibérément simple — voir "Limite connue, acceptée"
+ci-dessous pour pourquoi un algorithme plus élaboré n'apporterait rien) :
+1. Prendre la première tige à famille connue détectée. Ses 2 marqueurs
+   donnent un angle mesuré en pixels.
+2. `θ = (premier membre de sa famille, ex. 0° pour Hartmann, 45° pour
+   Curry) − (angle mesuré)`.
+3. Les autres tiges à famille connue, s'il y en a, ne participent PAS au
+   calcul de `θ` (voir limite ci-dessous — les inclure ne changerait rien
+   au résultat).
 
 ⚠️ **Point technique à vérifier empiriquement en implémentation, pas
 figé ici** : le sens exact de `θ` (le signe de la conversion angle-pixel
@@ -182,6 +181,28 @@ correct — ne pas supposer un signe sans test réel (même leçon que le bug
 d'ordre des axes BBOX du 23/07/2026, jamais détecté par un test avec
 fetch mocké).
 
+### Limite connue, acceptée : ambiguïté résiduelle à 90°
+
+Les 5 réseaux connus n'ont que 2 familles d'angles
+(`networkBearings.ts`) : Hartmann/Palm/Peyré = 0°/90°, Curry/Wissmann =
+45°/135°. **Les deux sont invariantes sous une rotation globale de 90°**
+(tourner toute la photo de 90° laisse chaque famille inchangée comme
+ensemble). Conséquence vérifiée par le calcul lors de la revue de ce
+spec : aucune combinaison de tiges, aucun nombre de réseaux différents
+visibles dans une même photo, ne peut lever cette ambiguïté à 90° par le
+seul calcul — une tentative de "score global sur toutes les tiges" (testée
+et rejetée en revue) donne une erreur totale strictement égale pour les 2
+candidats, systématiquement. Ce n'est pas une limite d'implémentation,
+c'est une propriété mathématique des familles d'angles telles qu'elles
+existent aujourd'hui.
+
+**Décision de Laurent : le risque est accepté.** Le calage peut donc, dans
+certains cas, être tourné de 90° par rapport à la réalité — de façon
+silencieuse, sans erreur levée (les `FeltPoint`/`FeltSegment` sont créés
+normalement, juste dans la mauvaise orientation). Laurent vérifie
+visuellement le résultat et corrige manuellement si besoin (voir
+"Correction manuelle" ci-dessous).
+
 **Translation `(e, f)`** — le point unique cliqué sur le plan par Laurent
 est converti en coordonnées locales (`latLngToLocal`), donnant
 `realCenter`. Le centre de la photo en pixels `(cx, cy)` est calculé
@@ -193,6 +214,38 @@ alors résolus pour que ce point du centre corresponde exactement à
 e = realCenter.x − (a·cx + b·cy)
 f = realCenter.y − (c·cx + d·cy)
 ```
+
+## Correction manuelle : "Inverser l'orientation"
+
+Puisque l'ambiguïté est **binaire** (exactement 2 candidats possibles,
+toujours à 90° l'un de l'autre, jamais plus), la correction est un simple
+bouton bascule, affiché juste après la création des points/segments d'une
+photo, tant que Laurent est encore sur cet écran :
+
+> "Ça ne correspond pas au terrain ? Inverser l'orientation (90°)"
+
+Au clic :
+1. Reprend les données déjà en mémoire pour cette détection (groupement
+   pixel des tiges, échelle `s`, point cliqué `realCenter`) — gardées en
+   état local du composant, pas persistées.
+2. Recalcule `θ` avec le SECOND membre de la famille de la tige de
+   référence (`(second membre) − (angle mesuré)`), reconstruit
+   `AffineTransform`, puis relance le 2e appel à `mapDetectionsToPoints`
+   (voir "Flux de données" plus haut) avec cette transformation corrigée.
+3. Supprime les `FeltPoint`/`FeltSegment` créés par la détection initiale
+   (`deleteFeltPoint`/`deleteFeltSegment`, déjà existants) puis recrée
+   l'ensemble avec les positions corrigées (`createFeltPoint`/
+   `createFeltSegment`, déjà existants) — suppression + recréation plutôt
+   qu'une mise à jour en place, pour réutiliser les primitives de repo
+   existantes sans en ajouter une nouvelle. Chaque suppression et création
+   passe par `undoableWrite` comme d'habitude — un "Inverser l'orientation"
+   reste lui-même annulable via le "Annuler" global (au prix de plusieurs
+   clics Annuler pour tout défaire, comme pour la création initiale —
+   même limite que notée au Flux utilisateur étape 4).
+
+Ce bouton n'est utile/affiché que s'il existe au moins une tige à famille
+d'angles connue (sinon la rotation n'a pas pu être calculée du tout — voir
+"Gestion des erreurs").
 
 ## Gestion des erreurs
 
@@ -232,22 +285,29 @@ f = realCenter.y − (c·cx + d·cy)
   (`allowedBearingsForNetwork`), aucune modification attendue.
 - Texte d'interface fixe (hypothèse trépied/bras/télécommande) — ajouté
   dans `RodDetectionPanel.tsx`, non configurable.
+- Bouton "Inverser l'orientation" et sa logique de recalcul/remplacement
+  — même nouveau fichier de dérivation que ci-dessus, plus les appels
+  `deleteFeltPoint`/`deleteFeltSegment`/`createFeltPoint`/
+  `createFeltSegment` (existants, réutilisés tels quels) depuis
+  `RodDetectionPanel.tsx`.
 
 ## Tests
 
 - Dérivation d'échelle : une tige connue à une distance pixel donnée doit
   produire l'échelle attendue ; plusieurs tiges doivent donner la moyenne
   correcte.
-- Dérivation de rotation : un angle pixel connu doit s'aligner sur le
-  membre de famille le plus proche (ex. un angle mesuré à 88° pour
-  Hartmann doit converger vers 90°, pas 0°) ; une tige SEULE et
-  individuellement ambiguë (équidistante des 2 membres de sa famille) doit
-  être départagée correctement quand une 2e tige d'un autre réseau est
-  présente dans le jeu de test — c'est le cas qui prouve que la
-  désambiguïsation inter-réseaux fonctionne réellement, pas seulement un
-  alignement indépendant par tige.
+- Dérivation de rotation : la première tige à famille connue doit aligner
+  son angle mesuré sur le PREMIER membre de sa famille (ex. 0° pour
+  Hartmann, 45° pour Curry) — règle déterministe, pas une recherche parmi
+  plusieurs candidats (voir "Limite connue, acceptée" : une recherche plus
+  élaborée ne changerait rien au résultat).
 - Tiges à réseau sans famille connue : ignorées pour le calcul de
   rotation, mais toujours prises en compte pour l'échelle.
+- "Inverser l'orientation" : partant d'un résultat initial connu, le clic
+  doit produire l'AUTRE candidat (second membre de la famille de la tige
+  de référence), supprimer les entités initialement créées et en recréer
+  de nouvelles aux positions corrigées — vérifier qu'aucune entité de
+  l'ancien calage ne subsiste après coup.
 - Translation : le centre de la photo doit se mapper exactement sur le
   point réel cliqué, quels que soient l'échelle et la rotation calculées.
 - Bout en bout : un jeu de marqueurs de test avec position/rotation/
