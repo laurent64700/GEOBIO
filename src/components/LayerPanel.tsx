@@ -52,6 +52,15 @@ export interface LayerPanelProps {
   gridLayers: LayerEntry[]
   visibility: Record<string, boolean>
   onToggle: (id: string) => void
+  /** Optional — when provided, each grid layer row also gets a "Supprimer"
+   * button. SiteMapView owns the actual confirmation/deletion (ConfirmDialog
+   * + deleteGridInstance); this panel just reports which id was clicked, the
+   * same "dumb presentational list" role it already has for onToggle.
+   * There was previously no way to ever remove a grid instance once
+   * generated — a mistaken or duplicate "Ajouter une grille" for the same
+   * network was permanent (field testing 08/2026: "attention au lignes
+   * doubles curry et doubles hartmann"). */
+  onDeleteInstance?: (id: string) => void
 }
 
 // This card no longer positions itself (no position/top/right/zIndex): as of
@@ -71,7 +80,7 @@ const PANEL_STYLE = {
   borderRadius: 4,
 }
 
-export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps) {
+export function LayerPanel({ gridLayers, visibility, onToggle, onDeleteInstance }: LayerPanelProps) {
   return (
     <div style={PANEL_STYLE}>
       <label>
@@ -91,14 +100,25 @@ export function LayerPanel({ gridLayers, visibility, onToggle }: LayerPanelProps
         Tiges (segments ressentis)
       </label>
       {gridLayers.map((layer) => (
-        <label key={layer.id}>
-          <input
-            type="checkbox"
-            checked={visibility[layer.id] ?? false}
-            onChange={() => onToggle(layer.id)}
-          />
-          <span style={{ color: layer.color }}>{layer.label}</span>
-        </label>
+        <div key={layer.id}>
+          <label>
+            <input
+              type="checkbox"
+              checked={visibility[layer.id] ?? false}
+              onChange={() => onToggle(layer.id)}
+            />
+            <span style={{ color: layer.color }}>{layer.label}</span>
+          </label>
+          {onDeleteInstance && (
+            // Distinct accessible name from ConfirmDialog's own "Supprimer"
+            // confirm button, which renders right below once clicked (same
+            // collision, same fix, as MenuBar.tsx's mission-deletion button —
+            // see its own comment for the exact reasoning).
+            <button aria-label={`Supprimer la grille ${layer.label}`} onClick={() => onDeleteInstance(layer.id)}>
+              Supprimer
+            </button>
+          )}
+        </div>
       ))}
       <label>
         <input

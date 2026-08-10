@@ -217,6 +217,31 @@ describe('LayerPanel', () => {
     expect(onToggle).toHaveBeenCalledWith(PARCELS_LAYER_ID)
   })
 
+  it('does not render a "Supprimer" button per grid layer when onDeleteInstance is not provided', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /supprimer/i })).not.toBeInTheDocument()
+  })
+
+  it('renders a "Supprimer" button per grid layer when onDeleteInstance is provided, and calls it with the instance id', () => {
+    const onDeleteInstance = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+        onDeleteInstance={onDeleteInstance}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /supprimer/i }))
+    expect(onDeleteInstance).toHaveBeenCalledWith('gi1')
+  })
+
   it('respects explicit visibility overrides', () => {
     render(
       <LayerPanel

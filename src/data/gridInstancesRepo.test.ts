@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import 'fake-indexeddb/auto'
-import { createGridInstance, listGridInstancesForPlan, updateGridInstanceOrigin } from './gridInstancesRepo'
+import { createGridInstance, listGridInstancesForPlan, updateGridInstanceOrigin, deleteGridInstance } from './gridInstancesRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 import { getDB } from '../offline/db'
@@ -113,6 +113,26 @@ describe('gridInstancesRepo', () => {
 
     await expect(updateGridInstanceOrigin('gi1', 3.2, -0.7)).rejects.toThrow(
       'Impossible de recaler la grille : network down'
+    )
+  })
+
+  it('deletes a grid instance (its grid_line rows cascade in the DB — no separate call needed)', async () => {
+    const { from, chain } = createSupabaseChainMock({ data: { id: 'gi1' }, error: null })
+    vi.mocked(supabase).from = from
+
+    await deleteGridInstance('gi1')
+
+    expect(from).toHaveBeenCalledWith('grid_instance')
+    expect(chain.delete).toHaveBeenCalled()
+    expect(chain.eq).toHaveBeenCalledWith('id', 'gi1')
+  })
+
+  it('throws a descriptive French error when deletion fails', async () => {
+    const { from } = createSupabaseChainMock({ data: null, error: { message: 'network down' } })
+    vi.mocked(supabase).from = from
+
+    await expect(deleteGridInstance('gi1')).rejects.toThrow(
+      'Impossible de supprimer la grille : network down'
     )
   })
 })

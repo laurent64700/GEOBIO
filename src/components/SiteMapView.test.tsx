@@ -13,6 +13,7 @@ import * as phenomenaRepo from '../data/phenomenaRepo'
 import * as freeformNetworksRepo from '../data/freeformNetworksRepo'
 import * as plansRepo from '../data/plansRepo'
 import * as contextObjectsRepo from '../data/contextObjectsRepo'
+import * as connectivity from '../offline/connectivity'
 import { createGridForPlan } from '../domain/createGridForPlan'
 import { getOrthogonalitySuggestion } from '../geometry/orthogonality'
 
@@ -27,6 +28,12 @@ vi.mock('../data/phenomenaRepo')
 vi.mock('../data/freeformNetworksRepo')
 vi.mock('../data/plansRepo')
 vi.mock('../data/contextObjectsRepo')
+// Needed for the grid-instance-deletion tests below — ConfirmDialog probes
+// isOnlineNow() before calling onConfirm, and it's otherwise a real network
+// fetch (see offline/connectivity.ts). Defaulted true here so every other
+// pre-existing test in this file is unaffected (none of them render a
+// ConfirmDialog, but vi.mock(...) applies file-wide either way).
+vi.mock('../offline/connectivity')
 
 // Same reasoning as the BuildingFootprintPicker mock below: CalibratedPlanOverlay
 // calls react-leaflet's useMap(), which throws outside a real <MapContainer> —
@@ -218,6 +225,7 @@ describe('SiteMapView', () => {
     vi.mocked(contextObjectsRepo.listContextObjectsForPlan).mockResolvedValue([])
     vi.mocked(freeformNetworksRepo.listFreeformNetworksForPlan).mockResolvedValue([])
     vi.mocked(plansRepo.listPlansForMission).mockResolvedValue([])
+    vi.mocked(connectivity.isOnlineNow).mockResolvedValue(true)
   })
 
   afterEach(() => {
@@ -321,6 +329,38 @@ describe('SiteMapView', () => {
     fireEvent.click(await screen.findByLabelText('Hartmann'))
 
     await waitFor(() => expect(screen.getByTestId('lines-Hartmann')).toBeInTheDocument())
+  })
+
+  it('deletes a grid instance after confirmation — it disappears from the layer list and the layer content along with it', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(gridInstancesRepo.deleteGridInstance).mockResolvedValue(undefined)
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} selectedParcels={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
+
+    await screen.findByLabelText('Hartmann')
+    fireEvent.click(screen.getByRole('button', { name: /supprimer la grille hartmann/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+
+    await waitFor(() => expect(gridInstancesRepo.deleteGridInstance).toHaveBeenCalledWith('gi1'))
+    await waitFor(() => expect(screen.queryByLabelText('Hartmann')).not.toBeInTheDocument())
+  })
+
+  it('leaves the grid instance in place and shows the error when deletion fails', async () => {
+    vi.mocked(gridInstancesRepo.listGridInstancesForPlan).mockResolvedValue([hartmannInstance])
+    vi.mocked(gridLinesRepo.listGridLinesForInstance).mockResolvedValue([])
+    vi.mocked(feltPointsRepo.listFeltPointsForPlan).mockResolvedValue([])
+    vi.mocked(gridInstancesRepo.deleteGridInstance).mockRejectedValue(new Error('network down'))
+
+    render(<SiteMapView planId="p1" missionId="m1" missionOrigin={{ lat: 48.8566, lng: 2.3522 }} initialBuildingFootprint={null} selectedParcels={null} guideLineSlotEl={guideLineSlotEl} editMode={false} onEditModeChange={() => {}} calquesOpen={false} onCalquesOpenChange={() => {}} />)
+
+    await screen.findByLabelText('Hartmann')
+    fireEvent.click(screen.getByRole('button', { name: /supprimer la grille hartmann/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Supprimer' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('network down')
+    expect(screen.getByLabelText('Hartmann')).toBeInTheDocument()
   })
 
   it('toggling "Ressenti terrain" off hides the felt points that were visible by default', async () => {

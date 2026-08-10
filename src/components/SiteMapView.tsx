@@ -34,6 +34,7 @@ import { PhenomenonPicker } from './PhenomenonPicker'
 import { ContextObjectPicker } from './ContextObjectPicker'
 import { ContextObjectsLayer } from './ContextObjectsLayer'
 import { ParcelsLayer } from './ParcelsLayer'
+import { ConfirmDialog } from './ConfirmDialog'
 import { FeltPointPicker } from './FeltPointPicker'
 import { PhenomenaLayer } from './PhenomenaLayer'
 import { FreeformDrawTool } from './FreeformDrawTool'
@@ -41,7 +42,7 @@ import { FreeformNetworkLayer } from './FreeformNetworkLayer'
 import { FreeformMetadataForm } from './FreeformMetadataForm'
 import { usePlacementMode } from '../hooks/usePlacementMode'
 import { computeHartmannCurryCrossings } from '../geometry/pathogenicCrossings'
-import { listGridInstancesForPlan, updateGridInstanceOrigin } from '../data/gridInstancesRepo'
+import { listGridInstancesForPlan, updateGridInstanceOrigin, deleteGridInstance } from '../data/gridInstancesRepo'
 import { listGridLinesForInstance, updateAdjustedPoints, updateLinePoints } from '../data/gridLinesRepo'
 import { listFeltPointsForPlan } from '../data/feltPointsRepo'
 import { listFeltSegmentsForPlan } from '../data/feltSegmentsRepo'
@@ -195,6 +196,11 @@ export function SiteMapView({
 }: SiteMapViewProps) {
   const [instances, setInstances] = useState<GridInstance[]>([])
   const [linesByInstance, setLinesByInstance] = useState<Record<string, GridLine[]>>({})
+  // Id of the grid instance a "Supprimer" click (LayerPanel) is confirming
+  // deletion for — null means no ConfirmDialog is open. Mirrors
+  // MenuBar.tsx's confirmingDelete pattern for mission deletion: this
+  // component owns the confirmation step, LayerPanel just reports the click.
+  const [deletingGridInstanceId, setDeletingGridInstanceId] = useState<string | null>(null)
   const [feltPoints, setFeltPoints] = useState<FeltPoint[]>([])
   const [feltSegments, setFeltSegments] = useState<FeltSegment[]>([])
   const [phenomena, setPhenomena] = useState<Phenomenon[]>([])
@@ -412,6 +418,22 @@ export function SiteMapView({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  async function handleConfirmDeleteGridInstance() {
+    if (deletingGridInstanceId === null) return
+    const id = deletingGridInstanceId
+    await deleteGridInstance(id)
+    // Success only from here — a thrown error above leaves ConfirmDialog's
+    // own error state showing and this instance still in `instances`, so the
+    // user can retry without losing their place (same pattern as every other
+    // ConfirmDialog consumer in this app).
+    setInstances((prev) => prev.filter((i) => i.id !== id))
+    setLinesByInstance((prev) => {
+      const { [id]: _removed, ...rest } = prev
+      return rest
+    })
+    setDeletingGridInstanceId(null)
   }
 
   function handleLineChanged(instanceId: string, updated: GridLine, changeKind: 'drag' | 'vertex-added') {
@@ -867,7 +889,25 @@ export function SiteMapView({
             defaultOpen: false,
             open: calquesOpen,
             onToggle: onCalquesOpenChange,
-            content: <LayerPanel gridLayers={gridLayers} visibility={visibility} onToggle={toggleLayer} />,
+            content: (
+              <div style={{ position: 'relative' }}>
+                <LayerPanel
+                  gridLayers={gridLayers}
+                  visibility={visibility}
+                  onToggle={toggleLayer}
+                  onDeleteInstance={setDeletingGridInstanceId}
+                />
+                {deletingGridInstanceId !== null && (
+                  <ConfirmDialog
+                    title="Supprimer cette grille ?"
+                    message="Cette grille et toutes ses lignes seront supprimées. Cette action est irréversible."
+                    confirmLabel="Supprimer"
+                    onCancel={() => setDeletingGridInstanceId(null)}
+                    onConfirm={handleConfirmDeleteGridInstance}
+                  />
+                )}
+              </div>
+            ),
           },
           {
             id: 'phenomenes',
