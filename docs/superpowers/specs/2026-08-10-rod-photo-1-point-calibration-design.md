@@ -70,34 +70,36 @@ plan, se trouve le centre de la photo (= où Laurent se tenait).
 2. La détection ArUco (`detectMarkers`) se lance **automatiquement dès
    l'import**, sans étape de calage préalable et sans confirmation
    intermédiaire.
-3. Si au moins une tige complète (2 marqueurs de la même tige, même
-   `rodNumber`/`networkName`) est détectée : l'app demande "Cliquez sur le
-   plan à l'endroit où vous vous teniez pour cette photo" — un seul clic
-   sur la carte.
+3. Selon le résultat de la détection, 3 issues possibles (alternatives,
+   pas des étapes séquentielles — voir "Gestion des erreurs" pour le
+   détail des 2 cas d'erreur) :
+   - **Aucune tige complète détectée** → erreur bloquante, fin du flux
+     pour cette photo.
+   - **Tige(s) complète(s) détectée(s), mais aucune de réseau à famille
+     d'angles connue** → erreur bloquante distincte, fin du flux.
+   - **Cas nominal** (≥1 tige complète, dont ≥1 de réseau à famille
+     connue) → l'app demande "Cliquez sur le plan à l'endroit où vous vous
+     teniez pour cette photo" — un seul clic sur la carte. Suite au point 4.
 4. Le clic déclenche le calcul de la transformation complète (voir
-   ci-dessous), puis la création directe des `FeltPoint`/`FeltSegment`
-   correspondants — même comportement final qu'aujourd'hui une fois le
-   calage obtenu. Pas d'étape d'aperçu/confirmation intermédiaire avant
-   création : `createFeltPoint`/`createFeltSegment` passent déjà par
-   `undoableWrite` (vérifié dans `feltPointsRepo.ts`/`feltSegmentsRepo.ts`)
-   — un clic mal placé reste rattrapable via le "Annuler" global déjà
-   existant, sans qu'une UI de confirmation dédiée soit nécessaire pour ce
-   chantier. **Note** : une photo crée typiquement plusieurs entités (une
-   par tige complète + une par marqueur isolé) — chacune est sa propre
-   entrée d'historique indépendante (`undoableWrite` n'accepte pas de
-   `batchId` sur un `insert`, vérifié dans `actionHistory.ts`), donc
-   défaire tout le lot d'une photo demande plusieurs clics Annuler
-   successifs, pas un seul. Accepté tel quel pour ce chantier — pas
-   d'extension du système d'historique pour permettre un `batchId` sur les
-   insertions.
+   "Dérivation de la transformation"), puis la création directe des
+   `FeltPoint`/`FeltSegment` correspondants — même comportement final
+   qu'aujourd'hui une fois le calage obtenu. Pas d'étape d'aperçu/
+   confirmation intermédiaire avant création : `createFeltPoint`/
+   `createFeltSegment` passent déjà par `undoableWrite` (vérifié dans
+   `feltPointsRepo.ts`/`feltSegmentsRepo.ts`) — un clic mal placé reste
+   rattrapable via le "Annuler" global déjà existant, sans qu'une UI de
+   confirmation dédiée soit nécessaire pour ce chantier. **Note** : une
+   photo crée typiquement plusieurs entités (une par tige complète + une
+   par marqueur isolé) — chacune est sa propre entrée d'historique
+   indépendante (`undoableWrite` n'accepte pas de `batchId` sur un
+   `insert`, vérifié dans `actionHistory.ts`), donc défaire tout le lot
+   d'une photo demande plusieurs clics Annuler successifs, pas un seul.
+   Accepté tel quel pour ce chantier — pas d'extension du système
+   d'historique pour permettre un `batchId` sur les insertions.
 5. Un bouton "Inverser l'orientation (90°)" reste disponible juste après
    cette création, pour corriger l'ambiguïté de rotation résiduelle si le
    résultat ne correspond pas au terrain (voir "Correction manuelle" plus
    bas).
-6. Si aucune tige complète n'est détectée : message d'erreur clair
-   ("Aucune tige complète détectée — impossible de calculer l'échelle."),
-   aucun calcul, aucun repli vers le calage manuel. Laurent peut réessayer
-   avec une autre photo ou annuler.
 
 ## Dérivation de la transformation
 
@@ -147,28 +149,42 @@ a = s·cos(θ)   b = -s·sin(θ)
 c = s·sin(θ)   d = s·cos(θ)
 ```
 
-**Échelle `s`** — pour chaque tige complète détectée : distance en pixels
-entre les centroïdes de ses 2 marqueurs, divisée par 1m réel, donnant une
-estimation `s` en (unités réelles)/pixel. `s` final = moyenne arithmétique
-de ces estimations sur toutes les tiges complètes détectées dans la photo
-(plus robuste au bruit de détection qu'une seule tige — confirmé avec
-Laurent).
+### Échelle `s`
 
-**Rotation `θ`** — une SEULE valeur de `θ` pour toute la photo. Seules les
-tiges dont `allowedBearingsForNetwork(networkName)` renvoie une famille
-non-nulle participent ; les autres (réseau personnalisé/"Autre", famille
-inconnue) sont ignorées pour la rotation, mais comptent toujours pour
-l'échelle.
+Pour chaque tige complète détectée : distance en pixels entre les
+centroïdes de ses 2 marqueurs (`D_px`). `s` doit convertir des pixels en
+unités réelles (voir les formules `x' = a·x + b·y + e` ci-dessus, où
+`x, y` sont en pixels et `x', y'` en mètres réels) :
+
+```
+s = 1m ÷ D_px
+```
+
+(pas `D_px ÷ 1m`, qui donnerait une unité px/m — l'inverse de ce qu'il
+faut — bien vérifier ce sens en implémentation, cf. le test dédié
+ci-dessous.)
+
+`s` final = moyenne arithmétique de cette estimation sur toutes les tiges
+complètes détectées dans la photo (plus robuste au bruit de détection
+qu'une seule tige — confirmé avec Laurent).
+
+### Rotation `θ`
+
+Une SEULE valeur de `θ` pour toute la photo. Seules les tiges dont
+`allowedBearingsForNetwork(networkName)` renvoie une famille non-nulle
+participent ; les autres (réseau personnalisé/"Autre", famille inconnue)
+sont ignorées pour la rotation, mais comptent toujours pour l'échelle.
 
 Algorithme (délibérément simple — voir "Limite connue, acceptée"
-ci-dessous pour pourquoi un algorithme plus élaboré n'apporterait rien) :
+ci-dessous pour pourquoi un algorithme plus élaboré n'apporterait rien
+contre l'ambiguïté à 90°, même si inclure plus de tiges réduirait un peu
+le bruit de mesure sur l'angle d'UN candidat donné) :
 1. Prendre la première tige à famille connue détectée. Ses 2 marqueurs
    donnent un angle mesuré en pixels.
 2. `θ = (premier membre de sa famille, ex. 0° pour Hartmann, 45° pour
    Curry) − (angle mesuré)`.
-3. Les autres tiges à famille connue, s'il y en a, ne participent PAS au
-   calcul de `θ` (voir limite ci-dessous — les inclure ne changerait rien
-   au résultat).
+3. Les autres tiges à famille connue, s'il y en a, ne participent pas à ce
+   calcul volontairement simplifié.
 
 ⚠️ **Point technique à vérifier empiriquement en implémentation, pas
 figé ici** : le sens exact de `θ` (le signe de la conversion angle-pixel
@@ -179,7 +195,22 @@ carrés ; le nouveau calcul direct doit être validé contre une vraie photo
 de test avec une orientation de tige connue avant d'être considéré
 correct — ne pas supposer un signe sans test réel (même leçon que le bug
 d'ordre des axes BBOX du 23/07/2026, jamais détecté par un test avec
-fetch mocké).
+fetch mocké). Cette validation contre une vraie photo est distincte de
+l'ambiguïté à 90° ci-dessous : la résoudre ne résout PAS l'ambiguïté, ce
+sont deux problèmes différents.
+
+### Translation `(e, f)`
+
+Le point unique cliqué sur le plan par Laurent est converti en
+coordonnées locales (`latLngToLocal`), donnant `realCenter`. Le centre de
+la photo en pixels `(cx, cy)` est calculé automatiquement
+(`naturalWidth / 2`, `naturalHeight / 2`). `e` et `f` sont alors résolus
+pour que ce point du centre corresponde exactement à `realCenter` :
+
+```
+e = realCenter.x − (a·cx + b·cy)
+f = realCenter.y − (c·cx + d·cy)
+```
 
 ### Limite connue, acceptée : ambiguïté résiduelle à 90°
 
@@ -203,18 +234,6 @@ normalement, juste dans la mauvaise orientation). Laurent vérifie
 visuellement le résultat et corrige manuellement si besoin (voir
 "Correction manuelle" ci-dessous).
 
-**Translation `(e, f)`** — le point unique cliqué sur le plan par Laurent
-est converti en coordonnées locales (`latLngToLocal`), donnant
-`realCenter`. Le centre de la photo en pixels `(cx, cy)` est calculé
-automatiquement (`naturalWidth / 2`, `naturalHeight / 2`). `e` et `f` sont
-alors résolus pour que ce point du centre corresponde exactement à
-`realCenter` :
-
-```
-e = realCenter.x − (a·cx + b·cy)
-f = realCenter.y − (c·cx + d·cy)
-```
-
 ## Correction manuelle : "Inverser l'orientation"
 
 Puisque l'ambiguïté est **binaire** (exactement 2 candidats possibles,
@@ -224,15 +243,22 @@ photo, tant que Laurent est encore sur cet écran :
 
 > "Ça ne correspond pas au terrain ? Inverser l'orientation (90°)"
 
-Au clic :
-1. Reprend les données déjà en mémoire pour cette détection (groupement
-   pixel des tiges, échelle `s`, point cliqué `realCenter`) — gardées en
-   état local du composant, pas persistées.
-2. Recalcule `θ` avec le SECOND membre de la famille de la tige de
+Au clic, réutilise ce qui doit être gardé en état local du composant
+depuis la détection initiale (rien de persisté) :
+- les `detections` brutes (sortie de `detectMarkers`) et `rodMarkers`
+  (nécessaires pour rappeler `mapDetectionsToPoints`, voir sa signature en
+  "Flux de données" plus haut) ;
+- le groupement par tige en espace pixel (sortie du premier appel à
+  `pairIntoSegmentsAndPoints`, voir "Flux de données") ;
+- l'échelle `s` déjà calculée (ne change pas, seule la rotation change) ;
+- le point cliqué `realCenter` (ne change pas non plus).
+
+1. Recalcule `θ` avec le SECOND membre de la famille de la tige de
    référence (`(second membre) − (angle mesuré)`), reconstruit
-   `AffineTransform`, puis relance le 2e appel à `mapDetectionsToPoints`
-   (voir "Flux de données" plus haut) avec cette transformation corrigée.
-3. Supprime les `FeltPoint`/`FeltSegment` créés par la détection initiale
+   `AffineTransform` (même `s`, même `realCenter`, nouveau `θ`), puis
+   relance le 2e appel à `mapDetectionsToPoints` (voir "Flux de données"
+   plus haut) avec cette transformation corrigée.
+2. Supprime les `FeltPoint`/`FeltSegment` créés par la détection initiale
    (`deleteFeltPoint`/`deleteFeltSegment`, déjà existants) puis recrée
    l'ensemble avec les positions corrigées (`createFeltPoint`/
    `createFeltSegment`, déjà existants) — suppression + recréation plutôt
@@ -294,8 +320,9 @@ d'angles connue (sinon la rotation n'a pas pu être calculée du tout — voir
 ## Tests
 
 - Dérivation d'échelle : une tige connue à une distance pixel donnée doit
-  produire l'échelle attendue ; plusieurs tiges doivent donner la moyenne
-  correcte.
+  produire l'échelle attendue (`s = 1m ÷ D_px`, **pas** `D_px ÷ 1m` — sens
+  à vérifier explicitement dans le test, c'est l'erreur trouvée en revue
+  de ce spec) ; plusieurs tiges doivent donner la moyenne correcte.
 - Dérivation de rotation : la première tige à famille connue doit aligner
   son angle mesuré sur le PREMIER membre de sa famille (ex. 0° pour
   Hartmann, 45° pour Curry) — règle déterministe, pas une recherche parmi
@@ -310,10 +337,15 @@ d'angles connue (sinon la rotation n'a pas pu être calculée du tout — voir
   l'ancien calage ne subsiste après coup.
 - Translation : le centre de la photo doit se mapper exactement sur le
   point réel cliqué, quels que soient l'échelle et la rotation calculées.
-- Bout en bout : un jeu de marqueurs de test avec position/rotation/
-  échelle connues doit, après calcul de la transformation puis application
-  via `applyAffineTransform`, retrouver les positions réelles attendues à
-  une tolérance flottante près.
+- Bout en bout (synthétique) : un jeu de marqueurs de test avec
+  position/rotation/échelle connues doit, après calcul de la
+  transformation puis application via `applyAffineTransform`, retrouver
+  les positions réelles attendues à une tolérance flottante près.
+- Bout en bout (vraie photo) : requis par le point ⚠️ ci-dessus — au moins
+  une vraie photo de tige avec orientation connue doit être utilisée pour
+  valider empiriquement le sens de `θ`, en plus du test synthétique (qui
+  ne peut pas, par construction, révéler une erreur de signe cohérente
+  entre la génération du jeu de test et le code testé).
 - Erreur : aucune tige complète détectée → l'erreur attendue est levée,
   aucun appel à `createFeltPoint`/`createFeltSegment`.
 - Erreur : tige(s) complète(s) détectée(s) mais aucune de réseau à famille
