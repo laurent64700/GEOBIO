@@ -1,6 +1,6 @@
 // src/data/missionsRepo.ts
 import { supabase } from '../lib/supabaseClient'
-import type { Mission, Plan, Point } from '../domain/types'
+import type { Mission, Plan, Point, StoredParcel } from '../domain/types'
 import { createPlan } from './plansRepo'
 
 export interface CreateMissionInput {
@@ -24,6 +24,7 @@ interface MissionRow {
   bovis_rate: number | null
   parcel_refs: string[]
   building_footprint: Point[] | null
+  selected_parcels_geometry: StoredParcel[] | null
 }
 
 function mapRowToMission(row: MissionRow): Mission {
@@ -42,6 +43,7 @@ function mapRowToMission(row: MissionRow): Mission {
     bovisRate: row.bovis_rate,
     parcelRefs: row.parcel_refs,
     buildingFootprint: row.building_footprint,
+    selectedParcelsGeometry: row.selected_parcels_geometry,
   }
 }
 
@@ -116,10 +118,24 @@ export async function setGlobalAssessment(
   return mapRowToMission(data as MissionRow)
 }
 
-export async function setSelectedParcels(missionId: string, parcelRefs: string[]): Promise<Mission> {
+// `geometry` is optional (not just nullable) so callers that only have the
+// ids on hand — duplicateMission, when its source mission predates this
+// field — can update parcel_refs alone without wiping out an
+// already-persisted selected_parcels_geometry with an accidental null.
+// Passing `null` explicitly (a real "no geometry" case) DOES clear it.
+export async function setSelectedParcels(
+  missionId: string,
+  parcelRefs: string[],
+  geometry?: StoredParcel[] | null
+): Promise<Mission> {
+  const update: { parcel_refs: string[]; selected_parcels_geometry?: StoredParcel[] | null } = {
+    parcel_refs: parcelRefs,
+  }
+  if (geometry !== undefined) update.selected_parcels_geometry = geometry
+
   const { data, error } = await supabase
     .from('mission')
-    .update({ parcel_refs: parcelRefs })
+    .update(update)
     .eq('id', missionId)
     .select()
     .single()
@@ -162,7 +178,7 @@ export async function duplicateMission(source: Mission): Promise<{ mission: Miss
   // setters, matching how the rest of this file already builds up a Mission
   // incrementally after creation (see setSelectedParcels/setBuildingFootprint).
   const withParcels = source.parcelRefs.length > 0
-    ? await setSelectedParcels(mission.id, source.parcelRefs)
+    ? await setSelectedParcels(mission.id, source.parcelRefs, source.selectedParcelsGeometry)
     : mission
   const final = source.buildingFootprint !== null
     ? await setBuildingFootprint(withParcels.id, source.buildingFootprint)

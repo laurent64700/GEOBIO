@@ -50,7 +50,7 @@ const existingMission = {
   id: 'm1', address: '10 Rue de Rivoli', missionDate: '2026-07-20', declinationDeg: null,
   originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
   causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
-  parcelRefs: [], buildingFootprint: null,
+  parcelRefs: [], buildingFootprint: null, selectedParcelsGeometry: null,
 }
 
 describe('App', () => {

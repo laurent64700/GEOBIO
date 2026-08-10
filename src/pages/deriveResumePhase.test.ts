@@ -11,7 +11,7 @@ function makeMission(overrides: Partial<Mission> = {}): Mission {
     id: 'm1', address: 'Paris', missionDate: '2026-07-20', declinationDeg: null,
     originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
     causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
-    parcelRefs: [], buildingFootprint: null,
+    parcelRefs: [], buildingFootprint: null, selectedParcelsGeometry: null,
     ...overrides,
   }
 }

@@ -27,8 +27,8 @@ import { getCurrentSession, clearCurrentSession } from '../offline/currentSessio
 import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { CadastralParcel } from '../data/cadastreService'
 import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
-import type { AffineTransform, Mission, Plan } from '../domain/types'
-import type { LatLng } from '../geometry/localCoordinates'
+import type { AffineTransform, Mission, Plan, StoredParcel } from '../domain/types'
+import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import type { ResumePhase } from './deriveResumePhase'
 
 // Rough center of metropolitan France — a placeholder until a mission's address
@@ -219,7 +219,20 @@ export function MissionWorkspace({
     if (phase.name !== 'selecting-parcels') return
     try {
       const parcelIds = selectedParcels.map((p) => p.id)
-      const updated = await setSelectedParcels(phase.mission.id, parcelIds)
+      // Converted to LOCAL coords (mission-relative) at this one point, same
+      // as everywhere else geometry enters this domain — the origin is
+      // already set by the time this phase runs (setting-origin ran first).
+      // Persisted alongside the ids so the map can keep showing these
+      // outlines afterward as a permanent orientation reference (field
+      // testing 08/2026: Laurent needs them to stay visible to keep his
+      // bearings — see StoredParcel's doc comment).
+      const missionOriginForParcels = { lat: phase.mission.originLat!, lng: phase.mission.originLng! }
+      const geometry: StoredParcel[] = selectedParcels.map((p) => ({
+        id: p.id,
+        section: p.section,
+        rings: p.ringsLatLng.map((ring) => ring.map((latlng) => latLngToLocal(latlng, missionOriginForParcels))),
+      }))
+      const updated = await setSelectedParcels(phase.mission.id, parcelIds, geometry)
       // Fire-and-forget: prime the offline caches in the background now that
       // parcels are confirmed, so the mission is ready to work with no
       // signal at the site. Preloading is best-effort — a failure here must
@@ -374,6 +387,7 @@ export function MissionWorkspace({
               missionId={phase.mission.id}
               missionOrigin={{ lat: originLat!, lng: originLng! }}
               initialBuildingFootprint={phase.mission.buildingFootprint}
+              selectedParcels={phase.mission.selectedParcelsGeometry}
               fitBounds={phase.fitBounds}
               reloadKey={reloadKey}
               guideLineSlotEl={guideLineSlotEl}

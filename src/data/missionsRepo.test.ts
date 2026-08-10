@@ -29,6 +29,7 @@ describe('missionsRepo', () => {
         bovis_rate: null,
         parcel_refs: [],
         building_footprint: null,
+        selected_parcels_geometry: null,
       },
       error: null,
     })
@@ -61,6 +62,7 @@ describe('missionsRepo', () => {
       bovisRate: null,
       parcelRefs: [],
       buildingFootprint: null,
+      selectedParcelsGeometry: null,
     })
   })
 
@@ -240,6 +242,7 @@ describe('missionsRepo', () => {
         causeArchitectural: 3, causeElectromagnetique: 2, causeGeobiologique: 7,
         causeParanormale: 0, causeAutres: 0, bovisRate: 8000,
         parcelRefs: ['ABC-123'], buildingFootprint: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
+        selectedParcelsGeometry: null,
       }
       const baseRow = {
         id: 'm2', address: '12 rue des Lilas', mission_date: today, declination_deg: 1.5,
@@ -288,6 +291,7 @@ describe('missionsRepo', () => {
         originLat: null, originLng: null, causeArchitectural: null, causeElectromagnetique: null,
         causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: null,
         parcelRefs: [], buildingFootprint: null,
+        selectedParcelsGeometry: null,
       }
       const { chain: chainInsertMission } = createSupabaseChainMock({
         data: { id: 'm2', address: 'test diag', mission_date: '2026-08-06', declination_deg: null,

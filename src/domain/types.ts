@@ -13,6 +13,21 @@ export interface AffineTransform {
   f: number
 }
 
+// A single cadastral parcel's outline, in the same LOCAL (mission-relative)
+// coordinate system as everything else in this domain (felt points/segments,
+// building footprint) — converted from cadastreService.ts's CadastralParcel
+// (WFS lat/lng) at selection time via latLngToLocal, since that's the only
+// point the mission's origin is guaranteed to already be set. `rings` mirrors
+// CadastralParcel.ringsLatLng's shape (outer ring first, holes after, if
+// any) for a SINGLE polygon part — a MultiPolygon parcel becomes multiple
+// StoredParcel entries sharing the same id, exactly like CadastralParcel
+// already does.
+export interface StoredParcel {
+  id: string
+  section: string
+  rings: Point[][]
+}
+
 export interface Mission {
   id: string
   address: string
@@ -30,6 +45,12 @@ export interface Mission {
   /** Outer ring only (holes/multi-ring buildings not modeled — see spec §6 for the
    * tradeoff). Null until a building is fetched and confirmed via "Changer de bâtiment". */
   buildingFootprint: Point[] | null
+  /** Full parcel geometry for the confirmed selection (parcelRefs above only
+   * holds their ids) — null until parcels are confirmed via
+   * ParcelSelectionStep, so the map can keep showing their outlines as a
+   * permanent orientation reference afterward (field testing 08/2026:
+   * Laurent needs them to stay visible to keep his bearings on the map). */
+  selectedParcelsGeometry: StoredParcel[] | null
 }
 
 export type PlanKind = 'exterieur' | 'interieur'

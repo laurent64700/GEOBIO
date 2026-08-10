@@ -13,7 +13,7 @@ function makeMission(overrides: Partial<Mission> = {}): Mission {
     declinationDeg: null, originLat: null, originLng: null,
     causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
     causeParanormale: null, causeAutres: null, bovisRate: null,
-    parcelRefs: [], buildingFootprint: null,
+    parcelRefs: [], buildingFootprint: null, selectedParcelsGeometry: null,
     ...overrides,
   }
 }

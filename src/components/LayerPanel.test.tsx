@@ -9,6 +9,7 @@ import {
   FREEFORM_NETWORK_LAYER_ID,
   INTERIOR_PLAN_LAYER_ID,
   CONTEXT_OBJECTS_LAYER_ID,
+  PARCELS_LAYER_ID,
 } from './LayerPanel'
 
 describe('LayerPanel', () => {
@@ -190,6 +191,30 @@ describe('LayerPanel', () => {
     )
     fireEvent.click(screen.getByLabelText(/objets de contexte/i))
     expect(onToggle).toHaveBeenCalledWith(CONTEXT_OBJECTS_LAYER_ID)
+  })
+
+  it('shows "Parcelles" checked by default — the whole point is for Laurent to keep his bearings on the map after selection (field testing 08/2026: "sinon pas d\'intérêt")', () => {
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByLabelText(/parcelles/i)).toBeChecked()
+  })
+
+  it('calls onToggle with PARCELS_LAYER_ID when the parcels checkbox is clicked', () => {
+    const onToggle = vi.fn()
+    render(
+      <LayerPanel
+        gridLayers={[{ id: 'gi1', label: 'Hartmann', color: '#d32f2f' }]}
+        visibility={{}}
+        onToggle={onToggle}
+      />
+    )
+    fireEvent.click(screen.getByLabelText(/parcelles/i))
+    expect(onToggle).toHaveBeenCalledWith(PARCELS_LAYER_ID)
   })
 
   it('respects explicit visibility overrides', () => {

@@ -8,7 +8,7 @@ const mission: Mission = {
   id: 'm1', address: 'x', missionDate: '2026-07-27', declinationDeg: null,
   originLat: 48.85, originLng: 2.35, causeArchitectural: null, causeElectromagnetique: null,
   causeGeobiologique: null, causeParanormale: null, causeAutres: null, bovisRate: 5000,
-  parcelRefs: [], buildingFootprint: null,
+  parcelRefs: [], buildingFootprint: null, selectedParcelsGeometry: null,
 }
 const exteriorPlan: Plan = { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null }
 

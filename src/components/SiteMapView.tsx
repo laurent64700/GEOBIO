@@ -19,6 +19,7 @@ import {
   FREEFORM_NETWORK_LAYER_ID,
   INTERIOR_PLAN_LAYER_ID,
   CONTEXT_OBJECTS_LAYER_ID,
+  PARCELS_LAYER_ID,
   DEFAULT_VISIBLE_LAYER_IDS,
   type LayerEntry,
 } from './LayerPanel'
@@ -32,6 +33,7 @@ import { PathogenicCrossingsLayer } from './PathogenicCrossingsLayer'
 import { PhenomenonPicker } from './PhenomenonPicker'
 import { ContextObjectPicker } from './ContextObjectPicker'
 import { ContextObjectsLayer } from './ContextObjectsLayer'
+import { ParcelsLayer } from './ParcelsLayer'
 import { FeltPointPicker } from './FeltPointPicker'
 import { PhenomenaLayer } from './PhenomenaLayer'
 import { FreeformDrawTool } from './FreeformDrawTool'
@@ -67,6 +69,7 @@ import type {
   ContextObject,
   FreeformNetwork,
   Plan,
+  StoredParcel,
 } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import { boundsAround } from '../geometry/boundsAround'
@@ -109,6 +112,12 @@ export interface SiteMapViewProps {
   missionId: string
   missionOrigin: LatLng
   initialBuildingFootprint: Point[] | null
+  /** The confirmed parcel selection's real geometry (mission.selectedParcelsGeometry)
+   * — rendered as a permanent orientation reference (ParcelsLayer below), not
+   * just used transiently to compute fitBounds like before. Null for a
+   * mission with no parcels confirmed (or confirmed before this field
+   * existed). */
+  selectedParcels: StoredParcel[] | null
   /** When set, the map fits to these bounds once on mount (e.g. right after parcel selection) instead of just centering on missionOrigin. */
   fitBounds?: LatLngBoundsExpression
   /** Bumped by MissionWorkspace (as UndoRedoControls's onChanged, since that
@@ -175,6 +184,7 @@ export function SiteMapView({
   missionId,
   missionOrigin,
   initialBuildingFootprint,
+  selectedParcels,
   fitBounds,
   reloadKey,
   guideLineSlotEl,
@@ -671,6 +681,11 @@ export function SiteMapView({
           objects={contextObjects}
           missionOrigin={missionOrigin}
           visible={visibility[CONTEXT_OBJECTS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(CONTEXT_OBJECTS_LAYER_ID)}
+        />
+        <ParcelsLayer
+          parcels={selectedParcels ?? []}
+          missionOrigin={missionOrigin}
+          visible={visibility[PARCELS_LAYER_ID] ?? DEFAULT_VISIBLE_LAYER_IDS.includes(PARCELS_LAYER_ID)}
         />
         <FreeformDrawTool
           active={placementMode?.kind === 'freeform' && pendingFreeformTrace === null}

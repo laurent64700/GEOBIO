@@ -37,7 +37,7 @@ vi.mock('../components/MissionForm', async () => {
           causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
           causeParanormale: null, causeAutres: null, bovisRate: null,
           parcelRefs: [],
-          buildingFootprint: null,
+          buildingFootprint: null, selectedParcelsGeometry: null,
         })
       }, [onCreated])
       return null
@@ -160,7 +160,7 @@ const missionWithOrigin = {
   causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
   causeParanormale: null, causeAutres: null, bovisRate: null,
   parcelRefs: [],
-  buildingFootprint: null,
+  buildingFootprint: null, selectedParcelsGeometry: null,
 }
 
 // The mission as returned by setGlobalAssessment: causes/Bovis populated,
@@ -171,7 +171,7 @@ const missionAfterGlobalAssessment = {
   causeArchitectural: 3, causeElectromagnetique: 6, causeGeobiologique: 8,
   causeParanormale: 1, causeAutres: 0, bovisRate: 9500,
   parcelRefs: [],
-  buildingFootprint: null,
+  buildingFootprint: null, selectedParcelsGeometry: null,
 }
 
 // Common setup shared by every test whose flow needs to get past the
@@ -253,7 +253,16 @@ describe('MissionWorkspace', () => {
 
     fireEvent.click(await screen.findByText('simulate-parcels-confirmed'))
 
-    await waitFor(() => expect(missionsRepo.setSelectedParcels).toHaveBeenCalledWith('m1', ['A123']))
+    // The 3rd arg is the parcel's geometry converted to LOCAL coords — the
+    // mocked parcel's only point IS missionWithOrigin's own origin
+    // (48.8566, 2.3522), so it converts to exactly {x:0, y:0}.
+    await waitFor(() =>
+      expect(missionsRepo.setSelectedParcels).toHaveBeenCalledWith(
+        'm1',
+        ['A123'],
+        [{ id: 'A123', section: 'A', rings: [[{ x: 0, y: 0 }]] }]
+      )
+    )
     const siteMapView = await screen.findByTestId('site-map-view')
     expect(siteMapView).toHaveAttribute('data-fit-bounds', JSON.stringify([[48.8566, 2.3522], [48.8566, 2.3522]]))
     // Confirming parcels must kick off offline preloading in the background,

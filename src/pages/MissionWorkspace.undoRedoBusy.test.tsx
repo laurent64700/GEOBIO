@@ -45,7 +45,7 @@ const mission: Mission = {
   causeArchitectural: null, causeElectromagnetique: null, causeGeobiologique: null,
   causeParanormale: null, causeAutres: null, bovisRate: null,
   parcelRefs: [],
-  buildingFootprint: null,
+  buildingFootprint: null, selectedParcelsGeometry: null,
 }
 
 const exteriorPlan: Plan = { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null }
