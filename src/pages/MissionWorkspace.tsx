@@ -26,7 +26,7 @@ import { preloadPlanForOffline } from '../offline/preload'
 import { getCurrentSession, clearCurrentSession } from '../offline/currentSession'
 import { useOfflineSync } from '../hooks/useOfflineSync'
 import type { CadastralParcel } from '../data/cadastreService'
-import { boundsOfParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
+import { boundsOfParcels, boundsOfStoredParcels, type SimpleLatLngBounds } from '../geometry/parcelBounds'
 import type { AffineTransform, Mission, Plan, StoredParcel } from '../domain/types'
 import { latLngToLocal, type LatLng } from '../geometry/localCoordinates'
 import type { ResumePhase } from './deriveResumePhase'
@@ -116,13 +116,36 @@ export function MissionWorkspace({
   onNavigateToMissionList,
   onNavigateToNewMission,
 }: MissionWorkspaceProps) {
-  const [phase, setPhase] = useState<WorkspacePhase>(
-    initialResumePhase
-      ? (initialResumePhase.name === 'setting-origin'
-          ? { ...initialResumePhase, mapCenter: DEFAULT_CENTER } // resumed missions skip re-geocoding for now — a deliberate scope cut for this plan, not spec-mandated (spec §8 doesn't carve out an exception for the resume path); geocoding (Chunk 6) only runs on the fresh-creation path today
-          : initialResumePhase)
-      : { name: 'creating-mission' }
-  )
+  const [phase, setPhase] = useState<WorkspacePhase>(() => {
+    if (!initialResumePhase) return { name: 'creating-mission' }
+    if (initialResumePhase.name === 'setting-origin') {
+      // resumed missions skip re-geocoding for now — a deliberate scope cut
+      // for this plan, not spec-mandated (spec §8 doesn't carve out an
+      // exception for the resume path); geocoding (Chunk 6) only runs on the
+      // fresh-creation path today
+      return { ...initialResumePhase, mapCenter: DEFAULT_CENTER }
+    }
+    if (initialResumePhase.name === 'ready-no-interior') {
+      // A resumed mission never carries a fresh fitBounds the way
+      // handleParcelsSelected sets one below — before selectedParcelsGeometry
+      // existed, that meant reopening a mission always defaulted to the
+      // unbounded (zoom-out-to-France) view, no matter how tightly scoped
+      // its parcels were (Laurent, field testing 08/2026: "pense aussi au
+      // zoom de base sur ces parcelles definies"). Recomputed here from the
+      // now-persisted geometry so a resumed mission gets the exact same
+      // fitBounds/minZoom cap (via MapView's FitBoundsOnce) as one just
+      // confirmed this session.
+      const { mission } = initialResumePhase
+      const fitBounds = mission.selectedParcelsGeometry
+        ? boundsOfStoredParcels(mission.selectedParcelsGeometry, {
+            lat: mission.originLat!,
+            lng: mission.originLng!,
+          }) ?? undefined
+        : undefined
+      return { ...initialResumePhase, fitBounds }
+    }
+    return initialResumePhase
+  })
   // Some MissionWorkspace failures still hard-fail to `phase: 'error'` (mission
   // creation, origin-setting, parcel confirmation, the FIRST global-assessment
   // save) — those happen before the terrain screen exists, so there's no

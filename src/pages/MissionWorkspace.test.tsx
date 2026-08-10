@@ -641,6 +641,41 @@ describe('MissionWorkspace', () => {
     expect(screen.getByRole('toolbar')).toBeInTheDocument()
   })
 
+  it('recomputes fitBounds from the persisted parcel geometry when RESUMING a mission — not just right after a fresh parcel confirmation (field testing 08/2026: "pense aussi au zoom de base sur ces parcelles definies")', async () => {
+    // The parcel's single point IS missionWithOrigin's own origin
+    // (48.8566, 2.3522), so its local {x:0, y:0} converts to exactly that —
+    // matching the pattern already used above for the fresh-confirmation
+    // case's fitBounds assertion.
+    const missionWithParcels = {
+      ...missionWithOrigin,
+      selectedParcelsGeometry: [{ id: 'A123', section: 'A', rings: [[{ x: 0, y: 0 }]] }],
+    }
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithParcels, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).toHaveAttribute(
+      'data-fit-bounds',
+      JSON.stringify([[48.8566, 2.3522], [48.8566, 2.3522]])
+    )
+  })
+
+  it('leaves fitBounds unset when resuming a mission with no persisted parcel geometry (predates this field, or none confirmed)', async () => {
+    render(
+      <MissionWorkspace
+        initialResumePhase={{ name: 'ready-no-interior', mission: missionWithOrigin, exteriorPlan: { id: 'p1', missionId: 'm1', kind: 'exterieur', imageUrl: null, calibration: null } }}
+        onNavigateToMissionList={vi.fn()}
+        onNavigateToNewMission={vi.fn()}
+      />
+    )
+    const siteMapView = await screen.findByTestId('site-map-view')
+    expect(siteMapView).not.toHaveAttribute('data-fit-bounds')
+  })
+
   it('bumps SiteMapView\'s reloadKey when UndoRedoControls (in the Toolbar) reports a change', async () => {
     // Closes the gap flagged by code review: UndoRedoControls now lives in
     // MissionWorkspace's Toolbar (not inside SiteMapView), wired via
