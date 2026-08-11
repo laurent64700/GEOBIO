@@ -4,6 +4,7 @@ import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError, deriveRotation,
 import type { RawMarkerDetection, FeltSegmentCandidate } from './arucoMapping'
 import type { RodMarker } from '../domain/types'
 import { applyAffineTransform } from '../geometry/affineTransform'
+import { mapDetectionsToPoints, pairIntoSegmentsAndPoints } from './arucoMapping'
 
 describe('groupRodsInPixelSpace', () => {
   it('groups markers into pixel-space segments — the identity transform means x,y stay the raw pixel centroids', () => {
@@ -117,5 +118,39 @@ describe('buildAffineTransform', () => {
     const mapped = applyAffineTransform({ x: 1, y: 0 }, transform)
     expect(mapped.x).toBeCloseTo(0.02, 9)
     expect(mapped.y).toBeCloseTo(0, 9)
+  })
+})
+
+describe('end-to-end (synthetic)', () => {
+  it('composes groupRodsInPixelSpace → deriveScale/deriveRotation → buildAffineTransform → mapDetectionsToPoints to recover known real positions', () => {
+    // A single Hartmann rod, 50px apart in pixel space, running due "east"
+    // in pixel space (0° measured angle) — Hartmann's family is [0, 90], so
+    // this aligns with NO rotation needed (θ = 0 − 0 = 0).
+    const detections: RawMarkerDetection[] = [
+      { markerId: 101, corners: [{ x: 95, y: 95 }, { x: 105, y: 95 }, { x: 105, y: 105 }, { x: 95, y: 105 }] }, // centroid (100,100)
+      { markerId: 102, corners: [{ x: 145, y: 95 }, { x: 155, y: 95 }, { x: 155, y: 105 }, { x: 145, y: 105 }] }, // centroid (150,100)
+    ]
+    const rodMarkers: RodMarker[] = [
+      { markerId: 101, networkName: 'Hartmann', rodNumber: 1 },
+      { markerId: 102, networkName: 'Hartmann', rodNumber: 1 },
+    ]
+    const photoCenter = { x: 100, y: 100 } // deliberately == marker 101's position
+    const realCenter = { x: 5, y: 5 } // where Laurent clicked
+
+    const pixelGroup = groupRodsInPixelSpace(detections, rodMarkers)
+    const s = deriveScale(pixelGroup.segments) // 1 / 50 = 0.02
+    const theta = deriveRotation(pixelGroup.segments) // 0
+    const transform = buildAffineTransform(s, theta, realCenter, photoCenter)
+
+    const { recognized } = mapDetectionsToPoints(detections, transform, rodMarkers)
+    const { segments } = pairIntoSegmentsAndPoints(recognized)
+
+    expect(segments).toHaveLength(1)
+    // marker 101 IS the photo center → maps exactly to realCenter.
+    expect(segments[0].pointA.x).toBeCloseTo(5, 9)
+    expect(segments[0].pointA.y).toBeCloseTo(5, 9)
+    // marker 102 is 50px east of center → 50 * 0.02 = 1m east of realCenter.
+    expect(segments[0].pointB.x).toBeCloseTo(6, 9)
+    expect(segments[0].pointB.y).toBeCloseTo(5, 9)
   })
 })
