@@ -221,7 +221,7 @@ export interface RodMarker {
 /**
  * A mission-level aerial photo, attached to the mission as a whole, not to a
  * specific grid/network. Storage/display since Plan 1 Chunk 10; also the input
- * to ArUco rod-marker detection (2026-07-16 sub-project) once calibrated.
+ * to ArUco rod-marker detection (2026-07-16 sub-project).
  */
 export interface MissionPhoto {
   id: string
