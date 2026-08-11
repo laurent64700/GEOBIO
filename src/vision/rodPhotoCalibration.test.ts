@@ -66,6 +66,24 @@ describe('deriveScale', () => {
   it('throws NoCompleteRodError when no complete rod is given', () => {
     expect(() => deriveScale([])).toThrow(NoCompleteRodError)
   })
+
+  it('throws NoCompleteRodError when a rod\'s 2 markers are implausibly close together in pixel space', () => {
+    // A real rod's 2 markers are tens to hundreds of px apart (see the 50px/
+    // 100px fixtures above) — 1px apart is a detection glitch (occlusion,
+    // motion blur, bad crop), not a real rod. Dividing by a near-zero
+    // distancePx would otherwise silently produce Infinity/huge scale.
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 1, y: 0 } },
+    ]
+    expect(() => deriveScale(segments)).toThrow(NoCompleteRodError)
+  })
+
+  it('throws NoCompleteRodError when a rod\'s 2 markers are detected at the exact same point (0px apart)', () => {
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 10, y: 10 }, pointB: { x: 10, y: 10 } },
+    ]
+    expect(() => deriveScale(segments)).toThrow(NoCompleteRodError)
+  })
 })
 
 describe('deriveRotation', () => {

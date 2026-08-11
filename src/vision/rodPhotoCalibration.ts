@@ -24,6 +24,14 @@ export function groupRodsInPixelSpace(
 // = 0.5 in usePlacementMode.ts, i.e. a 1m segment), confirmed with Laurent.
 const ROD_MARKER_DISTANCE_M = 1
 
+// Mirrors calibration.ts's MIN_REAL_DISTANCE_M guard, but in pixel space:
+// distancePx (not a real-world distance) is what's at risk of being
+// near-zero here. A genuine rod's 2 markers sit tens to hundreds of px
+// apart in every fixture in this file (50px, 100px, 150px) — a few px is
+// clearly a detection glitch (occlusion, motion blur, bad crop), not a real
+// rod, and dividing by it would silently produce Infinity/an absurd scale.
+const MIN_ROD_DISTANCE_PX = 5
+
 export class NoCompleteRodError extends Error {}
 
 export function deriveScale(segments: FeltSegmentCandidate[]): number {
@@ -35,6 +43,12 @@ export function deriveScale(segments: FeltSegmentCandidate[]): number {
       segment.pointB.x - segment.pointA.x,
       segment.pointB.y - segment.pointA.y
     )
+    if (distancePx < MIN_ROD_DISTANCE_PX) {
+      throw new NoCompleteRodError(
+        `Tige détectée avec ses 2 marqueurs trop proches (${distancePx.toFixed(1)}px) — ` +
+          `détection probablement erronée, impossible de calculer l'échelle.`
+      )
+    }
     // Real units per pixel — NOT pixels per real unit. The transform this
     // feeds (buildAffineTransform, Task 4) does x' = a·x + ... with x in
     // pixels and x' in meters, so `s` must already be in m/px.
