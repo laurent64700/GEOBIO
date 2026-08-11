@@ -1,8 +1,9 @@
 // src/vision/rodPhotoCalibration.test.ts
 import { describe, it, expect } from 'vitest'
-import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError, deriveRotation, NoKnownNetworkFamilyError } from './rodPhotoCalibration'
+import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError, deriveRotation, NoKnownNetworkFamilyError, buildAffineTransform } from './rodPhotoCalibration'
 import type { RawMarkerDetection, FeltSegmentCandidate } from './arucoMapping'
 import type { RodMarker } from '../domain/types'
+import { applyAffineTransform } from '../geometry/affineTransform'
 
 describe('groupRodsInPixelSpace', () => {
   it('groups markers into pixel-space segments — the identity transform means x,y stay the raw pixel centroids', () => {
@@ -99,5 +100,22 @@ describe('deriveRotation', () => {
       { networkName: 'Autre', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: 100 } },
     ]
     expect(() => deriveRotation(segments)).toThrow(NoKnownNetworkFamilyError)
+  })
+})
+
+describe('buildAffineTransform', () => {
+  it('maps the photo center exactly onto realCenter, regardless of scale/rotation', () => {
+    const transform = buildAffineTransform(0.02, 37, { x: 12.5, y: -4.3 }, { x: 800, y: 600 })
+    const mapped = applyAffineTransform({ x: 800, y: 600 }, transform)
+    expect(mapped.x).toBeCloseTo(12.5, 9)
+    expect(mapped.y).toBeCloseTo(-4.3, 9)
+  })
+
+  it('scales a 1-pixel offset from center by the given scale, in the rotated direction', () => {
+    // No rotation (θ=0): a +1px offset in x should map to +scale in real x.
+    const transform = buildAffineTransform(0.02, 0, { x: 0, y: 0 }, { x: 0, y: 0 })
+    const mapped = applyAffineTransform({ x: 1, y: 0 }, transform)
+    expect(mapped.x).toBeCloseTo(0.02, 9)
+    expect(mapped.y).toBeCloseTo(0, 9)
   })
 })

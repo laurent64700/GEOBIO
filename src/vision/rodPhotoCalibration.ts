@@ -71,3 +71,21 @@ export function deriveRotation(
     "Aucune tige de réseau reconnu détectée — impossible de calculer l'orientation."
   )
 }
+
+export function buildAffineTransform(
+  scale: number,
+  rotationDeg: number,
+  realCenter: Point,
+  photoCenter: Point
+): AffineTransform {
+  const theta = (rotationDeg * Math.PI) / 180
+  const a = scale * Math.cos(theta)
+  const b = -scale * Math.sin(theta)
+  const c = scale * Math.sin(theta)
+  const d = scale * Math.cos(theta)
+  // Solve e, f so that applying this transform to photoCenter gives exactly
+  // realCenter (see design spec §"Translation").
+  const e = realCenter.x - (a * photoCenter.x + b * photoCenter.y)
+  const f = realCenter.y - (c * photoCenter.x + d * photoCenter.y)
+  return { a, b, c, d, e, f }
+}
