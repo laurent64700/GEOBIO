@@ -1,7 +1,8 @@
 // src/vision/rodPhotoCalibration.ts
 import { mapDetectionsToPoints, pairIntoSegmentsAndPoints, type RawMarkerDetection, type PairingResult } from './arucoMapping'
-import type { AffineTransform, RodMarker } from '../domain/types'
+import type { AffineTransform, Point, RodMarker } from '../domain/types'
 import type { FeltSegmentCandidate } from './arucoMapping'
+import { allowedBearingsForNetwork } from '../domain/networkBearings'
 
 // A no-op transform — applying it to a pixel coordinate returns that exact
 // coordinate unchanged (see applyAffineTransform.ts: x' = a·x + b·y + e =
@@ -41,4 +42,32 @@ export function deriveScale(segments: FeltSegmentCandidate[]): number {
     return ROD_MARKER_DISTANCE_M / distancePx
   })
   return estimates.reduce((sum, v) => sum + v, 0) / estimates.length
+}
+
+export class NoKnownNetworkFamilyError extends Error {}
+
+function pixelAngleDeg(a: Point, b: Point): number {
+  return (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI
+}
+
+// Deliberately simple — see design spec §"Limite connue, acceptée": the
+// only 2 known angle families (0°/90° and 45°/135°) are both invariant
+// under a 90° rotation, so no amount of cross-referencing additional
+// rods/networks can resolve which of a family's 2 members is correct.
+// Laurent accepted this residual ambiguity; `useSecondFamilyMember` is the
+// escape hatch ("Inverser l'orientation", Chunk 2).
+export function deriveRotation(
+  segments: FeltSegmentCandidate[],
+  useSecondFamilyMember = false
+): number {
+  for (const segment of segments) {
+    const family = allowedBearingsForNetwork(segment.networkName)
+    if (family === null) continue
+    const measuredAngleDeg = pixelAngleDeg(segment.pointA, segment.pointB)
+    const targetMember = family[useSecondFamilyMember ? 1 : 0]
+    return targetMember - measuredAngleDeg
+  }
+  throw new NoKnownNetworkFamilyError(
+    "Aucune tige de réseau reconnu détectée — impossible de calculer l'orientation."
+  )
 }

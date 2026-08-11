@@ -1,6 +1,6 @@
 // src/vision/rodPhotoCalibration.test.ts
 import { describe, it, expect } from 'vitest'
-import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError } from './rodPhotoCalibration'
+import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError, deriveRotation, NoKnownNetworkFamilyError } from './rodPhotoCalibration'
 import type { RawMarkerDetection, FeltSegmentCandidate } from './arucoMapping'
 import type { RodMarker } from '../domain/types'
 
@@ -63,5 +63,41 @@ describe('deriveScale', () => {
 
   it('throws NoCompleteRodError when no complete rod is given', () => {
     expect(() => deriveScale([])).toThrow(NoCompleteRodError)
+  })
+})
+
+describe('deriveRotation', () => {
+  it('aligns the first known-family rod to the FIRST member of its family', () => {
+    // Hartmann family is [0, 90] (networkBearings.ts). A rod measured at
+    // 10° in pixel space (pointA→pointB) should produce θ = 0 − 10 = −10.
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: Math.tan((10 * Math.PI) / 180) * 100 } },
+    ]
+    expect(deriveRotation(segments)).toBeCloseTo(-10, 6)
+  })
+
+  it('uses the SECOND family member when useSecondFamilyMember is true (the "Inverser l\'orientation" case)', () => {
+    // Same rod as above (measured at 10°), but this time aligned to
+    // Hartmann's 2nd family member (90°): θ = 90 − 10 = 80.
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: Math.tan((10 * Math.PI) / 180) * 100 } },
+    ]
+    expect(deriveRotation(segments, true)).toBeCloseTo(80, 6)
+  })
+
+  it('skips a rod with no known network family and uses the next one that has one', () => {
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Autre', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: 100 } }, // no known family
+      { networkName: 'Curry', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: 0 } }, // measured at 0°, family [45,135]
+    ]
+    // Curry's first member is 45°, measured at 0° → θ = 45 − 0 = 45.
+    expect(deriveRotation(segments)).toBeCloseTo(45, 6)
+  })
+
+  it('throws NoKnownNetworkFamilyError when no detected rod has a known network family', () => {
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Autre', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: 100 } },
+    ]
+    expect(() => deriveRotation(segments)).toThrow(NoKnownNetworkFamilyError)
   })
 })
