@@ -1,7 +1,7 @@
 // src/vision/rodPhotoCalibration.test.ts
 import { describe, it, expect } from 'vitest'
-import { groupRodsInPixelSpace } from './rodPhotoCalibration'
-import type { RawMarkerDetection } from './arucoMapping'
+import { groupRodsInPixelSpace, deriveScale, NoCompleteRodError } from './rodPhotoCalibration'
+import type { RawMarkerDetection, FeltSegmentCandidate } from './arucoMapping'
 import type { RodMarker } from '../domain/types'
 
 describe('groupRodsInPixelSpace', () => {
@@ -39,5 +39,29 @@ describe('groupRodsInPixelSpace', () => {
 
     expect(result.segments).toHaveLength(0)
     expect(result.points).toEqual([{ markerId: 101, rodNumber: 1, networkName: 'Hartmann', x: 5, y: 5 }])
+  })
+})
+
+describe('deriveScale', () => {
+  it('converts a pixel distance to meters-per-pixel — NOT pixels-per-meter (the inverse)', () => {
+    // A rod measured at 50px between its 2 markers, representing a real 1m —
+    // scale must be 1/50 = 0.02 (m/px), not 50 (px/m). This is the exact
+    // direction bug caught in spec review — pin it explicitly.
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 50, y: 0 } },
+    ]
+    expect(deriveScale(segments)).toBeCloseTo(0.02, 10)
+  })
+
+  it('averages the scale estimate across multiple complete rods', () => {
+    const segments: FeltSegmentCandidate[] = [
+      { networkName: 'Hartmann', pointA: { x: 0, y: 0 }, pointB: { x: 50, y: 0 } }, // 1/50 = 0.02
+      { networkName: 'Curry', pointA: { x: 0, y: 0 }, pointB: { x: 100, y: 0 } }, // 1/100 = 0.01
+    ]
+    expect(deriveScale(segments)).toBeCloseTo(0.015, 10) // (0.02 + 0.01) / 2
+  })
+
+  it('throws NoCompleteRodError when no complete rod is given', () => {
+    expect(() => deriveScale([])).toThrow(NoCompleteRodError)
   })
 })
