@@ -33,12 +33,6 @@ export function MissionPhotosGallery({ missionId, planId, missionOrigin }: Missi
     }
   }
 
-  function handlePhotoCalibrated(updated: MissionPhoto) {
-    // Keep the panel open on the now-calibrated photo so detection can follow
-    // immediately, without reselecting it from the gallery.
-    setPhotos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
-  }
-
   const selectedPhoto = photos.find((p) => p.id === selectedPhotoId) ?? null
 
   if (selectedPhoto) {
@@ -50,7 +44,6 @@ export function MissionPhotosGallery({ missionId, planId, missionOrigin }: Missi
           planId={planId}
           missionOrigin={missionOrigin}
           mapCenter={[missionOrigin.lat, missionOrigin.lng]}
-          onCalibrated={handlePhotoCalibrated}
         />
       </div>
     )

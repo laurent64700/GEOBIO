@@ -64,21 +64,6 @@ export async function addMissionPhoto(missionId: string, file: File): Promise<Mi
   return mapRowToMissionPhoto(row as MissionPhotoRow)
 }
 
-export async function setPhotoCalibration(
-  photoId: string,
-  calibration: AffineTransform
-): Promise<MissionPhoto> {
-  const { data, error } = await supabase
-    .from('mission_photo')
-    .update({ calibration })
-    .eq('id', photoId)
-    .select()
-    .single()
-
-  if (error) throw new Error(`Impossible d'enregistrer le calage de la photo : ${error.message}`)
-  return mapRowToMissionPhoto(data as MissionPhotoRow)
-}
-
 export async function listMissionPhotos(missionId: string): Promise<MissionPhoto[]> {
   const { data, error } = await supabase.from('mission_photo').select().eq('mission_id', missionId)
   if (error) throw new Error(`Impossible de charger les photos : ${error.message}`)

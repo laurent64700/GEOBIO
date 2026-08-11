@@ -9,22 +9,10 @@ vi.mock('./RodDetectionPanel', () => ({
   RodDetectionPanel: ({
     photo,
     planId,
-    onCalibrated,
   }: {
-    photo: { id: string; calibration: unknown }
+    photo: { id: string }
     planId: string
-    onCalibrated: (p: unknown) => void
-  }) => (
-    <div data-testid="rod-detection-panel" data-photo-id={photo.id} data-plan-id={planId}>
-      <button
-        onClick={() =>
-          onCalibrated({ ...photo, calibration: { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } })
-        }
-      >
-        simulate-photo-calibrated
-      </button>
-    </div>
-  ),
+  }) => <div data-testid="rod-detection-panel" data-photo-id={photo.id} data-plan-id={planId} />,
 }))
 
 const galleryProps = {
@@ -69,21 +57,6 @@ describe('MissionPhotosGallery', () => {
     const panel = await screen.findByTestId('rod-detection-panel')
     expect(panel).toHaveAttribute('data-photo-id', 'mp1')
     expect(panel).toHaveAttribute('data-plan-id', 'p1')
-  })
-
-  it('keeps the panel open on the updated photo once its calibration is saved', async () => {
-    vi.mocked(missionPhotosRepo.listMissionPhotos).mockResolvedValue([
-      { id: 'mp1', missionId: 'm1', imageUrl: 'https://x/a.jpg', calibration: null, createdAt: '2026-07-16T10:00:00Z' },
-    ])
-    render(<MissionPhotosGallery {...galleryProps} />)
-    fireEvent.click(await screen.findByRole('button', { name: /détecter les tiges/i }))
-
-    fireEvent.click(await screen.findByText('simulate-photo-calibrated'))
-
-    // Still open on the same photo (now carrying its calibration), so the
-    // "Détecter les tiges" flow can continue without reselecting the photo.
-    const panel = await screen.findByTestId('rod-detection-panel')
-    expect(panel).toHaveAttribute('data-photo-id', 'mp1')
   })
 
   it('returns to the gallery when the panel is closed', async () => {

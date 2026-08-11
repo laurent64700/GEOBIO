@@ -227,9 +227,11 @@ export interface MissionPhoto {
   id: string
   missionId: string
   imageUrl: string
-  /** Per-photo calibration (pixel → mission-local metric), null until Laurent
-   * calibrates this photo for rod detection — each aerial photo has its own
-   * framing/angle, so calibration lives on the photo, not the mission. */
+  /** Legacy per-photo calibration (pixel → mission-local metric). No longer
+   * written by the app — rod-photo detection now derives its transform
+   * automatically per detection run (see RodDetectionPanel.tsx /
+   * rodPhotoCalibration.ts) rather than persisting one on the photo. Kept
+   * for photos calibrated before that change; may be non-null on old rows. */
   calibration: AffineTransform | null
   createdAt: string
 }

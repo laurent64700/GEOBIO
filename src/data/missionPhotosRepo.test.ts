@@ -1,6 +1,6 @@
 // src/data/missionPhotosRepo.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { addMissionPhoto, listMissionPhotos, setPhotoCalibration } from './missionPhotosRepo'
+import { addMissionPhoto, listMissionPhotos } from './missionPhotosRepo'
 import { supabase } from '../lib/supabaseClient'
 import { createSupabaseChainMock } from '../test/supabaseMock'
 
@@ -65,26 +65,6 @@ describe('missionPhotosRepo', () => {
 
     expect(chain.eq).toHaveBeenCalledWith('mission_id', 'm1')
     expect(photos).toHaveLength(1)
-  })
-
-  it("sets a photo's calibration transform", async () => {
-    const { from, chain } = createSupabaseChainMock({
-      data: {
-        id: 'mp1', mission_id: 'm1', image_url: 'https://x/a.jpg',
-        calibration: { a: 1, b: 0, c: 0, d: 1, e: 5, f: -3 },
-        created_at: '2026-07-16T10:00:00Z',
-      },
-      error: null,
-    })
-    vi.mocked(supabase.from).mockImplementation(from)
-
-    const photo = await setPhotoCalibration('mp1', { a: 1, b: 0, c: 0, d: 1, e: 5, f: -3 })
-
-    expect(chain.update).toHaveBeenCalledWith({
-      calibration: { a: 1, b: 0, c: 0, d: 1, e: 5, f: -3 },
-    })
-    expect(chain.eq).toHaveBeenCalledWith('id', 'mp1')
-    expect(photo.calibration).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 5, f: -3 })
   })
 
   it('throws a descriptive French error when the upload fails', async () => {
