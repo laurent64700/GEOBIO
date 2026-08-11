@@ -1,8 +1,7 @@
 // src/vision/rodPhotoCalibration.ts
-import { mapDetectionsToPoints, pairIntoSegmentsAndPoints, type RawMarkerDetection, type PairingResult } from './arucoMapping'
-import type { AffineTransform, Point, RodMarker } from '../domain/types'
-import type { FeltSegmentCandidate } from './arucoMapping'
+import { mapDetectionsToPoints, pairIntoSegmentsAndPoints, type RawMarkerDetection, type PairingResult, type FeltSegmentCandidate } from './arucoMapping'
 import { allowedBearingsForNetwork } from '../domain/networkBearings'
+import type { AffineTransform, Point, RodMarker } from '../domain/types'
 
 // A no-op transform — applying it to a pixel coordinate returns that exact
 // coordinate unchanged (see applyAffineTransform.ts: x' = a·x + b·y + e =
