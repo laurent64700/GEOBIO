@@ -227,12 +227,28 @@ describe('RodDetectionPanel', () => {
       segments: [{ networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 } }],
       points: [],
     })
+    // 3 resolved values, not 2: with create-then-delete ordering (this task's
+    // fix), the SECOND "Inverser l'orientation" click's delete of 'fs2' only
+    // happens after that click's own create call succeeds — so this test
+    // must provision a 3rd resolved value itself rather than relying on
+    // whatever a neighboring test's mock leftovers happen to be.
+    // vi.clearAllMocks() (in beforeEach) clears call history but NOT queued
+    // mockResolvedValueOnce/mockReturnValue implementations from other
+    // tests in this file (that's mockReset, not mockClear) — verified by
+    // running this test in isolation (`vitest -t "Inverser"`): with only 2
+    // queued values it fails, because the 3rd call falls through to
+    // whatever default implementation an earlier test in the file happened
+    // to leave behind, which is not a real assertion, just accidental
+    // leakage.
     vi.mocked(feltSegmentsRepo.createFeltSegment)
       .mockResolvedValueOnce({
         id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 }, polarityA: null, polarityB: null, createdAt: '2026-08-10T10:00:00Z',
       })
       .mockResolvedValueOnce({
         id: 'fs2', planId: 'p1', networkName: 'Hartmann', pointA: { x: 5, y: 6 }, pointB: { x: 7, y: 6 }, polarityA: null, polarityB: null, createdAt: '2026-08-10T10:01:00Z',
+      })
+      .mockResolvedValueOnce({
+        id: 'fs3', planId: 'p1', networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 }, polarityA: null, polarityB: null, createdAt: '2026-08-10T10:02:00Z',
       })
 
     render(<RodDetectionPanel photo={photo} planId="p1" missionOrigin={missionOrigin} mapCenter={[48.8566, 2.3522]} />)
@@ -241,12 +257,15 @@ describe('RodDetectionPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /inverser l'orientation/i }))
 
+    // create-then-delete: the 2nd create (-> fs2) must land before 'fs1' is deleted.
+    await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(feltSegmentsRepo.deleteFeltSegment).toHaveBeenCalledWith('fs1'))
     expect(rodPhotoCalibration.deriveRotation).toHaveBeenNthCalledWith(2, pixelSegments, true)
-    await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledTimes(2))
 
     fireEvent.click(screen.getByRole('button', { name: /inverser l'orientation/i }))
 
+    // create-then-delete: the 3rd create (-> fs3) must land before 'fs2' is deleted.
+    await waitFor(() => expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledTimes(3))
     await waitFor(() => expect(feltSegmentsRepo.deleteFeltSegment).toHaveBeenCalledWith('fs2'))
     expect(rodPhotoCalibration.deriveRotation).toHaveBeenNthCalledWith(3, pixelSegments, false)
   })

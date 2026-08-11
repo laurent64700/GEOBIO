@@ -92,6 +92,7 @@ export function RodDetectionPanel({ photo, planId, missionOrigin, mapCenter }: R
     setSummary(null)
     setPending(null)
     setLast(null)
+    setCommitting(false)
 
     async function run() {
       try {
@@ -187,11 +188,22 @@ export function RodDetectionPanel({ photo, planId, missionOrigin, mapCenter }: R
     try {
       const inverted = !last.inverted
       const rotationDeg = deriveRotation(last.segments, inverted)
+      // Create-then-delete, deliberately: if creation throws (e.g. a dropped
+      // connection between the two awaits — realistic in the field, which is
+      // why writes go through an offline cache in the first place), the old
+      // (still-present) calibration data is left untouched and the error
+      // surfaces normally. If the delete after a successful create fails,
+      // the failure mode is "visible duplicate segments on the map"
+      // (discoverable, recoverable) rather than "silently vanished data with
+      // no way back to a working state" (delete-then-create would have left
+      // `last` still pointing at now-deleted rows, with no `pending` prompt
+      // left to re-derive a calibration from). Not perfectly atomic, but
+      // atomicity against this backend is out of scope here.
+      const created = await commitCalibration(last, last.scale, rotationDeg, last.realCenter)
       await Promise.all([
         ...last.createdSegmentIds.map((id) => deleteFeltSegment(id)),
         ...last.createdPointIds.map((id) => deleteFeltPoint(id)),
       ])
-      const created = await commitCalibration(last, last.scale, rotationDeg, last.realCenter)
       setLast({ ...last, inverted, ...created })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
