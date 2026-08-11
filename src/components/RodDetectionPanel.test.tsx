@@ -8,6 +8,7 @@ import * as rodPhotoCalibration from '../vision/rodPhotoCalibration'
 import * as rodMarkersRepo from '../data/rodMarkersRepo'
 import * as feltPointsRepo from '../data/feltPointsRepo'
 import * as feltSegmentsRepo from '../data/feltSegmentsRepo'
+import type { FeltSegment } from '../domain/types'
 
 vi.mock('../vision/arucoDetector')
 vi.mock('../vision/arucoMapping')
@@ -188,7 +189,7 @@ describe('RodDetectionPanel', () => {
       points: [],
     })
     // Left unresolved on purpose, to inspect the UI mid-flight before letting it settle.
-    let resolveCreate: (value: unknown) => void = () => {}
+    let resolveCreate: (value: FeltSegment) => void = () => {}
     vi.mocked(feltSegmentsRepo.createFeltSegment).mockReturnValue(
       new Promise((resolve) => {
         resolveCreate = resolve
@@ -266,5 +267,35 @@ describe('RodDetectionPanel', () => {
     fireEvent.click(await screen.findByText('simulate-map-click'))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Hors ligne')
+  })
+
+  it('creates a FeltPoint alongside a FeltSegment when the pairing returns a mix of both', async () => {
+    stubDetectionPipeline()
+    vi.mocked(rodPhotoCalibration.deriveScale).mockReturnValue(0.02)
+    vi.mocked(rodPhotoCalibration.deriveRotation).mockReturnValue(0)
+    vi.mocked(rodPhotoCalibration.buildAffineTransform).mockReturnValue({ a: 1, b: 0, c: 0, d: 1, e: 5, f: 5 })
+    vi.mocked(arucoMapping.mapDetectionsToPoints).mockReturnValue({ recognized: [], totalDetected: 3, totalRecognized: 3 })
+    vi.mocked(arucoMapping.pairIntoSegmentsAndPoints).mockReturnValue({
+      segments: [{ networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 } }],
+      points: [{ markerId: 103, rodNumber: 2, networkName: 'Curry', x: 9, y: 9 }],
+    })
+    vi.mocked(feltSegmentsRepo.createFeltSegment).mockResolvedValue({
+      id: 'fs1', planId: 'p1', networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 }, polarityA: null, polarityB: null, createdAt: '2026-08-10T10:00:00Z',
+    })
+    vi.mocked(feltPointsRepo.createFeltPoint).mockResolvedValue({
+      id: 'fp1', planId: 'p1', networkName: 'Curry', x: 9, y: 9, createdAt: '2026-08-10T10:00:00Z',
+    })
+
+    render(<RodDetectionPanel photo={photo} planId="p1" missionOrigin={missionOrigin} mapCenter={[48.8566, 2.3522]} />)
+    fireEvent.click(await screen.findByText('simulate-map-click'))
+
+    await waitFor(() =>
+      expect(feltPointsRepo.createFeltPoint).toHaveBeenCalledWith({
+        planId: 'p1', networkName: 'Curry', x: 9, y: 9,
+      })
+    )
+    expect(feltSegmentsRepo.createFeltSegment).toHaveBeenCalledWith({
+      planId: 'p1', networkName: 'Hartmann', pointA: { x: 5, y: 5 }, pointB: { x: 7, y: 5 },
+    })
   })
 })
